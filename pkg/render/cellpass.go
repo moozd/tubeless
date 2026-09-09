@@ -10,8 +10,9 @@ import (
 	"github.com/moozd/tubeless/pkg/screen"
 )
 
-const glyphInstanceFloats = 12 // aCellPos(2) + aUVOffset(2) + aUVSize(2) + aColor(3) + aBgColor(3)
-const rectInstanceFloats = 13  // aCellPos(2) + aRectOffset(2) + aRectSize(2) + aColor(3) + aRadius(4)
+const glyphInstanceFloats = 12    // aCellPos(2) + aUVOffset(2) + aUVSize(2) + aColor(3) + aBgColor(3)
+const rectInstanceFloats = 13     // aCellPos(2) + aRectOffset(2) + aRectSize(2) + aColor(3) + aRadius(4)
+const underlineInstanceFloats = 6 // aCellPos(2) + aColor(3) + aStyle(1)
 
 // CellPass renders the terminal grid into offscreen FBOs, split into three
 // layers: a "rect" layer (background color fills and single-rect block
@@ -20,20 +21,26 @@ const rectInstanceFloats = 13  // aCellPos(2) + aRectOffset(2) + aRectSize(2) + 
 // which get a gaussian bloom instead — see shapeblur.frag), and a "text"
 // layer (everything else) that stays sharp on top of both.
 type CellPass struct {
-	atlas        *font.Atlas
-	atlasTex     uint32
-	progGlyph    uint32
-	progRect     uint32
-	quadVBO      uint32
-	glyphVAO     uint32
-	glyphInstVBO uint32
-	rectVAO      uint32
-	rectInstVBO  uint32
-	shapeScratch []float32
-	textScratch  []float32
-	bgScratch    []float32
-	blockScratch []float32
-	cols, rows   int
+	atlas            *font.Atlas
+	atlasTex         uint32
+	progGlyph        uint32
+	progRect         uint32
+	progUnderline    uint32
+	quadVBO          uint32
+	glyphVAO         uint32
+	glyphInstVBO     uint32
+	rectVAO          uint32
+	rectInstVBO      uint32
+	underlineVAO     uint32
+	underlineInstVBO uint32
+	shapeScratch     []float32
+	textScratch      []float32
+	bgScratch        []float32
+	blockScratch     []float32
+	underlineScratch []float32
+	fgCache          [][3]float32
+	bgCache          [][3]float32
+	cols, rows       int
 }
 
 func NewCellPass(atlas *font.Atlas) (*CellPass, error) {
@@ -45,16 +52,36 @@ func NewCellPass(atlas *font.Atlas) (*CellPass, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rect program: %w", err)
 	}
+	progUnderline, err := linkProgram(cellUnderlineVertSrc, cellUnderlineFragSrc)
+	if err != nil {
+		return nil, fmt.Errorf("underline program: %w", err)
+	}
 	cp := &CellPass{
-		atlas:     atlas,
-		atlasTex:  uploadAtlas(atlas),
-		progGlyph: progGlyph,
-		progRect:  progRect,
+		atlas:         atlas,
+		atlasTex:      uploadAtlas(atlas),
+		progGlyph:     progGlyph,
+		progRect:      progRect,
+		progUnderline: progUnderline,
 	}
 	cp.quadVBO = newQuadVBO()
 	cp.glyphVAO, cp.glyphInstVBO = newInstancedVAO(cp.quadVBO, glyphInstanceFloats, 3)
 	cp.rectVAO, cp.rectInstVBO = newInstancedVAO(cp.quadVBO, rectInstanceFloats, 4)
+	cp.underlineVAO, cp.underlineInstVBO = newUnderlineVAO(cp.quadVBO)
 	return cp, nil
+}
+
+// ensureColorCache sizes fgCache/bgCache for a cols*rows grid, reusing the
+// backing array across frames (same reuse pattern as the scratch buffers
+// above) rather than reallocating every call.
+func (cp *CellPass) ensureColorCache(cols, rows int) {
+	n := cols * rows
+	if cap(cp.fgCache) < n {
+		cp.fgCache = make([][3]float32, n)
+		cp.bgCache = make([][3]float32, n)
+		return
+	}
+	cp.fgCache = cp.fgCache[:n]
+	cp.bgCache = cp.bgCache[:n]
 }
 
 func newQuadVBO() uint32 {
@@ -93,6 +120,27 @@ func newInstancedVAO(quadVBO uint32, floats, extra int) (vao, instVBO uint32) {
 	return vao, instVBO
 }
 
+// newUnderlineVAO builds the VAO for underline decoration instances:
+// aCellPos(2) + aColor(3) + aStyle(1) — see cell_underline.vert.
+func newUnderlineVAO(quadVBO uint32) (vao, instVBO uint32) {
+	gl.GenVertexArrays(1, &vao)
+	gl.BindVertexArray(vao)
+
+	gl.BindBuffer(gl.ARRAY_BUFFER, quadVBO)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointerWithOffset(0, 2, gl.FLOAT, false, 2*4, 0)
+
+	gl.GenBuffers(1, &instVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, instVBO)
+	stride := int32(underlineInstanceFloats * 4)
+	attachInstanceAttrib(1, 2, stride, 0)   // aCellPos
+	attachInstanceAttrib(2, 3, stride, 2*4) // aColor
+	attachInstanceAttrib(3, 1, stride, 5*4) // aStyle
+
+	gl.BindVertexArray(0)
+	return vao, instVBO
+}
+
 func attachInstanceAttrib(loc uint32, size int32, stride int32, offset int) {
 	gl.EnableVertexAttribArray(loc)
 	gl.VertexAttribPointerWithOffset(loc, size, gl.FLOAT, false, stride, uintptr(offset))
@@ -106,28 +154,50 @@ func attachInstanceAttrib(loc uint32, size int32, stride int32, offset int) {
 // rect layer (font.BlockRect), other box-drawing/powerline glyphs go to the
 // line-art layer (font.IsShapeRune), everything else is text. The cursor is
 // not baked here — it is an animated overlay drawn every frame (see
-// CursorPass).
-func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch float32) {
+// CursorPass). scrollOffset (0 = live tail) selects which window of
+// scr.VisibleWindow is drawn, for scrollback viewing. sel highlights the
+// current mouse selection, if any, by swapping fg/bg for cells inside it
+// (see Selection.Contains) — the same reverse-video convention the
+// terminal's own SGR 7 already uses for highlights.
+func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch float32, scrollOffset int, sel Selection) {
 	cp.bgScratch = cp.bgScratch[:0]
 	cp.blockScratch = cp.blockScratch[:0]
 	cp.shapeScratch = cp.shapeScratch[:0]
 	cp.textScratch = cp.textScratch[:0]
+	cp.underlineScratch = cp.underlineScratch[:0]
 	cp.cols, cp.rows = scr.Cols, scr.Rows
 	atlasW, atlasH := float32(cp.atlas.Image.Bounds().Dx()), float32(cp.atlas.Image.Bounds().Dy())
 	empty := ambientBG(cfg)
+	grid := scr.VisibleWindow(scrollOffset)
+	cp.ensureColorCache(scr.Cols, scr.Rows)
 
 	for y := 0; y < scr.Rows; y++ {
 		for x := 0; x < scr.Cols; x++ {
-			cell := scr.Grid[y][x]
+			cell := grid[y][x]
 			fg, bg := cellColors(cell.Attr, cfg)
+			// Cache this cell's own (unselected) color before applying the
+			// selection swap below, so bgRectEdges/blockRectEdges's
+			// neighbor lookups (see neighborColors) see exactly what a
+			// fresh cellColors call on this cell would have — selection
+			// highlighting was never part of that comparison, and caching
+			// must not change that.
+			i := y*scr.Cols + x
+			cp.fgCache[i], cp.bgCache[i] = fg, bg
+			if sel.Contains(x, y) {
+				fg, bg = bg, fg
+			}
 			px, py := float32(x)*cw, float32(y)*ch
+			if cell.Attr.Underline != screen.UnderlineNone {
+				ulColor := underlineColor(cell.Attr, fg, cfg)
+				cp.underlineScratch = appendUnderlineInstance(cp.underlineScratch, px, py, ulColor, float32(cell.Attr.Underline))
+			}
 			if bg != empty {
-				e := bgRectEdges(scr, cfg, x, y, bg)
+				e := bgRectEdges(grid, scr.Cols, scr.Rows, cp.fgCache, cp.bgCache, cfg, x, y, bg)
 				rx, ry, rw, rh := expandRect(0, 0, 1, 1, cw, ch, e)
 				cp.bgScratch = appendRectInstance(cp.bgScratch, px, py, rx, ry, rw, rh, bg, e.Radii)
 			}
 			if x0, y0, x1, y1, ok := font.BlockRect(cell.Rune); ok {
-				e := blockRectEdges(scr, cfg, x, y, cell.Rune, fg, x0, y0, x1, y1)
+				e := blockRectEdges(grid, scr.Cols, scr.Rows, cp.fgCache, cp.bgCache, cfg, x, y, cell.Rune, fg, x0, y0, x1, y1)
 				rx, ry, rw, rh := expandRect(x0, y0, x1-x0, y1-y0, cw, ch, e)
 				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, rx, ry, rw, rh, fg, e.Radii)
 				continue
@@ -185,6 +255,10 @@ func expandRect(rx, ry, rw, rh, cw, ch float32, e rectEdges) (float32, float32, 
 
 func appendGlyphInstance(dst []float32, px, py, u0, v0, us, vs float32, fg, bg [3]float32) []float32 {
 	return append(dst, px, py, u0, v0, us, vs, fg[0], fg[1], fg[2], bg[0], bg[1], bg[2])
+}
+
+func appendUnderlineInstance(dst []float32, px, py float32, color [3]float32, style float32) []float32 {
+	return append(dst, px, py, color[0], color[1], color[2], style)
 }
 
 // DrawAmbientBG paints fbo with a single flat-color full-screen rect —
@@ -288,6 +362,31 @@ func (cp *CellPass) DrawText(fbo *FBO, cw, ch float32) {
 	offsetX := (screenW - float32(cp.cols)*cw) / 2
 	offsetY := (screenH - float32(cp.rows)*ch) / 2
 	cp.drawGlyphs(cp.textScratch, cw, ch, screenW, screenH, offsetX, offsetY)
+
+	gl.Disable(gl.BLEND)
+	fbo.Unbind()
+}
+
+// DrawUnderline renders underline decorations (single/double/curly/dotted/
+// dashed — see screen.UnderlineStyle and cell_underline.frag) over an
+// existing base in fbo. No clear, same as DrawText, and drawn before it in
+// RenderScene's call order so a glyph's descender (g, y, j) still reads on
+// top of the underline band, matching normal terminal compositing.
+func (cp *CellPass) DrawUnderline(fbo *FBO, cw, ch float32) {
+	if len(cp.underlineScratch) == 0 {
+		return
+	}
+	fbo.Bind()
+	gl.Enable(gl.BLEND)
+	// Premultiplied alpha — see DrawText's identical blend setup.
+	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+
+	screenW, screenH := float32(fbo.W), float32(fbo.H)
+	offsetX := (screenW - float32(cp.cols)*cw) / 2
+	offsetY := (screenH - float32(cp.rows)*ch) / 2
+	gl.UseProgram(cp.progUnderline)
+	setCommonUniforms(cp.progUnderline, cw, ch, screenW, screenH, offsetX, offsetY)
+	uploadAndDrawInstances(cp.underlineVAO, cp.underlineInstVBO, cp.underlineScratch, underlineInstanceFloats)
 
 	gl.Disable(gl.BLEND)
 	fbo.Unbind()

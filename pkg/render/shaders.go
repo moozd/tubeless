@@ -17,6 +17,12 @@ var cellRectVertSrc string
 //go:embed assets/shaders/cell_rect.frag
 var cellRectFragSrc string
 
+//go:embed assets/shaders/cell_underline.vert
+var cellUnderlineVertSrc string
+
+//go:embed assets/shaders/cell_underline.frag
+var cellUnderlineFragSrc string
+
 //go:embed assets/shaders/image.vert
 var imageVertSrc string
 

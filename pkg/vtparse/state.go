@@ -20,10 +20,10 @@ const (
 type Sink interface {
 	Print(r rune)
 	Execute(b byte)
-	CSIDispatch(final byte, params []int, intermediates []byte, private byte)
+	CSIDispatch(final byte, params []int, subs [][]int, intermediates []byte, private byte)
 	EscDispatch(final byte, intermediates []byte)
 	OSCDispatch(data []byte)
-	DCSStart(final byte, params []int, intermediates []byte, private byte)
+	DCSStart(final byte, params []int, subs [][]int, intermediates []byte, private byte)
 	DCSPut(b byte)
 	DCSEnd()
 }
@@ -32,11 +32,21 @@ type Sink interface {
 // (DEC STD 070 / vt100.net), extended with a private-marker byte for CSI
 // and DCS so callers can distinguish e.g. "CSI ?" from plain "CSI".
 type Parser struct {
-	st            state
-	sink          Sink
-	params        []int
-	curParam      int
-	haveParam     bool
+	st        state
+	sink      Sink
+	params    []int
+	curParam  int
+	haveParam bool
+	// subs holds, for each entry in params, whatever ':'-separated
+	// sub-parameters followed it (nil if none) — e.g. ECMA-48 style curly
+	// underline (CSI 4:3m) or an underline color (CSI 58:2::r:g:bm). curTop
+	// is the value before the first ':' for the param currently being
+	// collected, curSub accumulates the values after it — see collectHeader
+	// and pushParam.
+	subs          [][]int
+	curTop        int
+	haveColon     bool
+	curSub        []int
 	intermediates []byte
 	private       byte
 	oscBuf        []byte
@@ -75,8 +85,12 @@ func (p *Parser) Write(data []byte) {
 func (p *Parser) reset() {
 	p.st = stateGround
 	p.params = p.params[:0]
+	p.subs = p.subs[:0]
 	p.curParam = 0
 	p.haveParam = false
+	p.curTop = 0
+	p.haveColon = false
+	p.curSub = nil
 	p.intermediates = p.intermediates[:0]
 	p.private = 0
 }

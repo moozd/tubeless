@@ -18,6 +18,7 @@ import (
 //	  each -> BlurPass (gaussian bloom)      -> blurFBO
 //	       -> CopyPass.DrawOver (alpha-composite over the base) -> sceneFBO
 //	-> sixel images (sharp)                              -> sceneFBO
+//	-> underline decorations (sharp)                     -> sceneFBO
 //	-> text glyphs (sharp, on top)                        -> sceneFBO
 //
 //	(every frame) cursor glow                             -> cursorFBO
@@ -47,7 +48,11 @@ type Renderer struct {
 	cursorCol, cursorRow float32
 	cursorInit           bool
 	cursorVisible        bool
-	cursorPhase          float32
+	cursorPhase          float64
+
+	// scrollOffset is the animated (eased) scrollback view position, in
+	// lines back from the live tail — see UpdateScroll.
+	scrollOffset float32
 
 	pendingImages []screen.PlacedImage
 }
@@ -103,8 +108,8 @@ func New(atlas *font.Atlas, cols, rows int) (*Renderer, error) {
 // the grid/cell geometry the cursor needs. scr should be an immutable
 // published snapshot (see cmd/tubeless's publish/load wiring) — this never
 // mutates it and needs no locking.
-func (r *Renderer) PrepareFrame(scr *screen.Screen, cfg config.Config, cellW, cellH float32) {
-	r.cellPass.BuildInstances(scr, cfg, cellW, cellH)
+func (r *Renderer) PrepareFrame(scr *screen.Screen, cfg config.Config, cellW, cellH float32, scrollOffset int, sel Selection) {
+	r.cellPass.BuildInstances(scr, cfg, cellW, cellH, scrollOffset, sel)
 	r.pendingImages = scr.Images
 	r.cols, r.rows = scr.Cols, scr.Rows
 	r.cellW, r.cellH = cellW, cellH
@@ -138,6 +143,7 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	r.compositeGlow(shape, scene, outW, outH, cfg)
 
 	r.imagePass.Draw(r.sceneFBO, r.pendingImages, cellW, cellH)
+	r.cellPass.DrawUnderline(r.sceneFBO, cellW, cellH)
 	r.cellPass.DrawText(r.sceneFBO, cellW, cellH)
 }
 
@@ -165,7 +171,7 @@ func (r *Renderer) compositeGlow(src, dst *FBO, outW, outH int, cfg config.Confi
 func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 	tx, ty := float32(x), float32(y)
 	r.cursorVisible = visible
-	r.cursorPhase += float32(dt)
+	r.cursorPhase += dt
 
 	if !r.cursorInit {
 		r.cursorCol, r.cursorRow = tx, ty
@@ -183,6 +189,33 @@ func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 	r.cursorRow += (ty - r.cursorRow) * k
 }
 
+// scrollEaseSpeed is UpdateScroll's exponential-approach rate (per
+// second) — same shape as cursorGlideSpeed, tuned so a wheel notch's jump
+// settles in well under 200ms rather than snapping instantly.
+const scrollEaseSpeed = 18.0
+
+// UpdateScroll eases the scrollback view position toward target (lines
+// back from the live tail), reusing UpdateCursor's exponential-approach
+// pattern so a wheel scroll animates smoothly instead of the visible
+// window jumping straight to its new position. Called every frame from
+// the render loop, same as UpdateCursor.
+func (r *Renderer) UpdateScroll(target int, dt float64) {
+	k := 1.0 - float32(math.Exp(-scrollEaseSpeed*dt))
+	r.scrollOffset += (float32(target) - r.scrollOffset) * k
+	if abs32(float32(target)-r.scrollOffset) < 0.05 {
+		r.scrollOffset = float32(target)
+	}
+}
+
+// CurrentScrollLine rounds the animated scroll offset to the nearest
+// whole line — the grid can only be drawn at a whole-line offset (see
+// screen.Screen.VisibleWindow), so the animation's job is to make the
+// sequence of whole-line snaps read as a smooth glide, not to interpolate
+// a fractional line itself.
+func (r *Renderer) CurrentScrollLine() int {
+	return int(math.Round(float64(r.scrollOffset)))
+}
+
 // RenderEffects draws the animated cursor glow and presents the final
 // composite. It runs every visible frame so the cursor keeps gliding and
 // breathing even with the shell idle.
@@ -190,12 +223,24 @@ func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config) {
 	offsetX := (float32(outW) - float32(r.cols)*r.cellW) / 2
 	offsetY := (float32(outH) - float32(r.rows)*r.cellH) / 2
 
-	// Gentle breathing: a sine around a floor so the cursor never vanishes
-	// while visible — just swells and relaxes. The floor used to live in
-	// cursor.frag, where it leaked a ghost whenever a program hid the cursor
-	// — the shader now multiplies by uBright directly, so hidden means
-	// exactly black.
-	pulse := math.Sin(2 * math.Pi * float64(r.cursorPhase) / float64(cfg.Cursor.PulsePeriod))
+	// Wrap the accumulated phase down to one period: UpdateCursor just
+	// keeps adding dt for the process's whole lifetime, and sin() being
+	// periodic makes that mathematically fine, but letting the raw value
+	// grow unboundedly for hours eventually loses precision at the scale
+	// dt's tiny per-frame increments need, which reads as the breathing
+	// cycle's timing drifting/stuttering. Wrapping here bounds the value
+	// actually fed to sin() without touching UpdateCursor's signature.
+	period := float64(cfg.Cursor.PulsePeriod)
+	pulse := 1.0
+	if period > 0 {
+		r.cursorPhase = math.Mod(r.cursorPhase, period)
+		// Gentle breathing: a sine around a floor so the cursor never
+		// vanishes while visible — just swells and relaxes. The floor
+		// used to live in cursor.frag, where it leaked a ghost whenever a
+		// program hid the cursor — the shader now multiplies by uBright
+		// directly, so hidden means exactly black.
+		pulse = math.Sin(2 * math.Pi * r.cursorPhase / period)
+	}
 	bright := float32(0.6 + 0.4*pulse)
 	bright = 0.35 + 0.65*bright
 	if !r.cursorVisible {

@@ -108,7 +108,7 @@ func (h *Handler) OSCDispatch(data []byte) {}
 // "DCS P1;P2;P3 q" — final 'q', no intermediates, no private marker — with
 // no other DCS use of a bare 'q' final to confuse it with; anything else
 // (e.g. a future ReGIS introducer) is left uncollected.
-func (h *Handler) DCSStart(final byte, params []int, intermediates []byte, private byte) {
+func (h *Handler) DCSStart(final byte, params []int, subs [][]int, intermediates []byte, private byte) {
 	if final == 'q' && private == 0 && len(intermediates) == 0 {
 		h.sixelDec = sixel.NewDecoder()
 	}

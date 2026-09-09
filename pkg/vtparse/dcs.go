@@ -10,7 +10,7 @@ func (p *Parser) advanceDCS(b byte) {
 	if !ok {
 		return
 	}
-	p.sink.DCSStart(final, p.params, p.intermediates, p.private)
+	p.sink.DCSStart(final, p.params, p.subs, p.intermediates, p.private)
 	p.st = stateDCSPassthrough
 }
 

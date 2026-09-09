@@ -71,10 +71,10 @@ func cellColors(attr screen.Attr, cfg config.Config) (fg, bg [3]float32) {
 func trueColorCell(attr screen.Attr, cfg config.Config) (fg, bg [3]float32) {
 	fg, bg = cfg.Colors.DefaultFg, cfg.Colors.DefaultBg
 	if attr.FgSet {
-		fg = attr.FgRGB
+		fg = resolveRGB(attr.FgIndexed, attr.FgIdx, attr.FgRGB, cfg)
 	}
 	if attr.BgSet {
-		bg = attr.BgRGB
+		bg = resolveRGB(attr.BgIndexed, attr.BgIdx, attr.BgRGB, cfg)
 	}
 	if attr.Reverse {
 		fg, bg = bg, fg
@@ -89,6 +89,33 @@ func trueColorCell(attr screen.Attr, cfg config.Config) (fg, bg [3]float32) {
 		fg = scale3(fg, 0.6)
 	}
 	return fg, bg
+}
+
+// underlineColor is what an underline decoration (see cellpass.go's
+// BuildInstances) draws in: the cell's own foreground by default — fg is
+// already resolved post-selection-swap by the caller, so the underline
+// tracks Reverse/selection the same way the glyph above it does — unless
+// SGR 58 set an explicit underline color (Attr.UnderlineColorSet), which
+// only has somewhere real to resolve into under a TrueColor theme; the
+// monochrome ramp has no separate hue channel for an independent color, so
+// it always falls back to fg there.
+func underlineColor(attr screen.Attr, fg [3]float32, cfg config.Config) [3]float32 {
+	if !cfg.TrueColor || !attr.UnderlineColorSet {
+		return fg
+	}
+	return resolveRGB(attr.UnderlineIndexed, attr.UnderlineIdx, attr.UnderlineRGB, cfg)
+}
+
+// resolveRGB returns a cell's actual color: a palette lookup for an
+// indexed SGR color (against the *active* theme's Colors.Palette, so a
+// live theme switch recolors already-written cells correctly — see
+// Attr's doc comment), or the direct RGB already carried on the cell for
+// a truecolor/256-cube SGR color.
+func resolveRGB(indexed bool, idx int8, direct [3]float32, cfg config.Config) [3]float32 {
+	if indexed {
+		return cfg.Colors.Palette[idx&0xf]
+	}
+	return direct
 }
 
 // boost3/scale3 are trueColorCell's RGB analogues of fgIntensity's
@@ -190,14 +217,37 @@ func ambientBG(cfg config.Config) [3]float32 {
 	return [3]float32{0, 0, 0}
 }
 
+// neighborColors is bgRectEdges/blockRectEdges' shared neighbor lookup:
+// cellColors for the cell at (nx,ny), preferring an already-computed
+// cache entry over a redundant call. fgCache/bgCache hold every
+// already-visited cell's own cellColors result (BuildInstances fills them
+// in as it sweeps the grid row-major, x innermost) — a neighbor above
+// (ny<y) or to the left on the same row (ny==y && nx<x) of the cell
+// currently being processed at (x,y) is always already visited by
+// construction, so its color comes from the cache instead of recomputing;
+// a neighbor to the right or below isn't visited yet and still computes
+// directly, same as before this cache existed.
+func neighborColors(grid [][]screen.Cell, fgCache, bgCache [][3]float32, cols int, cfg config.Config, x, y, nx, ny int) (fg, bg [3]float32) {
+	if ny < y || (ny == y && nx < x) {
+		i := ny*cols + nx
+		return fgCache[i], bgCache[i]
+	}
+	return cellColors(grid[ny][nx].Attr, cfg)
+}
+
 // bgRectEdges computes rectEdges for a background fill at cell (x,y).
-func bgRectEdges(scr *screen.Screen, cfg config.Config, x, y int, bg [3]float32) rectEdges {
+// grid/cols/rows are the currently-visible window (see
+// screen.Screen.VisibleWindow) rather than the live Screen directly, so
+// neighbor lookups respect the same scrolled-back view BuildInstances is
+// drawing, not necessarily the screen's live tail. fgCache/bgCache are
+// BuildInstances' per-cell color cache — see neighborColors.
+func bgRectEdges(grid [][]screen.Cell, cols, rows int, fgCache, bgCache [][3]float32, cfg config.Config, x, y int, bg [3]float32) rectEdges {
 	same := func(dx, dy int) bool {
 		nx, ny := x+dx, y+dy
-		if nx < 0 || nx >= scr.Cols || ny < 0 || ny >= scr.Rows {
+		if nx < 0 || nx >= cols || ny < 0 || ny >= rows {
 			return false
 		}
-		_, nbg := cellColors(scr.Grid[ny][nx].Attr, cfg)
+		_, nbg := neighborColors(grid, fgCache, bgCache, cols, cfg, x, y, nx, ny)
 		return nbg == bg
 	}
 	up, right, down, left := same(0, -1), same(1, 0), same(0, 1), same(-1, 0)
@@ -218,17 +268,17 @@ func bgRectEdges(scr *screen.Screen, cfg config.Config, x, y int, bg [3]float32)
 // never counts as continuing, since nothing can continue across a boundary
 // internal to the same cell (e.g. the bottom edge of ▀, the upper-half
 // block) — its corners always round, and it's never overshot.
-func blockRectEdges(scr *screen.Screen, cfg config.Config, x, y int, r rune, fg [3]float32, x0, y0, x1, y1 float32) rectEdges {
+func blockRectEdges(grid [][]screen.Cell, cols, rows int, fgCache, bgCache [][3]float32, cfg config.Config, x, y int, r rune, fg [3]float32, x0, y0, x1, y1 float32) rectEdges {
 	same := func(dx, dy int) bool {
 		nx, ny := x+dx, y+dy
-		if nx < 0 || nx >= scr.Cols || ny < 0 || ny >= scr.Rows {
+		if nx < 0 || nx >= cols || ny < 0 || ny >= rows {
 			return false
 		}
-		n := scr.Grid[ny][nx]
+		n := grid[ny][nx]
 		if n.Rune != r {
 			return false
 		}
-		nfg, _ := cellColors(n.Attr, cfg)
+		nfg, _ := neighborColors(grid, fgCache, bgCache, cols, cfg, x, y, nx, ny)
 		return nfg == fg
 	}
 	touchTop, touchRight := y0 == 0, x1 == 1

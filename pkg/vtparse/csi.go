@@ -9,6 +9,6 @@ func (p *Parser) advanceCSI(b byte) {
 	if !ok {
 		return
 	}
-	p.sink.CSIDispatch(final, p.params, p.intermediates, p.private)
+	p.sink.CSIDispatch(final, p.params, p.subs, p.intermediates, p.private)
 	p.reset()
 }

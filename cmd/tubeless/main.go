@@ -1,3 +1,10 @@
+// Command tubeless is a GPU-rendered terminal emulator. It's a normal
+// foreground GUI process — it opens a window and doesn't return until
+// that window closes — so launching it straight from a shell blocks that
+// shell's prompt until you close the window, same as any other GUI app
+// invoked without backgrounding. Run it as `tubeless &` (or via a desktop
+// entry, which launches detached by construction) if you want the shell
+// back immediately.
 package main
 
 import (
@@ -8,9 +15,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
@@ -52,8 +62,27 @@ func main() {
 		runConfigTUI()
 	}
 
+	// Registered before anything else — critically, before any cgo call
+	// (font.Build's FreeType binding is the first one below). Something
+	// in FreeType's C-side initialization resets SIGTERM's process-wide
+	// disposition back to default if Go's own handler is installed after
+	// it: registering late meant Ctrl-C/SIGTERM killed the process
+	// outright (skipping sess.Close()/win.Destroy() below) even though
+	// signal.Notify looked like it should have caught it — confirmed by
+	// bisecting a minimal repro. Registering first, before FreeType ever
+	// runs, avoids the clobber entirely; closeRequested lets runLoop exit
+	// through its normal cleanup path instead of the process dying
+	// mid-signal.
+	closeRequested := new(atomic.Bool)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		closeRequested.Store(true)
+	}()
+
 	fs := flag.NewFlagSet("tubeless", flag.ExitOnError)
-	themeName := fs.String("theme", "", "starting theme preset: rosepine | amber | green (config file overrides)")
+	themeName := fs.String("theme", "", fmt.Sprintf("starting theme preset: %s (config file overrides)", strings.Join(config.PresetNames(), " | ")))
 	shell := fs.String("shell", "", "program to run instead of $SHELL")
 	fontFamily := fs.String("font", "", "installed font family name (default: bundled FiraCode Nerd)")
 	fontSize := fs.Int("font-size", 0, "logical font size in pixels (default: config font.size)")
@@ -84,23 +113,31 @@ func main() {
 
 	sess := startShell(*shell)
 	defer sess.Close()
+	// log.Fatalf calls os.Exit internally, which would skip the deferred
+	// sess.Close() above and leak the already-spawned shell — every fatal
+	// error from here on must close it explicitly first.
+	fatal := func(format string, args ...any) {
+		log.Printf(format, args...)
+		sess.Close()
+		os.Exit(1)
+	}
 
 	var shared atomic.Pointer[screen.Screen]
 	resizeCh := make(chan resizeReq, 1)
 	shared.Store(screen.New(cols, rows))
-	go ptyCoordinator(sess, &shared, resizeCh)
+	go ptyCoordinator(sess, &shared, resizeCh, cfg.Scrollback.Lines, closeRequested)
 
 	winW := cols * (atlas.CellWidth / cfg.Atlas.Scale) * windowScale
 	winH := rows * (atlas.CellHeight / cfg.Atlas.Scale) * windowScale
 	win, err := render.NewWindow(fmt.Sprintf("tubeless (%s)", cfg.Theme), winW, winH)
 	if err != nil {
-		log.Fatalf("open window: %v", err)
+		fatal("open window: %v", err)
 	}
 	defer win.Destroy()
 
 	renderer, err := render.New(atlas, cols, rows)
 	if err != nil {
-		log.Fatalf("init renderer: %v", err)
+		fatal("init renderer: %v", err)
 	}
 
 	// On Wayland, content scale arrives asynchronously — the compositor's
@@ -137,8 +174,12 @@ func main() {
 		pushResize(win, resizeCh, cs)
 	})
 
-	wireInput(win, sess)
-	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve)
+	sel := &render.Selection{}
+	wireInput(win, sess, &shared)
+	scroll := &scrollState{}
+	wireMouse(win, sess, &shared, scroll, cs, sel)
+
+	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh)
 }
 
 // runConfigTUI runs `tubeless config`: cmd/tubeless-config is a plain
@@ -242,8 +283,9 @@ func loadFontBytes(family string) []byte {
 // requests — without either blocking the other: a resize while the shell
 // is idle (no PTY output pending) must still take effect immediately, not
 // wait for the next byte to arrive on a blocking Read.
-func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], resizeCh <-chan resizeReq) {
+func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], resizeCh <-chan resizeReq, scrollbackLines int, closeRequested *atomic.Bool) {
 	work := screen.New(cols, rows)
+	work.SetScrollbackCap(scrollbackLines)
 	handler := screen.NewHandler(work)
 	parser := vtparse.New(handler)
 
@@ -254,9 +296,22 @@ func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], 
 		select {
 		case chunk, ok := <-readCh:
 			if !ok {
+				// The shell exited (pumpPTYOutput's read hit EOF and closed
+				// readCh) — without this, runLoop would never learn the
+				// shell is gone and the window would sit open forever with
+				// the shell left unreaped as a zombie.
+				closeRequested.Store(true)
 				return
 			}
 			parser.Write(chunk)
+			// A single redraw an app writes in one syscall (a full-screen
+			// clear-and-redraw, a colored highlight bar) can still arrive
+			// here split across multiple 4KB reads (see pumpPTYOutput) —
+			// publishing after every chunk risked a frame landing exactly
+			// between the clear and the redraw, which read as a visible
+			// blink. Draining whatever's already queued before publishing
+			// once coalesces that back into a single, complete frame.
+			drainPending(readCh, parser)
 			shared.Store(work.Clone())
 		case req := <-resizeCh:
 			if req.cols == work.Cols && req.rows == work.Rows {
@@ -267,6 +322,22 @@ func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], 
 				log.Printf("pty resize: %v", err)
 			}
 			shared.Store(work.Clone())
+		}
+	}
+}
+
+// drainPending feeds parser every chunk already sitting in readCh, without
+// blocking once it's empty — see ptyCoordinator's case above for why.
+func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
+	for {
+		select {
+		case chunk, ok := <-readCh:
+			if !ok {
+				return
+			}
+			parser.Write(chunk)
+		default:
+			return
 		}
 	}
 }
@@ -415,15 +486,17 @@ func (w *cfgWatch) changed(now time.Time) bool {
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config) {
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq) {
 	r := renderer
 	var lastScr *screen.Screen
 	var lastW, lastH int
+	lastScrollLine := -1
+	var lastSel render.Selection
 	lastFrame := time.Now()
 	watch := &cfgWatch{path: cfgPath}
 	reload := false
 
-	for !win.ShouldClose() {
+	for !win.ShouldClose() && !closeRequested.Load() {
 		if win.GetAttrib(glfw.Iconified) == glfw.True {
 			// Iconified windows must not burn GPU presenting frames the
 			// user can't see. WaitEvents blocks (no spin) until the window
@@ -446,6 +519,11 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 					log.Printf("rebuild renderer for new config: %v", err)
 				} else {
 					r = nr
+					// The window's pixel size didn't change, but cs (cell
+					// size) just did — cols/rows must reflow against it, or
+					// the grid stays sized for the old font until the user
+					// happens to resize the window themselves.
+					pushResize(win, resizeCh, cs)
 				}
 			}
 			reload = true
@@ -462,16 +540,26 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 
 		w, h := win.FramebufferPixelSize()
 		scr := shared.Load()
-		dirty := scr != lastScr || w != lastW || h != lastH || reload
+		if scr.InAltScreen() {
+			// A full-screen app took over — viewing scrollback, or a
+			// stale local selection from before it started, doesn't
+			// make sense under its own live redraws.
+			scroll.target = 0
+			*sel = render.Selection{}
+		}
+		r.UpdateScroll(scroll.target, dt)
+		scrollLine := r.CurrentScrollLine()
+
+		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
 		reload = false
 
 		if dirty {
-			r.PrepareFrame(scr, cfg, cs.w, cs.h)
+			r.PrepareFrame(scr, cfg, cs.w, cs.h, scrollLine, *sel)
 			r.RenderScene(w, h, cs.w, cs.h, cfg)
 		}
 		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt)
 		r.RenderEffects(w, h, cfg)
 		win.SwapBuffers()
-		lastScr, lastW, lastH = scr, w, h
+		lastScr, lastW, lastH, lastScrollLine, lastSel = scr, w, h, scrollLine, *sel
 	}
 }

@@ -19,7 +19,7 @@ package screen
 type Attr struct {
 	Bold      bool
 	Dim       bool
-	Underline bool
+	Underline UnderlineStyle
 	Blink     bool
 	Reverse   bool
 	Invisible bool
@@ -33,7 +33,32 @@ type Attr struct {
 	BgIdx     int8
 	Bg        float32
 	BgRGB     [3]float32
+
+	// UnderlineColorSet is SGR 58 (59 clears it): an explicit underline
+	// color, independent of Fg — a spellcheck squiggle drawn in red under
+	// otherwise plain-colored text, say. Unset (the common case) means the
+	// underline draws in the cell's own foreground color instead. Same
+	// indexed-vs-direct-RGB split as Fg/FgIndexed/FgIdx/FgRGB, and (see
+	// pkg/render's resolveRGB) resolved the same way.
+	UnderlineColorSet bool
+	UnderlineIndexed  bool
+	UnderlineIdx      int8
+	UnderlineRGB      [3]float32
 }
+
+// UnderlineStyle is which underline decoration (if any) SGR 4 selected —
+// none, or 4:0/4:1/4:2/4:3/4:4/4:5's extended sub-styles (a bare "CSI 4m"
+// with no sub-parameter is UnderlineSingle, matching every real terminal).
+type UnderlineStyle uint8
+
+const (
+	UnderlineNone UnderlineStyle = iota
+	UnderlineSingle
+	UnderlineDouble
+	UnderlineCurly
+	UnderlineDotted
+	UnderlineDashed
+)
 
 // Cell is one grid position: a rune plus the attributes it was written with.
 type Cell struct {
