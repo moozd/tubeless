@@ -14,14 +14,14 @@ func (s *Screen) EraseInLine(mode EraseMode) {
 	row := s.Grid[s.CursorY]
 	from, to := eraseBounds(mode, s.CursorX, s.Cols-1)
 	for x := from; x <= to; x++ {
-		row[x] = blankCell()
+		row[x] = erasedCell(s.CurAttr)
 	}
 }
 
 func (s *Screen) EraseInDisplay(mode EraseMode) {
 	from, to := eraseBounds(mode, s.CursorY, s.Rows-1)
 	for y := from; y <= to; y++ {
-		s.Grid[y] = newRow(s.Cols)
+		s.Grid[y] = s.blankRow()
 	}
 	if mode == EraseToEnd {
 		s.EraseInLine(EraseToEnd)

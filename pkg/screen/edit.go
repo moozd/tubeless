@@ -10,9 +10,10 @@ func (s *Screen) InsertLines(n int) {
 		return
 	}
 	top, bottom := s.CursorY, s.ScrollBottom
-	for range min(n, bottom-top+1) {
-		copy(s.Grid[top+1:bottom+1], s.Grid[top:bottom])
-		s.Grid[top] = newRow(s.Cols)
+	n = min(n, bottom-top+1)
+	copy(s.Grid[top+n:bottom+1], s.Grid[top:bottom-n+1])
+	for y := top; y < top+n; y++ {
+		s.Grid[y] = s.blankRow()
 	}
 }
 
@@ -24,9 +25,10 @@ func (s *Screen) DeleteLines(n int) {
 		return
 	}
 	top, bottom := s.CursorY, s.ScrollBottom
-	for range min(n, bottom-top+1) {
-		copy(s.Grid[top:bottom], s.Grid[top+1:bottom+1])
-		s.Grid[bottom] = newRow(s.Cols)
+	n = min(n, bottom-top+1)
+	copy(s.Grid[top:bottom-n+1], s.Grid[top+n:bottom+1])
+	for y := bottom - n + 1; y <= bottom; y++ {
+		s.Grid[y] = s.blankRow()
 	}
 }
 
@@ -37,7 +39,7 @@ func (s *Screen) InsertChars(n int) {
 	n = min(n, s.Cols-s.CursorX)
 	copy(row[s.CursorX+n:], row[s.CursorX:s.Cols-n])
 	for x := s.CursorX; x < s.CursorX+n; x++ {
-		row[x] = blankCell()
+		row[x] = erasedCell(s.CurAttr)
 	}
 }
 
@@ -48,7 +50,7 @@ func (s *Screen) DeleteChars(n int) {
 	n = min(n, s.Cols-s.CursorX)
 	copy(row[s.CursorX:s.Cols-n], row[s.CursorX+n:])
 	for x := s.Cols - n; x < s.Cols; x++ {
-		row[x] = blankCell()
+		row[x] = erasedCell(s.CurAttr)
 	}
 }
 
@@ -59,6 +61,6 @@ func (s *Screen) EraseChars(n int) {
 	row := s.Grid[s.CursorY]
 	end := min(s.CursorX+n, s.Cols)
 	for x := s.CursorX; x < end; x++ {
-		row[x] = blankCell()
+		row[x] = erasedCell(s.CurAttr)
 	}
 }

@@ -30,12 +30,68 @@ type Screen struct {
 	altGrid  [][]Cell
 	usingAlt bool
 	altSaved savedCursor
+
+	// scrollback holds rows that scrolled off the primary screen's actual
+	// top edge (see ScrollUp). It's a pointer so Clone() — called on
+	// every PTY-output chunk — can copy it in O(1) instead of deep-copying
+	// up to scrollbackCap rows every time; see appendScrollback.
+	scrollback    *scrollbackBuf
+	scrollbackCap int
+
+	// Mouse-reporting state, set by CSI ?1000/1002/1003/1006h/l (see
+	// csi.go's setMode) — a child app (vim, tmux, htop) that wants mouse
+	// events sets these; cmd/tubeless's mouse handling checks MouseMode
+	// before treating a click/drag/wheel as local selection/scroll rather
+	// than something to forward to the PTY. See mouse.go for the SGR
+	// encoder that builds the actual escape sequence.
+	MouseMode      MouseMode
+	MouseSGR       bool
+	BracketedPaste bool
+
+	// ApplicationCursorKeys is DECCKM (CSI ?1h/l): while set, the arrow
+	// keys and Home/End should be sent as SS3 (ESC O <letter>) instead of
+	// CSI (ESC [ <letter>) when unmodified — vim, less, and most other
+	// full-screen apps turn this on so they can tell cursor keys apart
+	// from a plain CSI sequence. See cmd/tubeless/input.go's encodeCursorKey.
+	ApplicationCursorKeys bool
+}
+
+// MouseMode is which mouse events (if any) the application has asked to
+// receive, via the corresponding DEC private mode.
+type MouseMode int
+
+const (
+	MouseOff   MouseMode = iota
+	MouseClick           // ?1000: button press/release only
+	MouseDrag            // ?1002: press/release + motion while a button is held
+	MouseAny             // ?1003: press/release + all motion, button held or not
+)
+
+// scrollbackBuf is scrollback's actual storage, wrapped in its own type so
+// Screen.Clone() can copy the pointer alone: a Screen's mutator (the sole
+// writer, appendScrollback) always replaces this pointer with a new value
+// rather than mutating rows in place, so a previously-published clone's
+// view of a *scrollbackBuf it already holds never changes underneath it —
+// same "publish immutable snapshots" contract Screen itself follows.
+type scrollbackBuf struct {
+	rows [][]Cell
+	// start is the index of the first live row: rows[start:] is the actual
+	// scrollback content, rows[:start] is dead weight not yet reclaimed.
+	// appendScrollback bumps start instead of copying on most calls once at
+	// cap, only paying the O(cap) compaction cost once every cap appends —
+	// see appendScrollback.
+	start int
 }
 
 type savedCursor struct {
 	x, y int
 	attr Attr
 }
+
+// DefaultScrollbackLines is the scrollback cap a new Screen starts with
+// before SetScrollbackCap (driven by config.Config's Scrollback.Lines)
+// applies the user's configured value.
+const DefaultScrollbackLines = 5000
 
 func New(cols, rows int) *Screen {
 	s := &Screen{Cols: cols, Rows: rows, AutoWrap: true, CursorVisible: true}
@@ -44,7 +100,25 @@ func New(cols, rows int) *Screen {
 	for y := range s.Grid {
 		s.Grid[y] = newRow(cols)
 	}
+	s.scrollback = &scrollbackBuf{}
+	s.scrollbackCap = DefaultScrollbackLines
 	return s
+}
+
+// SetScrollbackCap changes how many rows scrolled off the top are
+// retained, trimming immediately if the new cap is smaller. Replaces the
+// scrollback pointer rather than mutating the existing *scrollbackBuf in
+// place, so a previously-published clone's view is unaffected.
+func (s *Screen) SetScrollbackCap(n int) {
+	if n < 0 {
+		n = 0
+	}
+	s.scrollbackCap = n
+	live := s.scrollback.rows[s.scrollback.start:]
+	if len(live) > n {
+		live = live[len(live)-n:]
+	}
+	s.scrollback = &scrollbackBuf{rows: append([][]Cell(nil), live...)}
 }
 
 // Clone returns an independent deep copy, safe to hand to another
@@ -57,18 +131,26 @@ func (s *Screen) Clone() *Screen {
 		c.Grid[y] = append([]Cell(nil), row...)
 	}
 	c.Images = append([]PlacedImage(nil), s.Images...)
+	// scrollback is copy-on-write (see its doc comment): the struct copy
+	// above already carries the pointer over, and appendScrollback never
+	// mutates a *scrollbackBuf a clone might be holding, only replaces
+	// s.scrollback with a new one — so no deep copy is needed here, unlike
+	// Grid/Images above. This is what keeps Clone() (called on every
+	// PTY-output chunk) cheap even with thousands of scrollback rows.
 	return &c
 }
 
 // Reset restores a freshly-initialized state at the current size (RIS).
 func (s *Screen) Reset() {
-	cols, rows := s.Cols, s.Rows
+	cols, rows, scrollbackCap := s.Cols, s.Rows, s.scrollbackCap
 	*s = Screen{Cols: cols, Rows: rows, AutoWrap: true, CursorVisible: true}
 	s.ScrollBottom = rows - 1
 	s.Grid = make([][]Cell, rows)
 	for y := range s.Grid {
 		s.Grid[y] = newRow(cols)
 	}
+	s.scrollback = &scrollbackBuf{}
+	s.scrollbackCap = scrollbackCap
 }
 
 // Resize reallocates the grid to cols x rows, preserving whatever overlaps
@@ -154,6 +236,19 @@ func newRow(cols int) []Cell {
 	return row
 }
 
+// blankRow is EraseInDisplay's row-at-a-time equivalent of erasedCell: a
+// whole row erased to the cursor's current background, not the hardcoded
+// default newRow uses for structural allocation (Reset/Resize/initial
+// grid) where there's no cursor attribute to erase "to" in the first
+// place.
+func (s *Screen) blankRow() []Cell {
+	row := make([]Cell, s.Cols)
+	for x := range row {
+		row[x] = erasedCell(s.CurAttr)
+	}
+	return row
+}
+
 func (s *Screen) charset() Charset {
 	if s.usingG1 {
 		return s.g1
@@ -207,13 +302,105 @@ func (s *Screen) CarriageReturn() {
 // Sixel images anchored inside the region move up with the text; an image
 // whose anchor scrolls past the region's top has scrolled off and is
 // dropped, so it doesn't linger overlaying newer content.
+//
+// A row leaving through the top is captured to scrollback first, but only
+// when the scroll region IS the whole screen (top==0, bottom==Rows-1) and
+// we're on the primary buffer: a partial DEC scroll region (some apps use
+// one to pin a status line while scrolling the rest) isn't ordinary
+// "new output pushed the old line up" scrolling, so its content was never
+// meant to become history, and an alt-screen app's (vim, htop) redraws
+// must never spam scrollback.
 func (s *Screen) ScrollUp(n int) {
 	top, bottom := s.ScrollTop, s.ScrollBottom
-	for range n {
-		copy(s.Grid[top:bottom], s.Grid[top+1:bottom+1])
-		s.Grid[bottom] = newRow(s.Cols)
+	n = min(n, bottom-top+1)
+	capture := !s.usingAlt && top == 0 && bottom == s.Rows-1
+	if capture {
+		for y := top; y < top+n; y++ {
+			s.appendScrollback(s.Grid[y])
+		}
+	}
+	copy(s.Grid[top:bottom-n+1], s.Grid[top+n:bottom+1])
+	for y := bottom - n + 1; y <= bottom; y++ {
+		s.Grid[y] = newRow(s.Cols)
 	}
 	s.shiftImagesUp(n, top)
+}
+
+// appendScrollback adds row (copied — the caller's slice is about to be
+// overwritten) to scrollback, evicting from the front once scrollbackCap
+// is exceeded. Always builds a new *scrollbackBuf rather than mutating the
+// existing one in place — see scrollback's doc comment.
+func (s *Screen) appendScrollback(row []Cell) {
+	if s.scrollbackCap <= 0 {
+		return
+	}
+	rowCopy := append([]Cell(nil), row...)
+	rows := append(s.scrollback.rows, rowCopy)
+	start := s.scrollback.start
+	if len(rows)-start > s.scrollbackCap {
+		start++
+	}
+	if start >= s.scrollbackCap {
+		// The dead prefix has grown to a full cap's worth: copy down into a
+		// fresh, exactly-sized backing array so those rows' cells become
+		// reclaimable, rather than reslicing which would keep every row
+		// ever pushed reachable through the still-growing backing array
+		// underneath — a real memory leak for a long-running session that
+		// scrolls well past the cap. Doing this once every scrollbackCap
+		// appends (instead of on every append) is what makes eviction
+		// amortized O(1) rather than O(scrollbackCap) per scrolled line.
+		trimmed := make([][]Cell, s.scrollbackCap)
+		copy(trimmed, rows[start:])
+		rows, start = trimmed, 0
+	}
+	s.scrollback = &scrollbackBuf{rows: rows, start: start}
+}
+
+// ScrollbackLen is how many rows are currently retained above the primary
+// screen's live top edge.
+func (s *Screen) ScrollbackLen() int {
+	return len(s.scrollback.rows) - s.scrollback.start
+}
+
+// InAltScreen reports whether the alternate screen buffer (a full-screen
+// app like vim/htop/less) is currently active — callers use this to
+// disable scrollback viewing (there's nothing meaningful to scroll back
+// through under a full-screen app's own redraws) rather than reaching
+// into the unexported usingAlt field directly.
+func (s *Screen) InAltScreen() bool {
+	return s.usingAlt
+}
+
+// VisibleWindow returns the `rows`-tall window of content that should be
+// on screen when scrolled back by scrollOffset lines from the live tail
+// (0 = the normal, unscrolled view — Grid itself). scrollOffset is
+// clamped to [0, ScrollbackLen()]. The returned rows are shared with
+// scrollback/Grid's own backing storage — treat them read-only, same as
+// Grid is expected to be once published via Clone().
+func (s *Screen) VisibleWindow(scrollOffset int) [][]Cell {
+	if scrollOffset <= 0 {
+		return s.Grid
+	}
+	sb := s.scrollback.rows[s.scrollback.start:]
+	if scrollOffset > len(sb) {
+		scrollOffset = len(sb)
+	}
+	window := make([][]Cell, s.Rows)
+	// The window's bottom edge sits scrollOffset rows above the live
+	// tail: rows from scrollback fill from the top, then Grid fills
+	// whatever's left once scrollback is exhausted going down.
+	for i := range window {
+		src := len(sb) - scrollOffset + i
+		switch {
+		case src < 0:
+			window[i] = newRow(s.Cols)
+		case src < len(sb):
+			window[i] = sb[src]
+		default:
+			window[i] = s.Grid[src-len(sb)]
+		}
+	}
+	return window
 }
 
 // ScrollDown shifts the scroll region down by n lines, filling with blanks.
@@ -221,9 +408,10 @@ func (s *Screen) ScrollUp(n int) {
 // anchor would drop below the region's bottom is dropped (see ScrollUp).
 func (s *Screen) ScrollDown(n int) {
 	top, bottom := s.ScrollTop, s.ScrollBottom
-	for range n {
-		copy(s.Grid[top+1:bottom+1], s.Grid[top:bottom])
-		s.Grid[top] = newRow(s.Cols)
+	n = min(n, bottom-top+1)
+	copy(s.Grid[top+n:bottom+1], s.Grid[top:bottom-n+1])
+	for y := top; y < top+n; y++ {
+		s.Grid[y] = newRow(s.Cols)
 	}
 	s.shiftImagesDown(n, top, bottom)
 }

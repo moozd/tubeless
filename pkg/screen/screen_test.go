@@ -71,6 +71,64 @@ func TestDECSpecialGraphics(t *testing.T) {
 	}
 }
 
+// TestScrollUpDownMultiLineOrder locks in the single-copy ScrollUp/
+// ScrollDown rewrite's correctness for n > 1 in one call, since the
+// previous per-line loop and the current single shift-and-fill must
+// produce identical row contents and scrollback order.
+func TestScrollUpDownMultiLineOrder(t *testing.T) {
+	p, s := newTestParser(1, 5)
+	p.Write([]byte("1\r\n2\r\n3\r\n4\r\n5"))
+
+	p.Write([]byte("\x1b[3S")) // CSI 3S: scroll the whole screen up 3
+	want := []rune{'4', '5', ' ', ' ', ' '}
+	for y, w := range want {
+		if got := s.Grid[y][0].Rune; got != w {
+			t.Fatalf("after scroll up 3, row %d = %q, want %q", y, got, w)
+		}
+	}
+	if got := s.ScrollbackLen(); got != 3 {
+		t.Fatalf("ScrollbackLen() = %d, want 3", got)
+	}
+	win := s.VisibleWindow(3)
+	for i, w := range []rune{'1', '2', '3'} {
+		if got := win[i][0].Rune; got != w {
+			t.Fatalf("scrollback row %d = %q, want %q", i, got, w)
+		}
+	}
+
+	p.Write([]byte("\x1b[2T")) // CSI 2T: scroll the whole screen down 2
+	want = []rune{' ', ' ', '4', '5', ' '}
+	for y, w := range want {
+		if got := s.Grid[y][0].Rune; got != w {
+			t.Fatalf("after scroll down 2, row %d = %q, want %q", y, got, w)
+		}
+	}
+}
+
+// TestInsertDeleteLinesMultiLineOrder is InsertLines/DeleteLines' equivalent
+// of TestScrollUpDownMultiLineOrder above.
+func TestInsertDeleteLinesMultiLineOrder(t *testing.T) {
+	p, s := newTestParser(1, 5)
+	p.Write([]byte("1\r\n2\r\n3\r\n4\r\n5"))
+	p.Write([]byte("\x1b[1;1H")) // cursor to row 0, so the whole screen is "below" it
+
+	p.Write([]byte("\x1b[2L")) // CSI 2L: insert 2 blank lines at the cursor row
+	want := []rune{' ', ' ', '1', '2', '3'}
+	for y, w := range want {
+		if got := s.Grid[y][0].Rune; got != w {
+			t.Fatalf("after insert 2 lines, row %d = %q, want %q", y, got, w)
+		}
+	}
+
+	p.Write([]byte("\x1b[2M")) // CSI 2M: delete 2 lines at the cursor row
+	want = []rune{'1', '2', '3', ' ', ' '}
+	for y, w := range want {
+		if got := s.Grid[y][0].Rune; got != w {
+			t.Fatalf("after delete 2 lines, row %d = %q, want %q", y, got, w)
+		}
+	}
+}
+
 func TestScrollRegion(t *testing.T) {
 	p, s := newTestParser(3, 4)
 	p.Write([]byte("\x1b[2;3r"))
