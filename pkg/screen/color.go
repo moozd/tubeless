@@ -1,5 +1,7 @@
 package screen
 
+import "math"
+
 // The theme's phosphor ramp has no hue to give a color, only brightness —
 // these tables and helpers turn an SGR color into the 0-1 "value" (HSV
 // sense: the color's own peak channel, not perceptual luminance) an
@@ -27,9 +29,29 @@ func rgbValue(r, g, b int) float32 {
 
 // rgbTriple is rgbValue's truecolor-mode counterpart: the real RGB (0-1)
 // instead of the reduced max-channel scalar, for pkg/config's TrueColor
-// theme (see pkg/render's cellColors).
+// theme (see pkg/render's cellColors). SGR truecolor/256-color params are
+// raw sRGB bytes (what every app that emits them, and every published
+// palette, means by "red 205"), but the render pipeline draws in linear
+// light (see pkg/render/window.go's GL_FRAMEBUFFER_SRGB) — srgbToLinear
+// converts once here so every color that reaches a Cell is already
+// linear, matching pkg/config's preset colors (see its own srgbToLinear).
 func rgbTriple(r, g, b int) [3]float32 {
-	return [3]float32{float32(r) / 255, float32(g) / 255, float32(b) / 255}
+	return [3]float32{
+		srgbToLinear(float32(r) / 255),
+		srgbToLinear(float32(g) / 255),
+		srgbToLinear(float32(b) / 255),
+	}
+}
+
+// srgbToLinear converts one sRGB-encoded channel (0-1) to linear light.
+// Duplicated from pkg/config's identical helper rather than imported, to
+// avoid giving pkg/screen (pure VT-state/parsing) a dependency on
+// pkg/config (settings/presets) for one small pure function.
+func srgbToLinear(c float32) float32 {
+	if c <= 0.04045 {
+		return c / 12.92
+	}
+	return float32(math.Pow(float64((c+0.055)/1.055), 2.4))
 }
 
 func ansi16Value(n int) float32 {

@@ -55,9 +55,9 @@ func TestLoadFileOverridesPresetPerField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	// Amber preset values…
-	if cfg.Phosphor.Low != [3]float32{0.35, 0.16, 0.0} {
-		t.Fatalf("phosphor low not from amber preset: %v", cfg.Phosphor.Low)
+	// Amber preset values (linear-converted — see srgbToLinear)…
+	if want := srgbToLinear3([3]float32{0.35, 0.16, 0.0}); cfg.Phosphor.Low != want {
+		t.Fatalf("phosphor low not from amber preset: %v, want %v", cfg.Phosphor.Low, want)
 	}
 	// …but the file's field wins.
 	if cfg.Blur.Radius != 1.25 {
@@ -78,7 +78,33 @@ func TestFlagThemeWinsOverFileTheme(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Phosphor.Low != [3]float32{0.35, 0.16, 0.0} {
-		t.Fatalf("phosphor low = %v, want amber preset", cfg.Phosphor.Low)
+	if want := srgbToLinear3([3]float32{0.35, 0.16, 0.0}); cfg.Phosphor.Low != want {
+		t.Fatalf("phosphor low = %v, want amber preset %v", cfg.Phosphor.Low, want)
+	}
+}
+
+// TestPresetsPopulated catches the likely copy-paste mistake across the
+// near-identical TrueColor preset functions: a preset that forgot to set
+// TrueColor, or whose Colors.Palette still has an all-zero (black) slot
+// because a hex triple was dropped while transcribing the theme's
+// published palette.
+func TestPresetsPopulated(t *testing.T) {
+	monochrome := map[string]bool{"green": true, "amber": true}
+	for _, name := range PresetNames() {
+		cfg := Preset(name)
+		if cfg.Theme != name {
+			t.Errorf("Preset(%q).Theme = %q, want %q", name, cfg.Theme, name)
+		}
+		if monochrome[name] {
+			continue
+		}
+		if !cfg.TrueColor {
+			t.Errorf("Preset(%q).TrueColor = false, want true", name)
+		}
+		for i, c := range cfg.Colors.Palette {
+			if c == ([3]float32{}) {
+				t.Errorf("Preset(%q).Colors.Palette[%d] is all-zero", name, i)
+			}
+		}
 	}
 }
