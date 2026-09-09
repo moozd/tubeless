@@ -25,9 +25,21 @@ func rgbValue(r, g, b int) float32 {
 	return float32(max(r, g, b)) / 255
 }
 
+// rgbTriple is rgbValue's truecolor-mode counterpart: the real RGB (0-1)
+// instead of the reduced max-channel scalar, for pkg/config's TrueColor
+// theme (see pkg/render's cellColors).
+func rgbTriple(r, g, b int) [3]float32 {
+	return [3]float32{float32(r) / 255, float32(g) / 255, float32(b) / 255}
+}
+
 func ansi16Value(n int) float32 {
 	c := ansi16RGB[n&0xf]
 	return rgbValue(c[0], c[1], c[2])
+}
+
+func ansi16RGBValue(n int) [3]float32 {
+	c := ansi16RGB[n&0xf]
+	return rgbTriple(c[0], c[1], c[2])
 }
 
 // palette256Value covers the standard xterm 256-color palette: 0-15 are
@@ -48,5 +60,24 @@ func palette256Value(n int) float32 {
 		return rgbValue(v, v, v)
 	default:
 		return ansi16Value(7)
+	}
+}
+
+// palette256RGBValue is palette256Value's truecolor-mode counterpart.
+func palette256RGBValue(n int) [3]float32 {
+	switch {
+	case n < 0:
+		return ansi16RGBValue(0)
+	case n < 16:
+		return ansi16RGBValue(n)
+	case n < 232:
+		levels := [6]int{0, 95, 135, 175, 215, 255}
+		n -= 16
+		return rgbTriple(levels[(n/36)%6], levels[(n/6)%6], levels[n%6])
+	case n <= 255:
+		v := 8 + 10*(n-232)
+		return rgbTriple(v, v, v)
+	default:
+		return ansi16RGBValue(7)
 	}
 }

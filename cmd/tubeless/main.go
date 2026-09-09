@@ -1,22 +1,25 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
 
+	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/font"
 	"github.com/moozd/tubeless/pkg/ptyio"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
-	"github.com/moozd/tubeless/pkg/theme"
 	"github.com/moozd/tubeless/pkg/vtparse"
 )
 
@@ -32,48 +35,49 @@ func init() {
 }
 
 const (
-	cols, rows         = 90, 30
-	defaultPixelHeight = 20
+	cols, rows = 90, 30
+
 	// 1.0 (no-op): glyph blending is now genuinely gamma-correct via an
 	// sRGB framebuffer (see pkg/render/window.go's GL_FRAMEBUFFER_SRGB
 	// and fbo.go's newSRGBFBO), so this coverage-curve approximation is
 	// no longer needed — stacking both would double-correct.
-	fontGamma         = 1.0
-	windowScale       = 1
-	cursorBlinkPeriod = 530 * time.Millisecond
-
-	// atlasScale rasterizes the font atlas this many times larger than the
-	// on-screen cell size. The extra detail only pays off because
-	// uploadAtlas mipmaps the atlas texture — the GPU's trilinear
-	// minification down to display size is what actually smooths glyph
-	// edges, not the source rasterization by itself. Kept lower than the
-	// quality-only ceiling (8x) now that EnumerateRunes pulls in a Nerd
-	// Font's full icon set (thousands of codepoints, not ~350) — 4x still
-	// looked good in testing and keeps the atlas texture comfortably
-	// under typical GL_MAX_TEXTURE_SIZE limits.
-	atlasScale = 4
+	fontGamma   = 1.0
+	windowScale = 1
 )
 
 type resizeReq struct{ cols, rows int }
 
 func main() {
-	themeName := flag.String("theme", "green", "amber | green")
-	shell := flag.String("shell", "", "program to run instead of $SHELL")
-	fontPath := flag.String("font", "", "path to a TTF/OTF font (default: bundled IBM 3270)")
-	fontSize := flag.Int("font-size", defaultPixelHeight, "logical font size in pixels")
-	flag.Parse()
-
-	th, ok := theme.ByName(*themeName)
-	if !ok {
-		log.Fatalf("unknown theme %q (want amber or green)", *themeName)
+	if len(os.Args) > 1 && os.Args[1] == "config" {
+		runConfigTUI()
 	}
 
-	fontBytes := loadFontBytes(*fontPath)
+	fs := flag.NewFlagSet("tubeless", flag.ExitOnError)
+	themeName := fs.String("theme", "", "starting theme preset: rosepine | amber | green (config file overrides)")
+	shell := fs.String("shell", "", "program to run instead of $SHELL")
+	fontFamily := fs.String("font", "", "installed font family name (default: bundled FiraCode Nerd)")
+	fontSize := fs.Int("font-size", 0, "logical font size in pixels (default: config font.size)")
+	fs.Parse(os.Args[1:])
+
+	cfg, cfgPath, err := loadConfig(fs, *themeName, *fontFamily, *fontSize)
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+	resolve := func() config.Config {
+		c, _, err := loadConfig(fs, *themeName, *fontFamily, *fontSize)
+		if err != nil {
+			log.Printf("reload config: %v", err)
+			return cfg
+		}
+		return c
+	}
+
+	fontBytes := loadFontBytes(cfg.Font.Family)
 	runes, err := font.EnumerateRunes(fontBytes)
 	if err != nil {
 		log.Fatalf("enumerate font glyphs: %v", err)
 	}
-	atlas, err := font.Build(fontBytes, runes, *fontSize*atlasScale, fontGamma)
+	atlas, err := font.Build(fontBytes, runes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale)
 	if err != nil {
 		log.Fatalf("build font atlas: %v", err)
 	}
@@ -86,9 +90,9 @@ func main() {
 	shared.Store(screen.New(cols, rows))
 	go ptyCoordinator(sess, &shared, resizeCh)
 
-	winW := cols * (atlas.CellWidth / atlasScale) * windowScale
-	winH := rows * (atlas.CellHeight / atlasScale) * windowScale
-	win, err := render.NewWindow(fmt.Sprintf("tubeless (%s)", th.Name), winW, winH)
+	winW := cols * (atlas.CellWidth / cfg.Atlas.Scale) * windowScale
+	winH := rows * (atlas.CellHeight / cfg.Atlas.Scale) * windowScale
+	win, err := render.NewWindow(fmt.Sprintf("tubeless (%s)", cfg.Theme), winW, winH)
 	if err != nil {
 		log.Fatalf("open window: %v", err)
 	}
@@ -115,33 +119,120 @@ func main() {
 		dpiX, dpiY = win.GetContentScale()
 	}
 	cs := &cellSize{
-		w: float32(atlas.CellWidth) / atlasScale * dpiX,
-		h: float32(atlas.CellHeight) / atlasScale * dpiY,
+		w:    float32(atlas.CellWidth) / float32(cfg.Atlas.Scale) * dpiX,
+		h:    float32(atlas.CellHeight) / float32(cfg.Atlas.Scale) * dpiY,
+		dpiX: dpiX,
+		dpiY: dpiY,
 	}
 	wireResize(win, resizeCh, cs)
 	win.SetContentScaleCallback(func(_ *glfw.Window, x, y float32) {
-		cs.w = float32(atlas.CellWidth) / atlasScale * x
-		cs.h = float32(atlas.CellHeight) / atlasScale * y
+		if cs.dpiX > 0 {
+			cs.w *= x / cs.dpiX
+			cs.h *= y / cs.dpiY
+		} else {
+			cs.w = float32(atlas.CellWidth) / float32(cfg.Atlas.Scale) * x
+			cs.h = float32(atlas.CellHeight) / float32(cfg.Atlas.Scale) * y
+		}
+		cs.dpiX, cs.dpiY = x, y
 		pushResize(win, resizeCh, cs)
 	})
 
 	wireInput(win, sess)
-	runLoop(win, renderer, &shared, th, cs)
+	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve)
+}
+
+// runConfigTUI runs `tubeless config`: cmd/tubeless-config is a plain
+// ANSI/termios program (no GLFW, no window of its own — see its own
+// doc comment), so this hands off to it directly in the terminal the user
+// already typed the command into, inheriting stdio, and exits with
+// whatever it exits with. It deliberately never opens a tubeless window —
+// that would launch a whole second terminal emulator instance just to
+// edit a config file.
+func runConfigTUI() {
+	bin, err := locateConfigBinary()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	cmd := exec.Command(bin, os.Args[2:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "run %s: %v\n", bin, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+// locateConfigBinary finds the tubeless-config binary `tubeless config`
+// should hand off to: first next to this executable (the common case —
+// `make build` and `make install` both put the two binaries in the same
+// directory), falling back to $PATH for any other layout.
+func locateConfigBinary() (string, error) {
+	if self, err := os.Executable(); err == nil {
+		sibling := filepath.Join(filepath.Dir(self), "tubeless-config")
+		if info, err := os.Stat(sibling); err == nil && !info.IsDir() {
+			return sibling, nil
+		}
+	}
+	if p, err := exec.LookPath("tubeless-config"); err == nil {
+		return p, nil
+	}
+	return "", fmt.Errorf("tubeless-config not found next to %s or on PATH — build it with `make config-test`", os.Args[0])
+}
+
+// loadConfig resolves the effective settings for a terminal run: the
+// starting preset (--theme, else the file's theme key, else rosepine) is
+// layered with the config file and then the explicitly-set flags.
+func loadConfig(fs *flag.FlagSet, flagTheme, flagFamily string, flagSize int) (config.Config, string, error) {
+	path, err := config.DefaultPath()
+	if err != nil {
+		return config.Preset("rosepine"), "", err
+	}
+	cfg, err := config.Load(path, flagTheme)
+	if err != nil {
+		return cfg, path, err
+	}
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["font"] {
+		cfg.Font.Family = flagFamily
+	}
+	if explicit["font-size"] {
+		cfg.Font.Size = flagSize
+	}
+	return cfg, path, nil
 }
 
 // cellSize is the physical-pixel size of one cell — fixed regardless of
 // window size (resizing reflows the grid instead of stretching glyphs),
 // but not fixed for the process lifetime: it depends on display content
-// scale, which can change (see SetContentScaleCallback above).
-type cellSize struct{ w, h float32 }
+// scale, which can change (see SetContentScaleCallback above). dpiX/dpiY
+// remember the scale cs.w/h were derived from so later scale changes can
+// be applied proportionally, even after a runtime font rebuild.
+type cellSize struct{ w, h, dpiX, dpiY float32 }
 
-func loadFontBytes(path string) []byte {
-	if path == "" {
+// loadFontBytes resolves cfg.Font.Family to a font file via fontconfig
+// (see font.ResolveFamily) and reads it. An empty family, or any failure
+// to resolve/read one, falls back to the bundled font rather than failing
+// startup — a bad family name (a typo, fontconfig not installed) should
+// read as "wrong font", never a crash.
+func loadFontBytes(family string) []byte {
+	if family == "" {
+		return font.DefaultFontBytes()
+	}
+	path, err := font.ResolveFamily(family)
+	if err != nil {
+		log.Printf("resolve font family %q: %v — using bundled font", family, err)
 		return font.DefaultFontBytes()
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Fatalf("read font %s: %v", path, err)
+		log.Printf("read font %s: %v — using bundled font", path, err)
+		return font.DefaultFontBytes()
 	}
 	return data
 }
@@ -253,38 +344,133 @@ func pumpPTYOutput(sess *ptyio.Session, out chan<- []byte) {
 	}
 }
 
-// runLoop only does GPU work when something actually needs to be shown:
-// the published Screen changed, the framebuffer was resized, or the
-// cursor's blink phase flipped. glfw.WaitEventsTimeout blocks (no CPU/GPU
-// cost) until whichever comes first — an input/resize event, or the blink
-// period elapsing — so a keypress redraws immediately instead of waiting
-// on a fixed render cadence, and an idle shell prompt costs nothing.
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], th theme.Theme, cs *cellSize) {
+// newRendererFor rebuilds the glyph atlas + renderer for cfg and updates
+// cs with the resulting physical cell size. Used by runLoop when the config
+// file's font/atlas settings change at runtime.
+func newRendererFor(win *render.Window, cfg config.Config, cs *cellSize) (*render.Renderer, error) {
+	fontBytes := loadFontBytes(cfg.Font.Family)
+	runes, err := font.EnumerateRunes(fontBytes)
+	if err != nil {
+		return nil, fmt.Errorf("enumerate glyphs: %w", err)
+	}
+	atlas, err := font.Build(fontBytes, runes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale)
+	if err != nil {
+		return nil, fmt.Errorf("build font atlas: %w", err)
+	}
+	r, err := render.New(atlas, cols, rows)
+	if err != nil {
+		return nil, fmt.Errorf("init renderer: %w", err)
+	}
+	dx, dy := win.GetContentScale()
+	if dx == 0 {
+		dx, dy = 1, 1
+	}
+	cs.dpiX, cs.dpiY = dx, dy
+	cs.w = float32(atlas.CellWidth) / float32(cfg.Atlas.Scale) * dx
+	cs.h = float32(atlas.CellHeight) / float32(cfg.Atlas.Scale) * dy
+	return r, nil
+}
+
+// cfgWatch polls the config file's mtime so live edits (made by the
+// in-terminal config TUI, or by hand) are picked up without tight-looping
+// os.Stat.
+type cfgWatch struct {
+	path string
+	mod  time.Time
+	ok   bool
+	next time.Time
+}
+
+func (w *cfgWatch) changed(now time.Time) bool {
+	if now.Before(w.next) {
+		return false
+	}
+	w.next = now.Add(200 * time.Millisecond)
+	st, err := os.Stat(w.path)
+	if err != nil {
+		changed := w.ok
+		w.ok = false
+		return changed
+	}
+	if !w.ok {
+		w.ok, w.mod = true, st.ModTime()
+		return true
+	}
+	if !st.ModTime().Equal(w.mod) {
+		w.mod = st.ModTime()
+		return true
+	}
+	return false
+}
+
+// runLoop drives a continuous, vsync-paced render so the cursor can
+// animate in real time. The scene (cell buffers + shape blur) is
+// dirty-gated — it only rebuilds when the published Screen changed or the
+// framebuffer resized — while the cheap fullscreen passes (cursor glow,
+// inset composite) run every frame so the cursor glides even with the
+// shell idle. SwapBuffers blocks on vsync (see window.go's SwapInterval),
+// so an idle visible window costs the fullscreen passes at display
+// refresh, not a busy spin.
+//
+// cfgPath + resolve let the config TUI's edits apply live: when the file
+// changes, non-font settings are re-applied on the next scene rebuild, and
+// font/atlas changes rebuild the renderer (which reflows the grid via cs).
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config) {
+	r := renderer
 	var lastScr *screen.Screen
 	var lastW, lastH int
-	blinkOn := true
-	lastBlink := time.Now()
+	lastFrame := time.Now()
+	watch := &cfgWatch{path: cfgPath}
+	reload := false
 
 	for !win.ShouldClose() {
-		glfw.WaitEventsTimeout(cursorBlinkPeriod.Seconds())
+		if win.GetAttrib(glfw.Iconified) == glfw.True {
+			// Iconified windows must not burn GPU presenting frames the
+			// user can't see. WaitEvents blocks (no spin) until the window
+			// comes back; the clock is reset so the cursor pulse doesn't
+			// jump on restore.
+			glfw.WaitEvents()
+			lastFrame = time.Now()
+			continue
+		}
+		glfw.PollEvents()
+
+		now := time.Now()
+		if watch.changed(now) {
+			next := resolve()
+			fontChanged := next.Font != cfg.Font || next.Atlas != cfg.Atlas
+			cfg = next
+			if fontChanged {
+				nr, err := newRendererFor(win, cfg, cs)
+				if err != nil {
+					log.Printf("rebuild renderer for new config: %v", err)
+				} else {
+					r = nr
+				}
+			}
+			reload = true
+		}
+		// dt drives the cursor glide; clamp it so a scheduling stall or
+		// compositor hiccup doesn't teleport the cursor across the screen.
+		dt := now.Sub(lastFrame).Seconds()
+		lastFrame = now
+		if dt < 0 {
+			dt = 0
+		} else if dt > 0.5 {
+			dt = 0.5
+		}
 
 		w, h := win.FramebufferPixelSize()
 		scr := shared.Load()
-		dirty := scr != lastScr || w != lastW || h != lastH
+		dirty := scr != lastScr || w != lastW || h != lastH || reload
+		reload = false
 
-		if scr != lastScr {
-			blinkOn, lastBlink = true, time.Now()
-		} else if time.Since(lastBlink) >= cursorBlinkPeriod {
-			blinkOn, lastBlink = !blinkOn, time.Now()
-			dirty = true
+		if dirty {
+			r.PrepareFrame(scr, cfg, cs.w, cs.h)
+			r.RenderScene(w, h, cs.w, cs.h, cfg)
 		}
-
-		if !dirty {
-			continue
-		}
-		cursorOn := scr.CursorVisible && blinkOn
-		renderer.PrepareFrame(scr, th, cs.w, cs.h, cursorOn)
-		renderer.RenderFrame(w, h, cs.w, cs.h)
+		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt)
+		r.RenderEffects(w, h, cfg)
 		win.SwapBuffers()
 		lastScr, lastW, lastH = scr, w, h
 	}

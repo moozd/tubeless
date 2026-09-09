@@ -29,6 +29,15 @@ func (s *Screen) EraseInDisplay(mode EraseMode) {
 	if mode == EraseToStart {
 		s.EraseInLine(EraseToStart)
 	}
+	// Erasing display rows takes the text with it; sixel images anchored in
+	// the erased span must go too, or they stay floating over blank rows.
+	kept := s.Images[:0]
+	for _, im := range s.Images {
+		if im.Row < from || im.Row > to {
+			kept = append(kept, im)
+		}
+	}
+	s.Images = kept
 }
 
 func eraseBounds(mode EraseMode, cur, max int) (int, int) {

@@ -1,12 +1,15 @@
 package screen
 
-// Attr holds SGR-derived rendering state for one cell. The theme is a
-// single-hue phosphor ramp, so an app's fg/bg color can't be reproduced
-// as hue — but dropping it entirely loses real information (a git status
-// color, a syntax-highlight color) that the app is using to draw the
-// eye. Fg/Bg carry the *luminance* (0-1) of whatever color the app set,
-// which the renderer maps onto the phosphor ramp's brightness — hue is
-// lost, but bright/dim distinctions the app is relying on survive.
+// Attr holds SGR-derived rendering state for one cell. The default theme
+// is a single-hue phosphor ramp, so an app's fg/bg color can't be
+// reproduced as hue there — but dropping it entirely loses real
+// information (a git status color, a syntax-highlight color) that the app
+// is using to draw the eye. Fg/Bg carry the *luminance* (0-1) of whatever
+// color the app set, which the monochrome renderer maps onto the phosphor
+// ramp's brightness — hue is lost, but bright/dim distinctions the app is
+// relying on survive. FgRGB/BgRGB carry the same color's real RGB (0-1),
+// for a truecolor theme (see pkg/config's TrueColor) that renders it
+// directly instead of collapsing it onto the ramp.
 type Attr struct {
 	Bold      bool
 	Dim       bool
@@ -16,8 +19,10 @@ type Attr struct {
 	Invisible bool
 	FgSet     bool
 	Fg        float32
+	FgRGB     [3]float32
 	BgSet     bool
 	Bg        float32
+	BgRGB     [3]float32
 }
 
 // Cell is one grid position: a rune plus the attributes it was written with.

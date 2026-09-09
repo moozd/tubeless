@@ -1,4 +1,4 @@
-.PHONY: build build-x11 tektest test clean install help run-green run-amber
+.PHONY: build build-x11 tubeless tubeless-config tektest test clean install help run-green run-amber run-config
 
 BINARY_NAME=tubeless
 BIN_DIR=bin
@@ -7,39 +7,52 @@ CMD_PATH=./cmd/$(BINARY_NAME)
 
 help:
 	@echo "Available targets:"
-	@echo "  make build      - Build the tubeless binary (native Wayland on"
+	@echo "  make build      - Build everything: tubeless (native Wayland on"
 	@echo "                    Linux; the 'wayland' build tag is a no-op on"
 	@echo "                    macOS/Windows, which always use their own"
-	@echo "                    native Cocoa/Win32 backend regardless)"
-	@echo "  make build-x11  - Build for X11 instead, for Linux desktops"
-	@echo "                    without a Wayland compositor"
-	@echo "  make tektest    - Build the TDS-420 demo TUI binary"
-	@echo "  make run-green  - Build both and run tubeless (green theme) with tektest"
-	@echo "  make run-amber  - Build both and run tubeless (amber theme) with tektest"
+	@echo "                    native Cocoa/Win32 backend regardless),"
+	@echo "                    tubeless-config, and tektest"
+	@echo "  make build-x11  - Build tubeless for X11 instead, for Linux"
+	@echo "                    desktops without a Wayland compositor"
+	@echo "  make run-green  - Build and run tubeless (green theme) with tektest"
+	@echo "  make run-amber  - Build and run tubeless (amber theme) with tektest"
+	@echo "  make run-config - Run 'tubeless config' (the in-terminal settings UI)"
 	@echo "  make test       - Run tests"
 	@echo "  make install    - Build and install to $(INSTALL_DIR)"
 	@echo "  make clean      - Remove build artifacts"
 
-build:
-	@mkdir -p $(BIN_DIR)
-	go build -tags wayland -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
-	@echo "Built $(BIN_DIR)/$(BINARY_NAME)"
+build: tubeless tubeless-config tektest
 
 build-x11:
 	@mkdir -p $(BIN_DIR)
 	go build -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME) (X11)"
 
+tubeless:
+	@mkdir -p $(BIN_DIR)
+	go build -tags wayland -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	@echo "Built $(BIN_DIR)/$(BINARY_NAME)"
+
+# tubeless-config is the in-terminal settings UI; `tubeless config` runs it
+# directly in the current terminal (see cmd/tubeless/main.go), no window.
+tubeless-config:
+	@mkdir -p $(BIN_DIR)
+	go build -o $(BIN_DIR)/tubeless-config ./cmd/tubeless-config
+	@echo "Built $(BIN_DIR)/tubeless-config"
+
 tektest:
 	@mkdir -p $(BIN_DIR)
 	go build -o $(BIN_DIR)/tektest ./cmd/tektest
 	@echo "Built $(BIN_DIR)/tektest"
 
-run-green: build tektest
+run-green: build
 	$(BIN_DIR)/$(BINARY_NAME) --theme=green --shell=$(BIN_DIR)/tektest
 
-run-amber: build tektest
+run-amber: build
 	$(BIN_DIR)/$(BINARY_NAME) --theme=amber --shell=$(BIN_DIR)/tektest
+
+run-config: build
+	$(BIN_DIR)/$(BINARY_NAME) config
 
 test:
 	go test -v ./...
@@ -47,7 +60,8 @@ test:
 install: build
 	@mkdir -p $(INSTALL_DIR)
 	cp $(BIN_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/
-	@echo "Installed $(BINARY_NAME) to $(INSTALL_DIR)"
+	cp $(BIN_DIR)/tubeless-config $(INSTALL_DIR)/
+	@echo "Installed $(BINARY_NAME) + tubeless-config to $(INSTALL_DIR)"
 
 clean:
 	rm -rf $(BIN_DIR)

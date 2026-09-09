@@ -2,31 +2,36 @@ package render
 
 import "github.com/go-gl/gl/v3.3-core/gl"
 
-// FBO is an offscreen color target the cell pass renders into and the CRT
-// pass samples from.
+// FBO is an offscreen color target: the scene the cell pass renders into,
+// and the float accumulator the phosphor field is built in.
 type FBO struct {
 	fbo, tex uint32
 	W, H     int
 	format   int32
+	pixType  uint32
 }
 
-func newFBO(w, h int) *FBO {
-	return newFBOFormat(w, h, gl.RGBA8)
-}
-
-// newSRGBFBO is like newFBO, but the texture is sRGB-encoded: with
+// newSRGBFBO is an offscreen sRGB-encoded target: with
 // GL_FRAMEBUFFER_SRGB enabled (see window.go), the GPU blends draws into
 // it in linear light and stores the sRGB-encoded result, rather than
 // blending the raw 0-1 values as if they were already linear. That's what
-// gamma-correct glyph antialiasing needs — the cell pass (glyph edges)
-// uses this; the bloom/blur intermediates stay plain RGBA8 since they're
-// not blending partial-coverage edges.
+// gamma-correct glyph antialiasing needs — the cell pass (glyph edges) and
+// the sharp scene it feeds use this.
 func newSRGBFBO(w, h int) *FBO {
-	return newFBOFormat(w, h, gl.SRGB8_ALPHA8)
+	return newFBOFormat(w, h, gl.SRGB8_ALPHA8, gl.UNSIGNED_BYTE)
 }
 
-func newFBOFormat(w, h int, format int32) *FBO {
-	f := &FBO{W: w, H: h, format: format}
+// newFloatFBO is a high-precision 16-bit float target. The phosphor
+// persistence accumulator (see persistpass.go) decays an image over many
+// frames; in an 8-bit target that fade quantizes into visible steps, while
+// a float target keeps the decay smooth. Values are stored as-is (no sRGB
+// encode) — persistence math happens in linear light.
+func newFloatFBO(w, h int) *FBO {
+	return newFBOFormat(w, h, gl.RGBA16F, gl.HALF_FLOAT)
+}
+
+func newFBOFormat(w, h int, format int32, pixType uint32) *FBO {
+	f := &FBO{W: w, H: h, format: format, pixType: pixType}
 	gl.GenFramebuffers(1, &f.fbo)
 	gl.GenTextures(1, &f.tex)
 	f.allocate(w, h)
@@ -36,7 +41,7 @@ func newFBOFormat(w, h int, format int32) *FBO {
 func (f *FBO) allocate(w, h int) {
 	f.W, f.H = w, h
 	gl.BindTexture(gl.TEXTURE_2D, f.tex)
-	gl.TexImage2D(gl.TEXTURE_2D, 0, f.format, int32(w), int32(h), 0, gl.RGBA, gl.UNSIGNED_BYTE, nil)
+	gl.TexImage2D(gl.TEXTURE_2D, 0, f.format, int32(w), int32(h), 0, gl.RGBA, f.pixType, nil)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
 	gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
@@ -60,5 +65,22 @@ func (f *FBO) Bind() {
 }
 
 func (f *FBO) Unbind() {
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+}
+
+// Clear fills the FBO with transparent black.
+func (f *FBO) Clear() {
+	gl.BindFramebuffer(gl.FRAMEBUFFER, f.fbo)
+	gl.ClearColor(0, 0, 0, 0)
+	gl.Clear(gl.COLOR_BUFFER_BIT)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+}
+
+// ClearOpaque fills the FBO with opaque black — the "empty terminal" base
+// the scene's rect/line-art layers then composite glowing content over.
+func (f *FBO) ClearOpaque() {
+	gl.BindFramebuffer(gl.FRAMEBUFFER, f.fbo)
+	gl.ClearColor(0, 0, 0, 1)
+	gl.Clear(gl.COLOR_BUFFER_BIT)
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 }

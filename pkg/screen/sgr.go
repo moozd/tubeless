@@ -40,21 +40,21 @@ func (h *Handler) applySGRCode(params []int, i int) int {
 	case code == 28:
 		h.CurAttr.Invisible = false
 	case code >= 30 && code <= 37:
-		h.CurAttr.FgSet, h.CurAttr.Fg = true, ansi16Value(code-30)
+		h.CurAttr.FgSet, h.CurAttr.Fg, h.CurAttr.FgRGB = true, ansi16Value(code-30), ansi16RGBValue(code-30)
 	case code == 38:
 		return h.applyExtendedColor(params, i, true)
 	case code == 39:
 		h.CurAttr.FgSet = false
 	case code >= 40 && code <= 47:
-		h.CurAttr.BgSet, h.CurAttr.Bg = true, ansi16Value(code-40)
+		h.CurAttr.BgSet, h.CurAttr.Bg, h.CurAttr.BgRGB = true, ansi16Value(code-40), ansi16RGBValue(code-40)
 	case code == 48:
 		return h.applyExtendedColor(params, i, false)
 	case code == 49:
 		h.CurAttr.BgSet = false
 	case code >= 90 && code <= 97:
-		h.CurAttr.FgSet, h.CurAttr.Fg = true, ansi16Value(code-90+8)
+		h.CurAttr.FgSet, h.CurAttr.Fg, h.CurAttr.FgRGB = true, ansi16Value(code-90+8), ansi16RGBValue(code-90+8)
 	case code >= 100 && code <= 107:
-		h.CurAttr.BgSet, h.CurAttr.Bg = true, ansi16Value(code-100+8)
+		h.CurAttr.BgSet, h.CurAttr.Bg, h.CurAttr.BgRGB = true, ansi16Value(code-100+8), ansi16RGBValue(code-100+8)
 	}
 	return 0
 }
@@ -71,22 +71,24 @@ func (h *Handler) applyExtendedColor(params []int, i int, isFg bool) int {
 		if i+2 >= len(params) {
 			return 1
 		}
-		h.setColor(isFg, palette256Value(params[i+2]))
+		n := params[i+2]
+		h.setColor(isFg, palette256Value(n), palette256RGBValue(n))
 		return 2
 	case 2:
 		if i+4 >= len(params) {
 			return 1
 		}
-		h.setColor(isFg, rgbValue(params[i+2], params[i+3], params[i+4]))
+		r, g, b := params[i+2], params[i+3], params[i+4]
+		h.setColor(isFg, rgbValue(r, g, b), rgbTriple(r, g, b))
 		return 4
 	}
 	return 0
 }
 
-func (h *Handler) setColor(isFg bool, lum float32) {
+func (h *Handler) setColor(isFg bool, lum float32, rgb [3]float32) {
 	if isFg {
-		h.CurAttr.FgSet, h.CurAttr.Fg = true, lum
+		h.CurAttr.FgSet, h.CurAttr.Fg, h.CurAttr.FgRGB = true, lum, rgb
 	} else {
-		h.CurAttr.BgSet, h.CurAttr.Bg = true, lum
+		h.CurAttr.BgSet, h.CurAttr.Bg, h.CurAttr.BgRGB = true, lum, rgb
 	}
 }

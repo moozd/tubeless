@@ -5,33 +5,34 @@ import (
 
 	"github.com/go-gl/gl/v3.3-core/gl"
 
+	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/font"
 	"github.com/moozd/tubeless/pkg/screen"
-	"github.com/moozd/tubeless/pkg/theme"
 )
 
-const bgInstanceFloats = 9 // aCellPos(2) + aUVOffset(2) + aUVSize(2) + aColor(3)
+const glyphInstanceFloats = 12 // aCellPos(2) + aUVOffset(2) + aUVSize(2) + aColor(3) + aBgColor(3)
+const rectInstanceFloats = 13  // aCellPos(2) + aRectOffset(2) + aRectSize(2) + aColor(3) + aRadius(4)
 
-// glyphInstanceFloats adds aBgColor(3) on top of bgInstanceFloats — the
-// glyph fragment shader needs the cell's background color (not just its
-// own foreground) to compute a gamma-correct blend alpha; see
-// cell_glyph.frag.
-const glyphInstanceFloats = bgInstanceFloats + 3
-
-// CellPass renders the terminal grid into an offscreen FBO: one instanced
-// draw for reverse-video backgrounds, one for glyph coverage.
+// CellPass renders the terminal grid into offscreen FBOs, split into three
+// layers: a "rect" layer (background color fills and single-rect block
+// glyphs like █▀▄▌▐, drawn procedurally with true rounded corners — see
+// cell_rect.frag), a "line-art" layer (box-drawing and powerline glyphs,
+// which get a gaussian bloom instead — see shapeblur.frag), and a "text"
+// layer (everything else) that stays sharp on top of both.
 type CellPass struct {
 	atlas        *font.Atlas
 	atlasTex     uint32
 	progGlyph    uint32
-	progBG       uint32
+	progRect     uint32
 	quadVBO      uint32
 	glyphVAO     uint32
 	glyphInstVBO uint32
-	bgVAO        uint32
-	bgInstVBO    uint32
-	glyphScratch []float32
+	rectVAO      uint32
+	rectInstVBO  uint32
+	shapeScratch []float32
+	textScratch  []float32
 	bgScratch    []float32
+	blockScratch []float32
 	cols, rows   int
 }
 
@@ -40,19 +41,19 @@ func NewCellPass(atlas *font.Atlas) (*CellPass, error) {
 	if err != nil {
 		return nil, fmt.Errorf("glyph program: %w", err)
 	}
-	progBG, err := linkProgram(cellVertSrc, cellBgFragSrc)
+	progRect, err := linkProgram(cellRectVertSrc, cellRectFragSrc)
 	if err != nil {
-		return nil, fmt.Errorf("background program: %w", err)
+		return nil, fmt.Errorf("rect program: %w", err)
 	}
 	cp := &CellPass{
 		atlas:     atlas,
 		atlasTex:  uploadAtlas(atlas),
 		progGlyph: progGlyph,
-		progBG:    progBG,
+		progRect:  progRect,
 	}
 	cp.quadVBO = newQuadVBO()
-	cp.glyphVAO, cp.glyphInstVBO = newInstancedVAO(cp.quadVBO, glyphInstanceFloats, true)
-	cp.bgVAO, cp.bgInstVBO = newInstancedVAO(cp.quadVBO, bgInstanceFloats, false)
+	cp.glyphVAO, cp.glyphInstVBO = newInstancedVAO(cp.quadVBO, glyphInstanceFloats, 3)
+	cp.rectVAO, cp.rectInstVBO = newInstancedVAO(cp.quadVBO, rectInstanceFloats, 4)
 	return cp, nil
 }
 
@@ -66,9 +67,10 @@ func newQuadVBO() uint32 {
 }
 
 // newInstancedVAO builds the VAO for either instance layout: aCellPos(2) +
-// aUVOffset(2) + aUVSize(2) + aColor(3), plus aBgColor(3) when withBg is
-// true (glyph instances only — see cell_glyph.frag).
-func newInstancedVAO(quadVBO uint32, floats int, withBg bool) (vao, instVBO uint32) {
+// a second 2-vector + a third 2-vector + aColor(3), plus a trailing
+// attribute at location 5 sized extra floats (aBgColor, vec3, for glyph
+// instances; aRadius, vec4, for rect instances).
+func newInstancedVAO(quadVBO uint32, floats, extra int) (vao, instVBO uint32) {
 	gl.GenVertexArrays(1, &vao)
 	gl.BindVertexArray(vao)
 
@@ -83,8 +85,8 @@ func newInstancedVAO(quadVBO uint32, floats int, withBg bool) (vao, instVBO uint
 	attachInstanceAttrib(2, 2, stride, 2*4)
 	attachInstanceAttrib(3, 2, stride, 4*4)
 	attachInstanceAttrib(4, 3, stride, 6*4)
-	if withBg {
-		attachInstanceAttrib(5, 3, stride, 9*4)
+	if extra > 0 {
+		attachInstanceAttrib(5, int32(extra), stride, 9*4)
 	}
 
 	gl.BindVertexArray(0)
@@ -99,23 +101,36 @@ func attachInstanceAttrib(loc uint32, size int32, stride int32, offset int) {
 
 // BuildInstances reads scr (an immutable published snapshot — see
 // cmd/tubeless) into GPU-upload-ready instance buffers. Split from Draw so
-// the GPU work (issued by Draw) never needs to touch scr at all.
-func (cp *CellPass) BuildInstances(scr *screen.Screen, th theme.Theme, cw, ch float32, cursorOn bool) {
-	cp.glyphScratch = cp.glyphScratch[:0]
+// the GPU work (issued by Draw) never needs to touch scr at all. Content is
+// routed by kind: background fills and single-rect block glyphs go to the
+// rect layer (font.BlockRect), other box-drawing/powerline glyphs go to the
+// line-art layer (font.IsShapeRune), everything else is text. The cursor is
+// not baked here — it is an animated overlay drawn every frame (see
+// CursorPass).
+func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch float32) {
 	cp.bgScratch = cp.bgScratch[:0]
+	cp.blockScratch = cp.blockScratch[:0]
+	cp.shapeScratch = cp.shapeScratch[:0]
+	cp.textScratch = cp.textScratch[:0]
 	cp.cols, cp.rows = scr.Cols, scr.Rows
 	atlasW, atlasH := float32(cp.atlas.Image.Bounds().Dx()), float32(cp.atlas.Image.Bounds().Dy())
+	empty := ambientBG(cfg)
 
 	for y := 0; y < scr.Rows; y++ {
 		for x := 0; x < scr.Cols; x++ {
 			cell := scr.Grid[y][x]
-			fg, bg := cellColors(cell.Attr, th)
-			if cursorOn && x == scr.CursorX && y == scr.CursorY {
-				fg, bg = [3]float32{0, 0, 0}, th.PhosphorHigh
-			}
+			fg, bg := cellColors(cell.Attr, cfg)
 			px, py := float32(x)*cw, float32(y)*ch
-			if bg != ([3]float32{0, 0, 0}) {
-				cp.bgScratch = appendInstance(cp.bgScratch, px, py, 0, 0, 1, 1, bg)
+			if bg != empty {
+				e := bgRectEdges(scr, cfg, x, y, bg)
+				rx, ry, rw, rh := expandRect(0, 0, 1, 1, cw, ch, e)
+				cp.bgScratch = appendRectInstance(cp.bgScratch, px, py, rx, ry, rw, rh, bg, e.Radii)
+			}
+			if x0, y0, x1, y1, ok := font.BlockRect(cell.Rune); ok {
+				e := blockRectEdges(scr, cfg, x, y, cell.Rune, fg, x0, y0, x1, y1)
+				rx, ry, rw, rh := expandRect(x0, y0, x1-x0, y1-y0, cw, ch, e)
+				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, rx, ry, rw, rh, fg, e.Radii)
+				continue
 			}
 			g, ok := cp.atlas.Glyphs[cell.Rune]
 			if !ok || cell.Rune == ' ' {
@@ -123,28 +138,94 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, th theme.Theme, cw, ch fl
 			}
 			u0, v0 := float32(g.X)/atlasW, float32(g.Y)/atlasH
 			us, vs := float32(g.W)/atlasW, float32(g.H)/atlasH
-			cp.glyphScratch = appendGlyphInstance(cp.glyphScratch, px, py, u0, v0, us, vs, fg, bg)
+			if font.IsShapeRune(cell.Rune) {
+				cp.shapeScratch = appendGlyphInstance(cp.shapeScratch, px, py, u0, v0, us, vs, fg, bg)
+			} else {
+				cp.textScratch = appendGlyphInstance(cp.textScratch, px, py, u0, v0, us, vs, fg, bg)
+			}
 		}
 	}
 }
 
-func appendInstance(dst []float32, px, py, u0, v0, us, vs float32, color [3]float32) []float32 {
-	return append(dst, px, py, u0, v0, us, vs, color[0], color[1], color[2])
+func appendRectInstance(dst []float32, px, py, rx, ry, rw, rh float32, color [3]float32, radii [4]float32) []float32 {
+	return append(dst, px, py, rx, ry, rw, rh, color[0], color[1], color[2], radii[0], radii[1], radii[2], radii[3])
+}
+
+// rectOverlapPx is how far a rect's own geometry overshoots into a
+// same-fill neighbor on a squared (radius-0) edge, in physical pixels.
+// Each rect instance is anti-aliased independently by cell_rect.frag's own
+// SDF; two instances that are merely flush at a shared edge can each fade
+// out just short of it and leave a faint seam even though the corner
+// there is correctly squared (radius 0). Overlapping by more than the
+// SDF's ~1.5px AA fringe guarantees full coverage there regardless of
+// sub-pixel rounding in the cell grid's layout.
+const rectOverlapPx = 2.0
+
+// expandRect grows a rect (given as cell-fraction offset/size, i.e. what
+// aRectOffset/aRectSize become) by rectOverlapPx on whichever edges e
+// marks as continuing into a neighbor.
+func expandRect(rx, ry, rw, rh, cw, ch float32, e rectEdges) (float32, float32, float32, float32) {
+	epsX, epsY := rectOverlapPx/cw, rectOverlapPx/ch
+	if e.ContLeft {
+		rx -= epsX
+		rw += epsX
+	}
+	if e.ContRight {
+		rw += epsX
+	}
+	if e.ContUp {
+		ry -= epsY
+		rh += epsY
+	}
+	if e.ContDown {
+		rh += epsY
+	}
+	return rx, ry, rw, rh
 }
 
 func appendGlyphInstance(dst []float32, px, py, u0, v0, us, vs float32, fg, bg [3]float32) []float32 {
 	return append(dst, px, py, u0, v0, us, vs, fg[0], fg[1], fg[2], bg[0], bg[1], bg[2])
 }
 
-// Draw issues the GPU calls for whatever BuildInstances last captured. It
-// touches no Screen state, so it can run after the caller has released
-// scr's lock.
-func (cp *CellPass) Draw(fbo *FBO, cw, ch float32) {
+// DrawAmbientBG paints fbo with a single flat-color full-screen rect —
+// TrueColor themes' "empty terminal" backdrop (see colors.go's ambientBG).
+// Drawn through the normal cell_rect shader pipeline rather than
+// gl.ClearColor: a clear bypasses GL_FRAMEBUFFER_SRGB's linear-to-sRGB
+// encode (glClear always writes the given value as-is), so a non-zero
+// color set that way would be stored as if it were already sRGB-encoded —
+// read back too dark once something later samples it expecting real sRGB
+// data. A shader write goes through the normal encode step, matching
+// every other color in the pipeline. (Plain black, which monochrome
+// themes clear straight to, doesn't have this problem: 0 round-trips
+// through either encoding unchanged.)
+func (cp *CellPass) DrawAmbientBG(fbo *FBO, outW, outH int, color [3]float32) {
 	fbo.Bind()
-	gl.ClearColor(0, 0, 0, 1)
+	gl.Disable(gl.BLEND)
+	gl.UseProgram(cp.progRect)
+	w, h := float32(outW), float32(outH)
+	setCommonUniforms(cp.progRect, w, h, w, h, 0, 0)
+	inst := appendRectInstance(nil, 0, 0, 0, 0, 1, 1, color, [4]float32{})
+	uploadAndDrawInstances(cp.rectVAO, cp.rectInstVBO, inst, rectInstanceFloats)
+	fbo.Unbind()
+}
+
+// DrawRects clears fbo to transparent and renders background color fills,
+// then solid block glyphs on top — both drawn procedurally with true
+// rounded corners (see cell_rect.frag). Never blurred itself, but (like
+// DrawLineArt) meant to be blurred/bloomed and alpha-composited over the
+// scene by the caller (see Renderer.RenderScene's compositeGlow), which
+// leaves the crisp interior untouched (premultiplied alpha stays 1 there)
+// and only adds a soft glow around the true outer edge.
+func (cp *CellPass) DrawRects(fbo *FBO, cw, ch float32) {
+	fbo.Bind()
+	gl.ClearColor(0, 0, 0, 0)
 	gl.Clear(gl.COLOR_BUFFER_BIT)
 	gl.Enable(gl.BLEND)
-	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+	// Premultiplied alpha (see cell_rect.frag/cell_glyph.frag) — GL_ONE for
+	// the source factor is correct over both transparent and opaque
+	// destinations, unlike GL_SRC_ALPHA which squares the alpha channel
+	// when the destination starts transparent (DrawLineArt's target).
+	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 
 	screenW, screenH := float32(fbo.W), float32(fbo.H)
 	// The grid's pixel size (cols*cw x rows*ch) only rarely divides the
@@ -153,24 +234,67 @@ func (cp *CellPass) Draw(fbo *FBO, cw, ch float32) {
 	// right/bottom, which reads as a stray margin rather than padding.
 	offsetX := (screenW - float32(cp.cols)*cw) / 2
 	offsetY := (screenH - float32(cp.rows)*ch) / 2
-	cp.drawBG(cw, ch, screenW, screenH, offsetX, offsetY)
-	cp.drawGlyphs(cw, ch, screenW, screenH, offsetX, offsetY)
+
+	if len(cp.bgScratch) > 0 {
+		cp.drawRects(cp.bgScratch, cw, ch, screenW, screenH, offsetX, offsetY)
+	}
+	if len(cp.blockScratch) > 0 {
+		cp.drawRects(cp.blockScratch, cw, ch, screenW, screenH, offsetX, offsetY)
+	}
 
 	gl.Disable(gl.BLEND)
 	fbo.Unbind()
 }
 
-func (cp *CellPass) drawBG(cw, ch, screenW, screenH, offsetX, offsetY float32) {
-	if len(cp.bgScratch) == 0 {
-		return
-	}
-	gl.UseProgram(cp.progBG)
-	setCommonUniforms(cp.progBG, cw, ch, screenW, screenH, offsetX, offsetY)
-	uploadAndDrawInstances(cp.bgVAO, cp.bgInstVBO, cp.bgScratch, bgInstanceFloats)
+// DrawLineArt clears fbo to transparent and renders box-drawing/powerline
+// glyphs into it — the only content the blur/bloom pass consumes (see
+// Renderer.RenderScene, which composites the result over DrawRects's
+// output rather than replacing it).
+func (cp *CellPass) DrawLineArt(fbo *FBO, cw, ch float32) {
+	fbo.Bind()
+	gl.ClearColor(0, 0, 0, 0)
+	gl.Clear(gl.COLOR_BUFFER_BIT)
+	gl.Enable(gl.BLEND)
+	// Premultiplied alpha (see cell_rect.frag/cell_glyph.frag) — GL_ONE for
+	// the source factor is correct over both transparent and opaque
+	// destinations, unlike GL_SRC_ALPHA which squares the alpha channel
+	// when the destination starts transparent (DrawLineArt's target).
+	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+
+	screenW, screenH := float32(fbo.W), float32(fbo.H)
+	offsetX := (screenW - float32(cp.cols)*cw) / 2
+	offsetY := (screenH - float32(cp.rows)*ch) / 2
+	cp.drawGlyphs(cp.shapeScratch, cw, ch, screenW, screenH, offsetX, offsetY)
+
+	gl.Disable(gl.BLEND)
+	fbo.Unbind()
 }
 
-func (cp *CellPass) drawGlyphs(cw, ch, screenW, screenH, offsetX, offsetY float32) {
-	if len(cp.glyphScratch) == 0 {
+// DrawText renders the sharp text glyphs over an existing base (rects +
+// composited line-art) in fbo. No clear — the base stays underneath.
+func (cp *CellPass) DrawText(fbo *FBO, cw, ch float32) {
+	if len(cp.textScratch) == 0 {
+		return
+	}
+	fbo.Bind()
+	gl.Enable(gl.BLEND)
+	// Premultiplied alpha (see cell_rect.frag/cell_glyph.frag) — GL_ONE for
+	// the source factor is correct over both transparent and opaque
+	// destinations, unlike GL_SRC_ALPHA which squares the alpha channel
+	// when the destination starts transparent (DrawLineArt's target).
+	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+
+	screenW, screenH := float32(fbo.W), float32(fbo.H)
+	offsetX := (screenW - float32(cp.cols)*cw) / 2
+	offsetY := (screenH - float32(cp.rows)*ch) / 2
+	cp.drawGlyphs(cp.textScratch, cw, ch, screenW, screenH, offsetX, offsetY)
+
+	gl.Disable(gl.BLEND)
+	fbo.Unbind()
+}
+
+func (cp *CellPass) drawGlyphs(instances []float32, cw, ch, screenW, screenH, offsetX, offsetY float32) {
+	if len(instances) == 0 {
 		return
 	}
 	gl.UseProgram(cp.progGlyph)
@@ -178,7 +302,13 @@ func (cp *CellPass) drawGlyphs(cw, ch, screenW, screenH, offsetX, offsetY float3
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, cp.atlasTex)
 	gl.Uniform1i(gl.GetUniformLocation(cp.progGlyph, gl.Str("uAtlas\x00")), 0)
-	uploadAndDrawInstances(cp.glyphVAO, cp.glyphInstVBO, cp.glyphScratch, glyphInstanceFloats)
+	uploadAndDrawInstances(cp.glyphVAO, cp.glyphInstVBO, instances, glyphInstanceFloats)
+}
+
+func (cp *CellPass) drawRects(instances []float32, cw, ch, screenW, screenH, offsetX, offsetY float32) {
+	gl.UseProgram(cp.progRect)
+	setCommonUniforms(cp.progRect, cw, ch, screenW, screenH, offsetX, offsetY)
+	uploadAndDrawInstances(cp.rectVAO, cp.rectInstVBO, instances, rectInstanceFloats)
 }
 
 func setCommonUniforms(prog uint32, cw, ch, screenW, screenH, offsetX, offsetY float32) {

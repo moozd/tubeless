@@ -39,5 +39,14 @@ void main() {
 		a = clamp((blendL - bgL) / (fgL - bgL), 0.0, 1.0);
 	}
 
-	fragColor = vec4(vColor, a);
+	// Premultiplied output (paired with a GL_ONE/GL_ONE_MINUS_SRC_ALPHA
+	// blend, see cellpass.go): straight alpha (vColor, a) blended with the
+	// usual GL_SRC_ALPHA/GL_ONE_MINUS_SRC_ALPHA factors is only correct
+	// over an opaque destination. DrawLineArt's target starts fully
+	// transparent, where that blend squares the alpha on every overlapping
+	// draw (dst.a starts at 0, so the alpha channel's own SRC_ALPHA factor
+	// multiplies a by itself) and reads as dim/washed-out line art.
+	// Premultiplied blending is correct over both transparent and opaque
+	// destinations, so this also just works, unchanged, for DrawText.
+	fragColor = vec4(vColor * a, a);
 }

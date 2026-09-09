@@ -72,11 +72,15 @@ func EnumerateRunes(fontBytes []byte) ([]rune, error) {
 // on-screen cell size — a caller after more detail than it will actually
 // display at (see cmd/tubeless's atlasScale) rasterizes at a larger
 // pixelHeight and lets the GPU minify with mipmaps when drawing, which
-// gets smoother results than native-resolution hinting alone. gamma
+// gets smoother results than native-resolution hinting alone. scale is
+// that same raster-to-display ratio (cfg.Atlas.Scale); it sizes the
+// gutter around generated sprites (see font.SetOvershoot) so mipmap
+// minification doesn't bleed a gap between adjacent cells. gamma
 // reshapes the coverage curve (>1 sharpens edges, <1 softens) to taste. A
 // rune the font has no glyph for is left blank rather than failing the
 // build, since fonts vary in coverage.
-func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64) (*Atlas, error) {
+func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale int) (*Atlas, error) {
+	SetOvershoot(scale)
 	lib, err := newFTLibrary()
 	if err != nil {
 		return nil, fmt.Errorf("init freetype: %w", err)
@@ -99,6 +103,29 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64) (*Atl
 	}
 	cellH, ascender := face.lineMetrics()
 
+	// Guarantee every generated sprite (box drawing, block elements,
+	// geometric powerline) is in the atlas even if the loaded font lacks the
+	// codepoint — these must never render as blank.
+	have := make(map[rune]bool, len(runes))
+	for _, r := range runes {
+		have[r] = true
+	}
+	for _, r := range spriteRunes() {
+		if !have[r] {
+			runes = append(runes, r)
+			have[r] = true
+		}
+	}
+	// Symbol fallbacks (checks, crosses, arrows) are added only when the font
+	// genuinely lacks the codepoint — a font that carries a real glyph for
+	// them keeps it (see sprites_symbols.go).
+	for _, r := range symbolRunes {
+		if !have[r] {
+			runes = append(runes, r)
+			have[r] = true
+		}
+	}
+
 	// Packed roughly square rather than a fixed column count: with
 	// EnumerateRunes potentially returning several thousand codepoints,
 	// a fixed narrow column count would produce a very tall, thin
@@ -116,7 +143,7 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64) (*Atl
 	// their cell rather than sitting inset like most text glyphs do. The
 	// gutter is packing-only: Glyph.W/H below still describe just the
 	// drawable cellW x cellH, so on-screen cell size is unaffected.
-	const glyphPadding = 4
+	glyphPadding := over + 2
 	packedW, packedH := cellW+2*glyphPadding, cellH+2*glyphPadding
 	atlas := &Atlas{
 		Image:      image.NewAlpha(image.Rect(0, 0, cols*packedW, rows*packedH)),
@@ -128,9 +155,7 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64) (*Atl
 	for i, r := range runes {
 		gx := (i%cols)*packedW + glyphPadding
 		gy := (i/cols)*packedH + glyphPadding
-		if spec, ok := boxDrawing[r]; ok {
-			renderBoxDrawing(atlas.Image, gx, gy, cellW, cellH, spec)
-		} else {
+		if !spriteGlyph(r, atlas.Image, gx, gy, cellW, cellH) {
 			blitGlyph(face, r, atlas.Image, gx, gy, cellW, cellH, ascender, gamma)
 		}
 		atlas.Glyphs[r] = Glyph{X: gx, Y: gy, W: cellW, H: cellH}

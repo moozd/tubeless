@@ -3,7 +3,7 @@ package font
 import "testing"
 
 func TestBuildProducesCoverage(t *testing.T) {
-	atlas, err := Build(DefaultFontBytes(), []rune("Ag@"), 20, 1.0)
+	atlas, err := Build(DefaultFontBytes(), []rune("Ag@"), 20, 1.0, 1)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -22,7 +22,7 @@ func TestBuildProducesCoverage(t *testing.T) {
 func TestBuildSkipsMissingGlyphsGracefully(t *testing.T) {
 	// U+1F600 (an emoji) is very unlikely to be in a plain monospace TTF;
 	// this must not fail the whole atlas build.
-	atlas, err := Build(DefaultFontBytes(), []rune{'A', 0x1F600}, 20, 1.0)
+	atlas, err := Build(DefaultFontBytes(), []rune{'A', 0x1F600}, 20, 1.0, 1)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
