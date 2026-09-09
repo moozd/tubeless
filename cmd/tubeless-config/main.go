@@ -10,9 +10,10 @@
 // block bars use reverse video (bright phosphor block, black text) so they
 // read clearly.
 //
-// Every change is written to ~/.config/tubeless/config.toml immediately;
-// the running tubeless host watches that file and re-applies non-font
-// settings live, rebuilding its font atlas when font/atlas fields change.
+// Edits only take effect in memory as you navigate — nothing is written to
+// ~/.config/tubeless/config.toml until you press 's'. The running tubeless
+// host watches that file and re-applies non-font settings live once saved,
+// rebuilding its font atlas when font/atlas fields change.
 package main
 
 import (
@@ -20,25 +21,28 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
 	"unicode/utf8"
-	"unsafe"
+
+	"golang.org/x/term"
 
 	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/font"
 )
 
 type ui struct {
-	cfg    config.Config
-	path   string
-	sel    int
-	list   []panelRow
-	cols   int
-	rows   int
-	status string
-	esc    []byte
+	cfg     config.Config
+	path    string
+	sel     int
+	list    []panelRow
+	cols    int
+	rows    int
+	status  string
+	esc     []byte
+	unsaved bool
 
 	// Font family picker modal (see openFontPicker) — a searchable list of
 	// installed families, opened from the font.family setting instead of
@@ -280,7 +284,7 @@ func (u *ui) adjust(d int) {
 		return
 	}
 	if needsFont := s.applyStep(&u.cfg, d); needsFont {
-		u.status = "font/atlas changed — host rebuilding shortly"
+		u.status = "font/atlas changed — press s to save"
 	}
 	u.dirty()
 }
@@ -321,7 +325,7 @@ func (u *ui) commitFontPicker() {
 		family = u.fontMatches[u.fontSel]
 	}
 	u.cfg.Font.Family = family
-	u.closeFontPicker("font family changed — host rebuilding")
+	u.closeFontPicker("font family changed — press s to save")
 	u.dirty()
 }
 
@@ -383,6 +387,7 @@ func (u *ui) save() {
 		u.status = "save failed: " + err.Error()
 		return
 	}
+	u.unsaved = false
 	u.status = "saved → " + u.path
 }
 
@@ -394,12 +399,13 @@ func (u *ui) resetPreset() {
 	u.dirty()
 }
 
-// dirty persists every change so the host terminal (which watches the file)
-// can re-apply it live.
+// dirty marks u.cfg as having an unsaved edit. It deliberately does not
+// write to disk — the host terminal only re-applies config.toml on its own
+// watch cycle, so writing here would mean every arrow-key nudge takes
+// effect immediately in the running terminal; changes only take effect
+// once the user explicitly presses 's' (see save()).
 func (u *ui) dirty() {
-	if err := config.Save(u.path, u.cfg); err != nil {
-		u.status = "save failed: " + err.Error()
-	}
+	u.unsaved = true
 }
 
 // ---------------- settings model ----------------
@@ -444,14 +450,19 @@ func (u *ui) buildList() {
 
 	section("theme")
 	add(&setting{
-		key: "theme", label: "preset", help: "cycles the rosepine/green/amber theme preset",
+		key: "theme", label: "preset", help: "cycles through every theme preset",
 		themeCycle: true,
 		get:        func(c *config.Config) string { return c.Theme },
-		applyStep: func(c *config.Config, _ int) bool {
-			next := map[string]string{"rosepine": "green", "green": "amber"}[c.Theme]
-			if next == "" {
-				next = "rosepine"
+		applyStep: func(c *config.Config, d int) bool {
+			names := config.PresetNames()
+			idx := slices.Index(names, c.Theme)
+			if idx < 0 {
+				idx = 0
+			} else {
+				n := len(names)
+				idx = ((idx+d)%n + n) % n
 			}
+			next := names[idx]
 			p := config.Preset(next)
 			c.Theme, c.Phosphor, c.TrueColor, c.Colors = next, p.Phosphor, p.TrueColor, p.Colors
 			return false
@@ -595,6 +606,9 @@ func (u *ui) redraw() {
 
 	// Header bar.
 	head := "TUBELESS CONFIG"
+	if u.unsaved {
+		head += "  ·  unsaved changes (s to save)"
+	}
 	if s != nil {
 		head += "  ·  " + s.label
 	}
@@ -953,51 +967,38 @@ func knob(c *config.Config, key string) (struct {
 }
 
 // ---------------- terminal plumbing ----------------
-
-type winsize struct{ Row, Col, Xpixel, Ypixel uint16 }
+//
+// Raw-mode entry/exit and terminal size both go through golang.org/x/term
+// rather than hand-rolled ioctl syscalls: the previous implementation used
+// Linux's TCGETS/TCSETS ioctl requests and syscall.Termios directly, which
+// don't exist under those names on macOS/BSD (they use TIOCGETA/TIOCSETA
+// with a differently-laid-out termios struct) — x/term abstracts that
+// per-platform difference so this file needs no GOOS-specific variant.
 
 // termSize reports the PTY size in cells.
 func termSize() (int, int, error) {
-	var ws winsize
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stdout.Fd(),
-		uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
-	if errno != 0 {
-		return 0, 0, errno
-	}
-	return int(ws.Col), int(ws.Row), nil
+	return term.GetSize(int(os.Stdout.Fd()))
 }
 
 // rawTermios holds the terminal state needed to switch stdin to raw mode.
 type rawTermios struct {
-	fd   uintptr
-	term syscall.Termios
+	fd    int
+	state *term.State
 }
 
 // rawMode puts stdin into cbreak raw mode (no echo, no line buffering) and
 // returns a handle whose restore() puts it back.
 func rawMode(fd uintptr) (*rawTermios, error) {
-	var term syscall.Termios
-	if _, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, fd,
-		uintptr(syscall.TCGETS), uintptr(unsafe.Pointer(&term)), 0, 0, 0); errno != 0 {
-		return nil, errno
+	ifd := int(fd)
+	state, err := term.MakeRaw(ifd)
+	if err != nil {
+		return nil, err
 	}
-	raw := term
-	raw.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.IEXTEN | syscall.ISIG
-	raw.Iflag &^= syscall.IXON | syscall.ICRNL | syscall.BRKINT | syscall.INPCK | syscall.ISTRIP
-	raw.Oflag &^= syscall.OPOST
-	raw.Cflag |= syscall.CS8
-	raw.Cc[syscall.VMIN] = 1
-	raw.Cc[syscall.VTIME] = 0
-	if _, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, fd,
-		uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&raw)), 0, 0, 0); errno != 0 {
-		return nil, errno
-	}
-	return &rawTermios{fd: fd, term: term}, nil
+	return &rawTermios{fd: ifd, state: state}, nil
 }
 
 func (r *rawTermios) restore() {
-	syscall.Syscall6(syscall.SYS_IOCTL, r.fd,
-		uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&r.term)), 0, 0, 0)
+	term.Restore(r.fd, r.state)
 }
 
 // readKeys forwards every input byte to out until EOF.
