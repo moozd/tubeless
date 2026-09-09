@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tubeless
+Comment=GPU-rendered terminal emulator
+Exec=__EXEC__
+Icon=__ICON__
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupNotify=true

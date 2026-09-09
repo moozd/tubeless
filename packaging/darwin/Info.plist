@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>tubeless</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.moozd.tubeless</string>
+	<key>CFBundleName</key>
+	<string>Tubeless</string>
+	<key>CFBundleDisplayName</key>
+	<string>Tubeless</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!--
+	No CFBundleIconFile: there's no .icns yet (see packaging/icon.svg's
+	comment — it's a placeholder pending real artwork), and generating one
+	needs macOS-native raster tooling (sips/iconutil) this Makefile can't
+	assume from a non-macOS build host anyway. The bundle works fine
+	without it — macOS just shows the generic app icon — add
+	CFBundleIconFile + Contents/Resources/tubeless.icns here once an icon
+	exists.
+	-->
+</dict>
+</plist>
