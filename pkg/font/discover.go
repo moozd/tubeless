@@ -15,6 +15,15 @@ import (
 // available (e.g. fc-list not installed); callers should treat that as
 // "no picker available" rather than fatal, since a family name chosen
 // elsewhere can still be stored and resolved later.
+//
+// macOS doesn't ship fontconfig by default (it's an X11/Linux-ecosystem
+// tool; macOS apps normally use CoreText instead), so this returns an
+// error there out of the box and the font-family picker has nothing to
+// list — ResolveFamily/loadFontBytes already fall back to the bundled
+// font on any error here, so nothing breaks, but the picker convenience
+// is unavailable on macOS until a CoreText-based implementation exists.
+// That's an intentionally out-of-scope follow-up, not something this
+// function works around — see the project's macOS support notes.
 func SystemFamilies() ([]string, error) {
 	out, err := exec.Command("fc-list", ":", "family").Output()
 	if err != nil {

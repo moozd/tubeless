@@ -1,5 +1,14 @@
 package font
 
+// This file's glyph rasterization is a cgo binding to FreeType, which
+// must be present as a system dev package at build time — freetype2
+// headers plus pkg-config itself. On Linux that's typically already
+// installed or a single distro package away (e.g.
+// libfreetype-dev/freetype-devel); on macOS it's not present by default:
+// `brew install freetype pkg-config` before building. This is a
+// build-time prerequisite only — the compiled binary doesn't need
+// FreeType installed at runtime; it links it in.
+
 /*
 #cgo pkg-config: freetype2
 #include <ft2build.h>
