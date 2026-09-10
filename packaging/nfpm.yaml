@@ -1,0 +1,25 @@
+# nfpm (https://nfpm.goreleaser.com) config template for deb/rpm/Arch
+# packages — one Go tool, one config, no per-distro build environment
+# needed. __ARCH__/__VERSION__/__BIN_DIR__ are substituted by `make
+# package-linux` (same sed-templating convention packaging/tubeless.desktop
+# already uses for __EXEC__/__ICON__) before nfpm reads this file.
+name: tubeless
+arch: __ARCH__
+platform: linux
+version: __VERSION__
+section: utils
+priority: optional
+maintainer: moozd <noreply@github.com>
+description: GPU-rendered terminal emulator
+homepage: https://github.com/moozd/tubeless
+license: MIT
+
+contents:
+  - src: __BIN_DIR__/tubeless
+    dst: /usr/bin/tubeless
+  - src: __BIN_DIR__/tubeless-config
+    dst: /usr/bin/tubeless-config
+  - src: packaging/icon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/tubeless.svg
+  - src: __DESKTOP__
+    dst: /usr/share/applications/tubeless.desktop

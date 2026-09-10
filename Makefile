@@ -1,6 +1,6 @@
 .PHONY: build build-x11 tubeless tubeless-config tektest test clean \
         install uninstall install-darwin uninstall-darwin help \
-        run-green run-amber run-config
+        run-green run-amber run-config package-linux package-darwin
 
 BINARY_NAME=tubeless
 BIN_DIR=bin
@@ -43,8 +43,17 @@ help:
 	@echo "  make install-darwin - macOS only, run on an actual Mac (GLFW's Cocoa"
 	@echo "                        backend can't be cross-compiled from Linux):"
 	@echo "                        builds a Tubeless.app bundle into \$$APP_DIR"
-	@echo "                        (default $(APP_DIR))"
-	@echo "  make uninstall-darwin - Remove the installed Tubeless.app bundle."
+	@echo "                        (default $(APP_DIR)) and symlinks tubeless/"
+	@echo "                        tubeless-config into /usr/local/bin so they"
+	@echo "                        run from any Terminal shell, not just Finder"
+	@echo "  make uninstall-darwin - Remove the installed Tubeless.app bundle"
+	@echo "                        and its /usr/local/bin symlinks."
+	@echo "  make package-linux  - Build for the host arch (override with"
+	@echo "                        GOARCH_TARGET=amd64|arm64) and package as"
+	@echo "                        .deb/.rpm/Arch pkg (via nfpm) + .tar.gz into dist/"
+	@echo "  make package-darwin - Build a Tubeless.app (with icon) for the host"
+	@echo "                        arch and zip it into dist/. Run per-arch on an"
+	@echo "                        actual Mac of that architecture."
 	@echo "  make clean          - Remove build artifacts"
 
 build: tubeless tubeless-config tektest
@@ -113,24 +122,88 @@ uninstall:
 	@echo "Uninstalled $(BINARY_NAME) + tubeless-config, desktop entry, and icon."
 	@echo "Your config at ~/.config/tubeless/config.toml was left in place."
 
+# CLI_BIN_DIR is where install-darwin symlinks the CLI binaries so they're
+# runnable from any Terminal shell — /usr/local/bin is on macOS's default
+# PATH (via /etc/paths) and user-writable without sudo on modern macOS,
+# unlike dropping something only inside the .app bundle (Contents/MacOS
+# isn't on PATH, and Finder-launched apps can't be run as a CLI command).
+CLI_BIN_DIR ?= /usr/local/bin
+ICNS = packaging/darwin/tubeless.icns
+
 # install-darwin builds a minimal Tubeless.app bundle. Must be run on an
 # actual Mac: GLFW's macOS backend needs the real Cocoa/OpenGL frameworks,
-# which can't be cross-compiled from this Makefile's usual Linux host —
-# see packaging/darwin/Info.plist's own notes on why there's no .icns yet.
-install-darwin: tubeless tubeless-config
+# which can't be cross-compiled from this Makefile's usual Linux host.
+install-darwin: tubeless tubeless-config $(ICNS)
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_BUNDLE)/Contents/Resources
 	cp $(BIN_DIR)/$(BINARY_NAME) $(APP_BUNDLE)/Contents/MacOS/
 	cp $(BIN_DIR)/tubeless-config $(APP_BUNDLE)/Contents/MacOS/
 	cp packaging/darwin/Info.plist $(APP_BUNDLE)/Contents/
+	cp $(ICNS) $(APP_BUNDLE)/Contents/Resources/
+	ln -sf $(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME) $(CLI_BIN_DIR)/$(BINARY_NAME)
+	ln -sf $(APP_BUNDLE)/Contents/MacOS/tubeless-config $(CLI_BIN_DIR)/tubeless-config
 	@echo "Installed $(APP_BUNDLE)"
+	@echo "Symlinked $(BINARY_NAME) + tubeless-config into $(CLI_BIN_DIR)"
 	@echo "Your config at ~/Library/Application Support/tubeless/config.toml is untouched."
+
+# $(ICNS) is only (re)built when packaging/icon.svg is newer than it —
+# make-icns.sh needs macOS-native tooling (sips/qlmanage/iconutil), so this
+# rule only ever runs on a real Mac, same constraint as install-darwin itself.
+$(ICNS): packaging/icon.svg packaging/darwin/make-icns.sh
+	packaging/darwin/make-icns.sh
 
 uninstall-darwin:
 	rm -rf $(APP_BUNDLE)
-	@echo "Removed $(APP_BUNDLE)."
+	rm -f $(CLI_BIN_DIR)/$(BINARY_NAME) $(CLI_BIN_DIR)/tubeless-config
+	@echo "Removed $(APP_BUNDLE) and its $(CLI_BIN_DIR) symlinks."
 	@echo "Your config at ~/Library/Application Support/tubeless/config.toml was left in place."
 
+DIST_DIR = dist
+GOARCH_TARGET ?= $(shell go env GOARCH)
+NFPM ?= go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+
+# package-linux builds tubeless + tubeless-config for GOARCH_TARGET (the
+# host arch by default) and packages them as .deb/.rpm/an Arch pkg (via
+# nfpm, see packaging/nfpm.yaml) plus a generic .tar.gz, all under dist/.
+# Deliberately doesn't cross-build both amd64 and arm64 in one invocation:
+# GLFW's cgo dependency needs a matching cross-toolchain to cross-compile
+# reliably, so each arch is packaged on its own native runner in CI
+# instead (override GOARCH_TARGET locally if you do have that toolchain).
+package-linux:
+	@mkdir -p $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin
+	GOARCH=$(GOARCH_TARGET) go build -tags wayland -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/$(BINARY_NAME) $(CMD_PATH)
+	GOARCH=$(GOARCH_TARGET) go build -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/tubeless-config ./cmd/tubeless-config
+	tar -C $(DIST_DIR)/linux-$(GOARCH_TARGET) -czf $(DIST_DIR)/tubeless-$(VERSION)-linux-$(GOARCH_TARGET).tar.gz bin
+	sed -e 's|__EXEC__|/usr/bin/$(BINARY_NAME)|' -e 's|__ICON__|tubeless|' \
+	    packaging/tubeless.desktop > $(DIST_DIR)/tubeless-$(GOARCH_TARGET).desktop
+	sed -e 's|__ARCH__|$(GOARCH_TARGET)|' -e 's|__VERSION__|$(VERSION)|' \
+	    -e 's|__BIN_DIR__|$(DIST_DIR)/linux-$(GOARCH_TARGET)/bin|' \
+	    -e 's|__DESKTOP__|$(DIST_DIR)/tubeless-$(GOARCH_TARGET).desktop|' \
+	    packaging/nfpm.yaml > $(DIST_DIR)/nfpm-$(GOARCH_TARGET).yaml
+	@for fmt in deb rpm archlinux; do \
+		$(NFPM) package -f $(DIST_DIR)/nfpm-$(GOARCH_TARGET).yaml -p $$fmt -t $(DIST_DIR)/ || exit 1; \
+	done
+	@echo "Packages written to $(DIST_DIR)/"
+
+# package-darwin builds a Tubeless.app for GOARCH_TARGET (the host arch —
+# GLFW's Cocoa backend can't cross-compile, same constraint as
+# install-darwin) with its .icns, and zips it into dist/. Run per-arch on
+# an actual Mac of that architecture (arm64 and amd64 each need their own
+# runner in CI — see .github/workflows/release.yml).
+package-darwin: $(ICNS)
+	@mkdir -p $(DIST_DIR)
+	GOARCH=$(GOARCH_TARGET) go build -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	GOARCH=$(GOARCH_TARGET) go build -o $(BIN_DIR)/tubeless-config ./cmd/tubeless-config
+	@rm -rf $(DIST_DIR)/Tubeless.app
+	@mkdir -p $(DIST_DIR)/Tubeless.app/Contents/MacOS $(DIST_DIR)/Tubeless.app/Contents/Resources
+	cp $(BIN_DIR)/$(BINARY_NAME) $(DIST_DIR)/Tubeless.app/Contents/MacOS/
+	cp $(BIN_DIR)/tubeless-config $(DIST_DIR)/Tubeless.app/Contents/MacOS/
+	cp packaging/darwin/Info.plist $(DIST_DIR)/Tubeless.app/Contents/
+	cp $(ICNS) $(DIST_DIR)/Tubeless.app/Contents/Resources/
+	cd $(DIST_DIR) && zip -qr tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip Tubeless.app && rm -rf Tubeless.app
+	@echo "Packaged $(DIST_DIR)/tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip"
+
 clean:
-	rm -rf $(BIN_DIR)
+	rm -rf $(BIN_DIR) $(DIST_DIR)
 	go clean
 	@echo "Cleaned build artifacts"

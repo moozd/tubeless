@@ -18,14 +18,7 @@
 	<string>6.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<!--
-	No CFBundleIconFile: there's no .icns yet (see packaging/icon.svg's
-	comment — it's a placeholder pending real artwork), and generating one
-	needs macOS-native raster tooling (sips/iconutil) this Makefile can't
-	assume from a non-macOS build host anyway. The bundle works fine
-	without it — macOS just shows the generic app icon — add
-	CFBundleIconFile + Contents/Resources/tubeless.icns here once an icon
-	exists.
-	-->
+	<key>CFBundleIconFile</key>
+	<string>tubeless.icns</string>
 </dict>
 </plist>
