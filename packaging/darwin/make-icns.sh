@@ -23,10 +23,26 @@ mkdir -p "$ICONSET"
 qlmanage -t -s 1024 -o "$WORK" "$SRC" >/dev/null
 MASTER="$WORK/$(basename "$SRC").png"
 
+# macOS (since Big Sur) applies its own rounded-square/shadow treatment
+# to every app icon, on top of whatever artwork is given it — which
+# expects the actual glyph to occupy only ~82% of the canvas, centered,
+# with a transparent margin for the OS's own treatment to sit in.
+# icon.svg deliberately fills its canvas edge-to-edge (right for Linux,
+# where no such treatment happens), so each size is shrunk to that 82%
+# content box and then padded back out to the full size here — macOS
+# only, not the shared source every other packaging target reads from.
 for size in 16 32 128 256 512; do
-	sips -z "$size" "$size" "$MASTER" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
-	double=$((size * 2))
-	sips -z "$double" "$double" "$MASTER" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+	for variant in "$size" "$((size * 2))"; do
+		content=$((variant * 82 / 100))
+		tmp="$WORK/content-$variant.png"
+		sips -z "$content" "$content" "$MASTER" --out "$tmp" >/dev/null
+		if [ "$variant" = "$size" ]; then
+			out="$ICONSET/icon_${size}x${size}.png"
+		else
+			out="$ICONSET/icon_${size}x${size}@2x.png"
+		fi
+		sips -p "$variant" "$variant" "$tmp" --out "$out" >/dev/null
+	done
 done
 
 iconutil -c icns "$ICONSET" -o "$OUT"
