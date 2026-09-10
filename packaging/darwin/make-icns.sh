@@ -23,17 +23,19 @@ mkdir -p "$ICONSET"
 qlmanage -t -s 1024 -o "$WORK" "$SRC" >/dev/null
 MASTER="$WORK/$(basename "$SRC").png"
 
-# macOS (since Big Sur) applies its own rounded-square/shadow treatment
-# to every app icon, on top of whatever artwork is given it — which
-# expects the actual glyph to occupy only ~82% of the canvas, centered,
-# with a transparent margin for the OS's own treatment to sit in.
-# icon.svg deliberately fills its canvas edge-to-edge (right for Linux,
-# where no such treatment happens), so each size is shrunk to that 82%
-# content box and then padded back out to the full size here — macOS
-# only, not the shared source every other packaging target reads from.
+# macOS's Big Sur+ icon convention expects a margin around the artwork
+# so it sits at a consistent size next to other apps' icons in the Dock
+# — but icon.svg already draws its own rounded square (rx=40) inset a
+# few px from its 256x256 canvas, i.e. it's already "self-masked" rather
+# than a raw edge-to-edge square expecting the OS to add that margin for
+# it. Shrinking it by the full ~82% Apple guidance assumes for that raw
+# case double-applies the inset on top of the artwork's own, landing the
+# icon noticeably smaller in the Dock than sibling apps. 94% instead
+# accounts for the source's own margin (~94% fill) without stacking
+# another one on top — a light touch-up, not the full safe-zone shrink.
 for size in 16 32 128 256 512; do
 	for variant in "$size" "$((size * 2))"; do
-		content=$((variant * 82 / 100))
+		content=$((variant * 94 / 100))
 		tmp="$WORK/content-$variant.png"
 		sips -z "$content" "$content" "$MASTER" --out "$tmp" >/dev/null
 		if [ "$variant" = "$size" ]; then
