@@ -83,7 +83,16 @@ type setting struct {
 	fontFamily bool
 }
 
+// version is baked in at build time via -ldflags "-X main.version=..."
+// (see the Makefile's LDFLAGS) — "dev" for a plain `go build` outside it.
+var version = "dev"
+
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+		fmt.Println("tubeless-config " + version)
+		return
+	}
+
 	// Fixes fc-list lookups (see pkg/font.SystemFamilies) when this binary
 	// runs standalone rather than exec'd by tubeless — a macOS GUI-launched
 	// process's PATH is missing whatever a login shell's profile adds.

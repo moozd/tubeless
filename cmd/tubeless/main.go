@@ -58,7 +58,16 @@ const (
 
 type resizeReq struct{ cols, rows int }
 
+// version is baked in at build time via -ldflags "-X main.version=..."
+// (see the Makefile's LDFLAGS) — "dev" for a plain `go build` outside it.
+var version = "dev"
+
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+		fmt.Println("tubeless " + version)
+		return
+	}
+
 	// Must run before any exec.Command below (fc-list via font.SystemFamilies,
 	// the pty shell itself) — a macOS GUI process launched from Finder/Dock
 	// inherits launchd's minimal PATH, missing whatever a login shell's

@@ -6,6 +6,13 @@ BINARY_NAME=tubeless
 BIN_DIR=bin
 CMD_PATH=./cmd/$(BINARY_NAME)
 
+# VERSION is baked into both binaries (see main.go's -version flag) and
+# into packaging (Info.plist's CFBundleShortVersionString, nfpm/tarball
+# filenames) via LDFLAGS below. Defaults to the nearest git tag; override
+# for a build that shouldn't depend on the local git state.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+LDFLAGS = -X main.version=$(VERSION)
+
 # PREFIX is the Linux install root — everything lands under
 # $(PREFIX)/bin, $(PREFIX)/share/applications, $(PREFIX)/share/icons.
 # Defaults to a per-user, no-sudo location; override for a system-wide
@@ -60,19 +67,19 @@ build: tubeless tubeless-config tektest
 
 build-x11:
 	@mkdir -p $(BIN_DIR)
-	go build -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME) (X11)"
 
 tubeless:
 	@mkdir -p $(BIN_DIR)
-	go build -tags wayland -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	go build -tags wayland -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME)"
 
 # tubeless-config is the in-terminal settings UI; `tubeless config` runs it
 # directly in the current terminal (see cmd/tubeless/main.go), no window.
 tubeless-config:
 	@mkdir -p $(BIN_DIR)
-	go build -o $(BIN_DIR)/tubeless-config ./cmd/tubeless-config
+	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/tubeless-config ./cmd/tubeless-config
 	@echo "Built $(BIN_DIR)/tubeless-config"
 
 tektest:
@@ -137,7 +144,7 @@ install-darwin: tubeless tubeless-config $(ICNS)
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_BUNDLE)/Contents/Resources
 	cp $(BIN_DIR)/$(BINARY_NAME) $(APP_BUNDLE)/Contents/MacOS/
 	cp $(BIN_DIR)/tubeless-config $(APP_BUNDLE)/Contents/MacOS/
-	cp packaging/darwin/Info.plist $(APP_BUNDLE)/Contents/
+	sed -e 's|__VERSION__|$(VERSION)|' packaging/darwin/Info.plist > $(APP_BUNDLE)/Contents/Info.plist
 	cp $(ICNS) $(APP_BUNDLE)/Contents/Resources/
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME) $(CLI_BIN_DIR)/$(BINARY_NAME)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/tubeless-config $(CLI_BIN_DIR)/tubeless-config
@@ -160,7 +167,6 @@ uninstall-darwin:
 DIST_DIR = dist
 GOARCH_TARGET ?= $(shell go env GOARCH)
 NFPM ?= go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 
 # package-linux builds tubeless + tubeless-config for GOARCH_TARGET (the
 # host arch by default) and packages them as .deb/.rpm/an Arch pkg (via
@@ -171,8 +177,8 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.
 # instead (override GOARCH_TARGET locally if you do have that toolchain).
 package-linux:
 	@mkdir -p $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin
-	GOARCH=$(GOARCH_TARGET) go build -tags wayland -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/$(BINARY_NAME) $(CMD_PATH)
-	GOARCH=$(GOARCH_TARGET) go build -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/tubeless-config ./cmd/tubeless-config
+	GOARCH=$(GOARCH_TARGET) go build -tags wayland -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/$(BINARY_NAME) $(CMD_PATH)
+	GOARCH=$(GOARCH_TARGET) go build -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/tubeless-config ./cmd/tubeless-config
 	tar -C $(DIST_DIR)/linux-$(GOARCH_TARGET) -czf $(DIST_DIR)/tubeless-$(VERSION)-linux-$(GOARCH_TARGET).tar.gz bin
 	sed -e 's|__EXEC__|/usr/bin/$(BINARY_NAME)|' -e 's|__ICON__|tubeless|' \
 	    packaging/tubeless.desktop > $(DIST_DIR)/tubeless-$(GOARCH_TARGET).desktop
@@ -192,13 +198,13 @@ package-linux:
 # runner in CI — see .github/workflows/release.yml).
 package-darwin: $(ICNS)
 	@mkdir -p $(DIST_DIR)
-	GOARCH=$(GOARCH_TARGET) go build -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
-	GOARCH=$(GOARCH_TARGET) go build -o $(BIN_DIR)/tubeless-config ./cmd/tubeless-config
+	GOARCH=$(GOARCH_TARGET) go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	GOARCH=$(GOARCH_TARGET) go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/tubeless-config ./cmd/tubeless-config
 	@rm -rf $(DIST_DIR)/Tubeless.app
 	@mkdir -p $(DIST_DIR)/Tubeless.app/Contents/MacOS $(DIST_DIR)/Tubeless.app/Contents/Resources
 	cp $(BIN_DIR)/$(BINARY_NAME) $(DIST_DIR)/Tubeless.app/Contents/MacOS/
 	cp $(BIN_DIR)/tubeless-config $(DIST_DIR)/Tubeless.app/Contents/MacOS/
-	cp packaging/darwin/Info.plist $(DIST_DIR)/Tubeless.app/Contents/
+	sed -e 's|__VERSION__|$(VERSION)|' packaging/darwin/Info.plist > $(DIST_DIR)/Tubeless.app/Contents/Info.plist
 	cp $(ICNS) $(DIST_DIR)/Tubeless.app/Contents/Resources/
 	cd $(DIST_DIR) && zip -qr tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip Tubeless.app && rm -rf Tubeless.app
 	@echo "Packaged $(DIST_DIR)/tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip"
