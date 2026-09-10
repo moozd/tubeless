@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"runtime"
 
 	"github.com/go-gl/gl/v3.3-core/gl"
 
@@ -544,6 +545,16 @@ func (cp *CellPass) drawGlyphs(instances []float32, cw, ch, screenW, screenH, of
 	}
 	gl.UseProgram(cp.progGlyph)
 	setCommonUniforms(cp.progGlyph, cw, ch, screenW, screenH, offsetX, offsetY)
+	// Ghostty's own linear-corrected blend mode (see cell_glyph.frag) is
+	// its default everywhere except macOS — the correction assumes the
+	// text-weight expectations of gamma-space rendering, which don't hold
+	// there. Gated at draw time rather than compiled out, matching every
+	// other cross-platform uniform here.
+	linearCorrect := int32(0)
+	if runtime.GOOS != "darwin" {
+		linearCorrect = 1
+	}
+	gl.Uniform1i(gl.GetUniformLocation(cp.progGlyph, gl.Str("uLinearCorrect\x00")), linearCorrect)
 	uniformNames := [styleCount]string{"uAtlas0\x00", "uAtlas1\x00", "uAtlas2\x00", "uAtlas3\x00"}
 	for i, tex := range cp.atlasTex {
 		gl.ActiveTexture(gl.TEXTURE0 + uint32(i))
