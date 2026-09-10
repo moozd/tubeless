@@ -86,10 +86,36 @@ func EnumerateRunes(fontBytes []byte) ([]rune, error) {
 // that same raster-to-display ratio (cfg.Atlas.Scale); it sizes the
 // gutter around generated sprites (see font.SetOvershoot) so mipmap
 // minification doesn't bleed a gap between adjacent cells. gamma
-// reshapes the coverage curve (>1 sharpens edges, <1 softens) to taste. A
+// reshapes the coverage curve (>1 sharpens edges, <1 softens) to taste.
+// lineHeight scales the font's own line height into the final cell
+// height (1 leaves it unchanged); the extra space splits evenly above
+// and below so glyphs stay vertically centered rather than crowding the
+// top of a taller cell. Every generated sprite (box drawing, block
+// elements, powerline) is drawn to fill that same final cellH, so box
+// borders and solid blocks still tile seamlessly across rows whatever
+// lineHeight is set to — see spriteGlyph and its callees, which only
+// ever work in cellW x cellH fractions, never the font's own metrics. A
 // rune the font has no glyph for is left blank rather than failing the
-// build, since fonts vary in coverage.
-func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale int) (*Atlas, error) {
+// build, since fonts vary in coverage — except a rune fallbackBytes (the
+// bundled Nerd Font, see DefaultFontBytes) has a real glyph for, which is
+// rasterized from fallbackBytes instead. Without this, a configured
+// font.family that has no Nerd Font icon patch at all — or a different
+// one than the bundled font's — would silently lose whatever icons a
+// shell prompt relies on just because the user picked a different
+// typeface for text; fallbackBytes may be nil to skip this (EnumerateRunes
+// on it, elsewhere, already is what the icon set is).
+//
+// maxTextureSize rejects a packed atlas that would come out larger than
+// the GPU will actually accept (see render.MaxTextureSize) — the bundled
+// Nerd Font alone enumerates to ~12,000 glyphs, and at a high enough
+// atlas.scale the packed texture crosses GL_MAX_TEXTURE_SIZE (commonly
+// 16384) well before atlas.scale itself looks like an unreasonable
+// number to a user turning it up. Left unchecked, glTexImage2D silently
+// fails on upload and every glyph then samples as blank — text just
+// disappears, with nothing in this process's own control flow ever
+// seeing an error. maxTextureSize <= 0 disables the check (tests that
+// don't have a GL context to size against).
+func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale int, lineHeight float64, fallbackBytes []byte, maxTextureSize int) (*Atlas, error) {
 	SetOvershoot(scale)
 	lib, err := newFTLibrary()
 	if err != nil {
@@ -112,6 +138,7 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 		return nil, fmt.Errorf("font has no glyph for 'M' to measure cell width")
 	}
 	cellH, ascender := face.lineMetrics()
+	cellH, ascender = applyLineHeight(cellH, ascender, lineHeight)
 
 	// Guarantee every generated sprite (box drawing, block elements,
 	// geometric powerline) is in the atlas even if the loaded font lacks the
@@ -136,6 +163,30 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 		}
 	}
 
+	// Any codepoint fontBytes lacks but fallbackBytes has — icon ranges
+	// especially — is rasterized from fallbackBytes instead of left
+	// blank. fromFallback records which, so the raster loop below knows
+	// which face to actually pull the bitmap from.
+	var fallbackFace *ftFace
+	fromFallback := make(map[rune]bool)
+	if fallbackBytes != nil {
+		fallbackFace, err = lib.newMemoryFace(fallbackBytes)
+		if err != nil {
+			return nil, fmt.Errorf("load fallback font: %w", err)
+		}
+		defer fallbackFace.free()
+		if err := fallbackFace.setPixelSize(pixelHeight); err != nil {
+			return nil, err
+		}
+		for _, r := range fallbackFace.enumerateRunes() {
+			if !have[r] {
+				runes = append(runes, r)
+				have[r] = true
+				fromFallback[r] = true
+			}
+		}
+	}
+
 	// Packed roughly square rather than a fixed column count: with
 	// EnumerateRunes potentially returning several thousand codepoints,
 	// a fixed narrow column count would produce a very tall, thin
@@ -155,6 +206,11 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 	// drawable cellW x cellH, so on-screen cell size is unaffected.
 	glyphPadding := over + 2
 	packedW, packedH := cellW+2*glyphPadding, cellH+2*glyphPadding
+	texW, texH := cols*packedW, rows*packedH
+	if maxTextureSize > 0 && (texW > maxTextureSize || texH > maxTextureSize) {
+		return nil, fmt.Errorf("atlas texture %dx%d exceeds this GPU's max texture size (%d) — lower atlas.scale or font.size",
+			texW, texH, maxTextureSize)
+	}
 	atlas := &Atlas{
 		Image:      image.NewAlpha(image.Rect(0, 0, cols*packedW, rows*packedH)),
 		CellWidth:  cellW,
@@ -166,11 +222,31 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 		gx := (i%cols)*packedW + glyphPadding
 		gy := (i/cols)*packedH + glyphPadding
 		if !spriteGlyph(r, atlas.Image, gx, gy, cellW, cellH) {
-			blitGlyph(face, r, atlas.Image, gx, gy, cellW, cellH, ascender, gamma)
+			src := face
+			if fromFallback[r] {
+				src = fallbackFace
+			}
+			blitGlyph(src, r, atlas.Image, gx, gy, cellW, cellH, ascender, gamma)
 		}
 		atlas.Glyphs[r] = Glyph{X: gx, Y: gy, W: cellW, H: cellH}
 	}
 	return atlas, nil
+}
+
+// applyLineHeight scales cellH by lineHeight (1 is a no-op; <= 0 is
+// treated as 1, since a zero or negative cell height would break every
+// downstream size computation). The added or removed space splits evenly
+// above and below the original line box, so ascender shifts by half of
+// it — keeping glyphs (and the sprites drawn relative to ascender-free
+// cellW x cellH bounds) centered in the new cell instead of pinned to
+// its top.
+func applyLineHeight(cellH, ascender int, lineHeight float64) (newCellH, newAscender int) {
+	if lineHeight <= 0 {
+		lineHeight = 1
+	}
+	newCellH = max(1, int(math.Round(float64(cellH)*lineHeight)))
+	newAscender = ascender + (newCellH-cellH)/2
+	return newCellH, newAscender
 }
 
 // FaceBytes is the raw font file bytes for the four style variants a cell
@@ -192,12 +268,16 @@ type Faces struct {
 }
 
 // BuildFaces runs Build once per non-nil FaceBytes entry, at the same
-// pixelHeight/gamma/scale for all of them so their cell grids line up.
-// Regular must be non-nil; Bold is expected to be non-nil too (callers
-// always have a real bold face, bundled or resolved) but isn't required
-// to be.
-func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int) (*Faces, error) {
-	build := func(name string, b []byte) (*Atlas, error) {
+// pixelHeight/gamma/scale/lineHeight for all of them so their cell grids
+// line up. Regular must be non-nil; Bold is expected to be non-nil too
+// (callers always have a real bold face, bundled or resolved) but isn't
+// required to be. Every style falls back to the bundled Nerd Font's own
+// glyphs (DefaultFontBytes/DefaultBoldFontBytes) for any codepoint it's
+// missing, so the icon set available doesn't depend on which family
+// config.Font.Family names — see Build's fallbackBytes. maxTextureSize is
+// forwarded to every Build call — see Build's own doc comment.
+func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int, lineHeight float64, maxTextureSize int) (*Faces, error) {
+	build := func(name string, b, fallback []byte) (*Atlas, error) {
 		if b == nil {
 			return nil, nil
 		}
@@ -205,25 +285,25 @@ func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int) (*Fa
 		if err != nil {
 			return nil, fmt.Errorf("enumerate %s glyphs: %w", name, err)
 		}
-		atlas, err := Build(b, runes, pixelHeight, gamma, scale)
+		atlas, err := Build(b, runes, pixelHeight, gamma, scale, lineHeight, fallback, maxTextureSize)
 		if err != nil {
 			return nil, fmt.Errorf("build %s atlas: %w", name, err)
 		}
 		return atlas, nil
 	}
-	regular, err := build("regular", bytes.Regular)
+	regular, err := build("regular", bytes.Regular, DefaultFontBytes())
 	if err != nil {
 		return nil, err
 	}
-	bold, err := build("bold", bytes.Bold)
+	bold, err := build("bold", bytes.Bold, DefaultBoldFontBytes())
 	if err != nil {
 		return nil, err
 	}
-	italic, err := build("italic", bytes.Italic)
+	italic, err := build("italic", bytes.Italic, DefaultFontBytes())
 	if err != nil {
 		return nil, err
 	}
-	boldItalic, err := build("bold italic", bytes.BoldItalic)
+	boldItalic, err := build("bold italic", bytes.BoldItalic, DefaultBoldFontBytes())
 	if err != nil {
 		return nil, err
 	}

@@ -121,8 +121,13 @@ func main() {
 		return c
 	}
 
+	maxTextureSize, err := render.ProbeMaxTextureSize()
+	if err != nil {
+		log.Fatalf("probe GPU texture limit: %v", err)
+	}
+
 	faceBytes := loadFontFaces(cfg.Font.Family)
-	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale)
+	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale, cfg.Font.LineHeight, maxTextureSize)
 	if err != nil {
 		log.Fatalf("build font atlas: %v", err)
 	}
@@ -556,7 +561,7 @@ func pumpPTYOutput(sess *ptyio.Session, out chan<- []byte) {
 // file's font/atlas settings change at runtime.
 func newRendererFor(win *render.Window, cfg config.Config, cs *cellSize) (*render.Renderer, error) {
 	faceBytes := loadFontFaces(cfg.Font.Family)
-	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale)
+	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale, cfg.Font.LineHeight, render.MaxTextureSize())
 	if err != nil {
 		return nil, fmt.Errorf("build font atlas: %w", err)
 	}

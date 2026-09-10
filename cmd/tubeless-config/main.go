@@ -546,6 +546,14 @@ func (u *ui) buildList() {
 		},
 	})
 	add(&setting{
+		key: "font.line_height", label: "line height", help: "line spacing multiplier (rebuilds the atlas)", dec: 2, step: 0.05, min: 0.8, max: 2,
+		get: func(c *config.Config) string { return trimFloat(c.Font.LineHeight, 2) },
+		applyStep: func(c *config.Config, d int) bool {
+			c.Font.LineHeight = roundFloat(clampFloat(c.Font.LineHeight+0.05*float64(d), 0.8, 2), 2)
+			return true
+		},
+	})
+	add(&setting{
 		key: "font.family", label: "family", help: "installed font family; Enter to search", fontFamily: true,
 		get: func(c *config.Config) string {
 			if c.Font.Family == "" {
@@ -1131,6 +1139,8 @@ func knob(c *config.Config, key string) (struct {
 		return rng{float64(c.Atlas.Scale), 1, 8}, true
 	case "font.gamma":
 		return rng{float64(c.Atlas.Gamma), 0.5, 2}, true
+	case "font.line_height":
+		return rng{c.Font.LineHeight, 0.8, 2}, true
 	}
 	return struct {
 		v, min, max float64

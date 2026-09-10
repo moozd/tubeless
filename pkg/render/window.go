@@ -60,3 +60,50 @@ func (w *Window) Destroy() {
 func (w *Window) FramebufferPixelSize() (int, int) {
 	return w.GetFramebufferSize()
 }
+
+// MaxTextureSize reports the current GL context's GL_MAX_TEXTURE_SIZE —
+// the largest square texture dimension this GPU/driver will actually
+// accept. Callers building a texture whose size depends on user-tunable
+// settings (see font.Build's maxTextureSize — the glyph atlas grows with
+// atlas.scale and the font's own glyph count) need this to reject an
+// oversized request with a clear error up front, rather than letting
+// glTexImage2D fail silently and leave every glyph sampling as blank.
+// Requires an active GL context (i.e. called after NewWindow, or from
+// inside ProbeMaxTextureSize).
+func MaxTextureSize() int {
+	var v int32
+	gl.GetIntegerv(gl.MAX_TEXTURE_SIZE, &v)
+	return int(v)
+}
+
+// ProbeMaxTextureSize is MaxTextureSize for before any real window
+// exists: cmd/tubeless needs this limit to build the glyph atlas at
+// startup, but the real window can't be sized until the atlas is built
+// (its dimensions come from the atlas's own cell size). This opens a
+// throwaway, invisible context just to ask the driver, tears it down,
+// and leaves glfw itself initialized (only the real NewWindow's eventual
+// Destroy should call glfw.Terminate) so the real window can be created
+// right after.
+func ProbeMaxTextureSize() (int, error) {
+	if err := glfw.Init(); err != nil {
+		return 0, fmt.Errorf("glfw init: %w", err)
+	}
+	glfw.WindowHint(glfw.ContextVersionMajor, 3)
+	glfw.WindowHint(glfw.ContextVersionMinor, 3)
+	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
+	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
+	glfw.WindowHint(glfw.Visible, glfw.False)
+	defer glfw.DefaultWindowHints()
+
+	probe, err := glfw.CreateWindow(1, 1, "", nil, nil)
+	if err != nil {
+		return 0, fmt.Errorf("create probe context: %w", err)
+	}
+	defer probe.Destroy()
+	probe.MakeContextCurrent()
+
+	if err := gl.Init(); err != nil {
+		return 0, fmt.Errorf("gl init: %w", err)
+	}
+	return MaxTextureSize(), nil
+}

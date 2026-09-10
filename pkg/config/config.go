@@ -41,10 +41,14 @@ type Scrollback struct {
 // An empty Family selects the bundled FiraCode Nerd Font; otherwise it
 // names an installed font family — resolved to an actual file via
 // fontconfig (see font.ResolveFamily), not a raw path the user has to
-// know themselves.
+// know themselves. LineHeight scales the font's own line height (1 is
+// unchanged); box drawing, block elements, and powerline glyphs are
+// generated to fill the resulting cell exactly (see font.Build), so
+// they keep tiling seamlessly whatever this is set to.
 type Font struct {
-	Family string `toml:"family"`
-	Size   int    `toml:"size"`
+	Family     string  `toml:"family"`
+	Size       int     `toml:"size"`
+	LineHeight float64 `toml:"line_height"`
 }
 
 // Atlas controls the offscreen glyph rasterization (see cmd/tubeless's
@@ -202,7 +206,7 @@ func truecolorPreset(name string, bg, fg, accent [3]float32, palette [16][3]floa
 	return Config{
 		Theme:      name,
 		TrueColor:  true,
-		Font:       Font{Family: "", Size: 14},
+		Font:       Font{Family: "", Size: 14, LineHeight: 1},
 		Atlas:      Atlas{Scale: 4, Gamma: 1.0},
 		Phosphor:   Phosphor{Low: bg, High: accent},
 		Colors:     Colors{DefaultFg: fg, DefaultBg: bg, Palette: palette},
@@ -224,7 +228,7 @@ const DefaultScrollbackLines = 5000
 func amberPreset() Config {
 	return Config{
 		Theme: "amber",
-		Font:  Font{Family: "", Size: 14},
+		Font:  Font{Family: "", Size: 14, LineHeight: 1},
 		Atlas: Atlas{Scale: 4, Gamma: 1.0},
 		Phosphor: Phosphor{
 			Low:  srgbToLinear3([3]float32{0.35, 0.16, 0.0}),
@@ -242,7 +246,7 @@ func amberPreset() Config {
 func greenPreset() Config {
 	return Config{
 		Theme: "green",
-		Font:  Font{Family: "", Size: 14},
+		Font:  Font{Family: "", Size: 14, LineHeight: 1},
 		Atlas: Atlas{Scale: 4, Gamma: 1.0},
 		Phosphor: Phosphor{
 			Low:  srgbToLinear3([3]float32{0.0, 0.42, 0.30}),
