@@ -72,9 +72,16 @@ func ResolveStyle(family, style string) (path string, ok bool) {
 
 // ResolveFamily finds the font file fontconfig picks for family, via
 // fc-match — what cmd/tubeless loads instead of a raw path when
-// config.Font.Family is set. fc-match always returns *some* file (it
-// falls back to its own default match rather than erroring on an unknown
-// family), so a typo reads as "wrong font", never a crash.
+// config.Font.Family is set. fc-match never reports "not found": if
+// fontconfig doesn't know family (not installed, or installed but not
+// in a directory fontconfig indexes — common on macOS, where fontconfig
+// itself is usually missing too), it silently substitutes its own
+// default match instead of erroring. Left unchecked, that reads as
+// "resolved fine" and the caller renders with the wrong font's glyph
+// set — so this also asks fc-match which family it actually picked and
+// rejects the match unless it corresponds to what was requested,
+// turning a silent wrong-font substitution into the same "wrong font"
+// fallback a typo already gets.
 func ResolveFamily(family string) (string, error) {
 	out, err := exec.Command("fc-match", "--format=%{file}", family).Output()
 	if err != nil {
@@ -84,5 +91,26 @@ func ResolveFamily(family string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("fc-match %q: no file returned", family)
 	}
+
+	famOut, err := exec.Command("fc-match", "--format=%{family}", family).Output()
+	if err != nil {
+		return "", fmt.Errorf("fc-match %q: %w", family, err)
+	}
+	got := strings.TrimSpace(string(famOut))
+	if !hasFamilyAlias(got, family) {
+		return "", fmt.Errorf("fc-match %q: no installed font matches (fontconfig substituted %q)", family, got)
+	}
 	return path, nil
+}
+
+// hasFamilyAlias reports whether want matches any of got's comma-separated
+// family aliases (fontconfig lists localized names alongside the primary
+// one), case-insensitively.
+func hasFamilyAlias(got, want string) bool {
+	for _, alias := range strings.Split(got, ",") {
+		if strings.EqualFold(strings.TrimSpace(alias), want) {
+			return true
+		}
+	}
+	return false
 }
