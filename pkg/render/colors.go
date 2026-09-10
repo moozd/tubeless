@@ -37,14 +37,14 @@ func cellColors(attr screen.Attr, cfg config.Config) (fg, bg [3]float32) {
 		if attr.Invisible {
 			return bg, bg
 		}
-		return lerp3(cfg.Phosphor.Low, cfg.Phosphor.High, fgI), bg
+		return lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, fgI), bg
 	}
 
 	bgI := scaleIntensity(attr.Bg)
-	bg = lerp3(cfg.Phosphor.Low, cfg.Phosphor.High, bgI)
+	bg = lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, bgI)
 	if attr.Reverse {
 		fgI, bgI = bgI, fgI
-		bg = lerp3(cfg.Phosphor.Low, cfg.Phosphor.High, bgI)
+		bg = lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, bgI)
 	}
 	if attr.Invisible {
 		return bg, bg
@@ -59,7 +59,7 @@ func cellColors(attr screen.Attr, cfg config.Config) (fg, bg [3]float32) {
 		}
 		return cfg.Phosphor.High, [3]float32{0, 0, 0}
 	}
-	return lerp3(cfg.Phosphor.Low, cfg.Phosphor.High, fgI), bg
+	return lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, fgI), bg
 }
 
 // trueColorCell is cellColors' TrueColor-theme branch: the cell's real RGB
@@ -182,12 +182,49 @@ func min32(a, b float32) float32 {
 	return b
 }
 
-func lerp3(a, b [3]float32, t float32) [3]float32 {
-	return [3]float32{
-		a[0] + (b[0]-a[0])*t,
-		a[1] + (b[1]-a[1])*t,
-		a[2] + (b[2]-a[2])*t,
+// phosphorRampCache memoizes the OKLab conversion of the last-seen
+// Phosphor.Low/High pair for lerpPhosphor — Low/High are constant for an
+// entire frame's worth of per-cell calls (every visible cell calls
+// lerpPhosphor at least once), so without this a frame would redo the same
+// two OKLab conversions thousands of times over.
+var (
+	phosphorRampLow, phosphorRampHigh       [3]float32
+	phosphorRampLowLab, phosphorRampHighLab [3]float32
+	phosphorRampCached                      bool
+)
+
+// lerpPhosphor blends the phosphor ramp's Low/High endpoints by t (0-1) in
+// OKLab lightness space rather than linear RGB — equal steps in t read as
+// roughly equal steps in perceived brightness, where a linear-RGB lerp
+// visibly compresses the shadow end. The endpoints' own colors (and the
+// vividness signal that produces t — see fgIntensity/scaleIntensity above,
+// and pkg/screen/color.go's doc comment) are unchanged by this; only the
+// blend space is.
+func lerpPhosphor(low, high [3]float32, t float32) [3]float32 {
+	if !phosphorRampCached || phosphorRampLow != low || phosphorRampHigh != high {
+		phosphorRampLowLab[0], phosphorRampLowLab[1], phosphorRampLowLab[2] = linearSRGBToOKLab(low)
+		phosphorRampHighLab[0], phosphorRampHighLab[1], phosphorRampHighLab[2] = linearSRGBToOKLab(high)
+		phosphorRampLow, phosphorRampHigh, phosphorRampCached = low, high, true
 	}
+	L := phosphorRampLowLab[0] + (phosphorRampHighLab[0]-phosphorRampLowLab[0])*t
+	a := phosphorRampLowLab[1] + (phosphorRampHighLab[1]-phosphorRampLowLab[1])*t
+	b := phosphorRampLowLab[2] + (phosphorRampHighLab[2]-phosphorRampLowLab[2])*t
+	return clamp01_3(oklabToLinearSRGB(L, a, b))
+}
+
+// clamp01_3 clamps each channel of a linear-RGB triple to 0-1 — OKLab's
+// round trip can overshoot slightly at the gamut's edge.
+func clamp01_3(c [3]float32) [3]float32 {
+	clamp := func(v float32) float32 {
+		if v < 0 {
+			return 0
+		}
+		if v > 1 {
+			return 1
+		}
+		return v
+	}
+	return [3]float32{clamp(c[0]), clamp(c[1]), clamp(c[2])}
 }
 
 // rectEdges bundles a rect's per-corner SDF radius with which of its 4

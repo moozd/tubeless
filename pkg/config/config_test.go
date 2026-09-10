@@ -55,8 +55,9 @@ func TestLoadFileOverridesPresetPerField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	// Amber preset values (linear-converted — see srgbToLinear)…
-	if want := srgbToLinear3([3]float32{0.35, 0.16, 0.0}); cfg.Phosphor.Low != want {
+	// Amber preset's phosphor color (see phosphor.go) — derived, not a
+	// literal, so compare against the preset function itself.
+	if want := amberPreset().Phosphor.Low; cfg.Phosphor.Low != want {
 		t.Fatalf("phosphor low not from amber preset: %v, want %v", cfg.Phosphor.Low, want)
 	}
 	// …but the file's field wins.
@@ -78,7 +79,7 @@ func TestFlagThemeWinsOverFileTheme(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if want := srgbToLinear3([3]float32{0.35, 0.16, 0.0}); cfg.Phosphor.Low != want {
+	if want := amberPreset().Phosphor.Low; cfg.Phosphor.Low != want {
 		t.Fatalf("phosphor low = %v, want amber preset %v", cfg.Phosphor.Low, want)
 	}
 }

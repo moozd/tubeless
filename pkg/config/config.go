@@ -151,14 +151,6 @@ func srgb3(r, g, b int) [3]float32 {
 	}
 }
 
-// srgbToLinear3 is srgbToLinear applied channel-wise to an already-0-1
-// triple — for the monochrome themes' hand-tuned Phosphor constants, which
-// are sRGB-intended values (not built from srgb3's raw byte form) but need
-// the same linearization before reaching the linear-light pipeline.
-func srgbToLinear3(c [3]float32) [3]float32 {
-	return [3]float32{srgbToLinear(c[0]), srgbToLinear(c[1]), srgbToLinear(c[2])}
-}
-
 // PresetNames lists every registered theme, in the order the config TUI's
 // theme cycler steps through them — the single source of truth both
 // Preset's switch and the TUI cycle are built from, so they can't drift.
@@ -225,14 +217,25 @@ func truecolorPreset(name string, bg, fg, accent [3]float32, palette [16][3]floa
 // intentionally doesn't import pkg/screen).
 const DefaultScrollbackLines = 5000
 
+// amberPreset uses a phosphor chromaticity constructed from a dominant
+// wavelength of 585nm (solidly in the amber/yellow-orange band, 580-600nm)
+// at 75% purity, rather than a hand-picked hex value. Unlike green's P1,
+// no single standardized "amber CRT phosphor" chromaticity exists —
+// historical amber monitors used varying manufacturer-specific blends —
+// so this is a defensible construction, not a datasheet lookup: see
+// dominantWavelengthChromaticity's doc comment. 75% purity (rather than a
+// more fully saturated point closer to the spectral locus) keeps the
+// result a warm gold-orange instead of a deeply saturated traffic-orange.
 func amberPreset() Config {
+	x, y := dominantWavelengthChromaticity(585, 0.75)
+	peak := phosphorColor(x, y)
 	return Config{
 		Theme: "amber",
 		Font:  Font{Family: "", Size: 14, LineHeight: 1},
 		Atlas: Atlas{Scale: 4, Gamma: 1.0},
 		Phosphor: Phosphor{
-			Low:  srgbToLinear3([3]float32{0.35, 0.16, 0.0}),
-			High: srgbToLinear3([3]float32{1.0, 0.72, 0.1}),
+			Low:  scale3(peak, 0.35),
+			High: peak,
 		},
 		Blur:       Blur{Radius: 2.0, Strength: 0.5},
 		Rounding:   Rounding{Radius: 2.0},
@@ -243,14 +246,22 @@ func amberPreset() Config {
 	}
 }
 
+// greenPreset uses the CIE 1931 chromaticity of zinc silicate (Zn2SiO4:Mn,
+// "P1"), the classic oscilloscope/radar-display green phosphor — dominant
+// wavelength ~525-528nm, xy cross-checked against two independent sources
+// at approximately (0.21, 0.71). Real P1 emission is more saturated than
+// sRGB's own green primary, so phosphorColor's gamut mapping desaturates
+// it back into range; the result reads as a purer, less cyan-shifted green
+// than the old hand-picked "spring green" value.
 func greenPreset() Config {
+	peak := phosphorColor(0.21, 0.71)
 	return Config{
 		Theme: "green",
 		Font:  Font{Family: "", Size: 14, LineHeight: 1},
 		Atlas: Atlas{Scale: 4, Gamma: 1.0},
 		Phosphor: Phosphor{
-			Low:  srgbToLinear3([3]float32{0.0, 0.42, 0.30}),
-			High: srgbToLinear3([3]float32{0.0, 1.0, 0.78}),
+			Low:  scale3(peak, 0.42),
+			High: peak,
 		},
 		Blur:       Blur{Radius: 2.0, Strength: 0.5},
 		Rounding:   Rounding{Radius: 2.0},
@@ -259,6 +270,14 @@ func greenPreset() Config {
 		Contrast:   Contrast{MinDelta: 0.35},
 		Scrollback: Scrollback{Lines: DefaultScrollbackLines},
 	}
+}
+
+// scale3 multiplies every channel of a linear-RGB triple by k — used to
+// derive a phosphor ramp's dim/afterglow endpoint (Phosphor.Low) as a
+// fraction of its bright peak (Phosphor.High) rather than an independently
+// hand-picked color.
+func scale3(c [3]float32, k float32) [3]float32 {
+	return [3]float32{c[0] * k, c[1] * k, c[2] * k}
 }
 
 // rosepinePreset is the default theme: real per-cell color (see
