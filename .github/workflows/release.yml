@@ -39,7 +39,15 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
-          path: dist/*
+          # Only the actual packages — dist/ also holds the intermediate
+          # linux-<arch>/ build tree and template files (.desktop, nfpm's
+          # generated yaml), which gh release create can't upload as
+          # assets (it errors on a directory).
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/*.zst
 
   macos:
     strategy:
@@ -60,7 +68,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: darwin-${{ matrix.arch }}
-          path: dist/*
+          path: dist/*.zip
 
   release:
     needs: [linux, macos]
