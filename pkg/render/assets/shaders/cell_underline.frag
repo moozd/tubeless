@@ -3,6 +3,7 @@
 in vec2 vLocal;
 in vec3 vColor;
 in float vStyle;
+in vec2 vCellPos;
 
 out vec4 fragColor;
 
@@ -48,18 +49,24 @@ void main() {
 		float cycles = 1.5; // wave periods per cell width
 		float amp = thickness * 1.3;
 		float twoPi = 6.2831853;
-		// A pure sine reads as a mechanically perfect wave — every hump
-		// identical, like it was drafted rather than drawn. Riding two
-		// smaller, higher-frequency ripples on top (odd integer multiples
-		// of cycles, so each still lands on exactly 0 at x=0 and x=1,
-		// same as the base wave alone) breaks that uniformity into an
-		// uneven, slightly tremulous line without ever creating a seam
-		// where one cell's curl meets the next.
-		float wobble = sin(vLocal.x * cycles * twoPi)
-			+ 0.30 * sin(vLocal.x * cycles * 3.0 * twoPi)
-			+ 0.15 * sin(vLocal.x * cycles * 5.0 * twoPi);
-		wobble /= 0.88; // renormalize so the combined peak still matches amp, same as the plain sine's peak did
-		float wave = baseline + amp * wobble;
+		// A pure sine reads as mechanically perfect — every hump exactly
+		// the same height, drafted rather than drawn. A hand redrawing
+		// the same wave never repeats a stroke identically, but each
+		// individual stroke is still a single smooth curve — so instead
+		// of adding higher-frequency ripple within a hump (jagged, not
+		// hand-drawn), this cell's own hump gets a small, stable per-cell
+		// jitter to its height and lean, hashed from its grid position so
+		// it's the same every frame (no flicker) and different from its
+		// neighbors (no two humps alike). The lean is weighted by
+		// x*(1-x), which is exactly 0 at both edges, so it only bends the
+		// middle of the hump — x=0 and x=1 stay pinned to the baseline
+		// exactly like the plain sine did, and adjacent cells' curls
+		// still meet without a seam.
+		float seed = fract(sin(dot(vCellPos, vec2(12.9898, 78.233))) * 43758.5453);
+		float ampJitter = 0.8 + 0.35 * seed;
+		float lean = (seed - 0.5) * 1.2;
+		float bend = vLocal.x * (1.0 - vLocal.x);
+		float wave = baseline + amp * ampJitter * sin(vLocal.x * cycles * twoPi + lean * bend);
 		float d = abs(vLocal.y - wave);
 		alpha = 1.0 - smoothstep(halfBand * 0.7, halfBand, d);
 	} else if (vStyle == STYLE_DOTTED || vStyle == STYLE_DASHED) {

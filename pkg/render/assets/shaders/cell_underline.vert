@@ -12,6 +12,8 @@ uniform vec2 uOffset;
 out vec2 vLocal;  // 0..1 within the cell: x left..right, y top..bottom
 out vec3 vColor;
 out float vStyle;
+out vec2 vCellPos; // this cell's pixel position — a stable per-cell hash
+                    // seed for the curly style's hand-drawn variation
 
 // Draws one full-cell quad per underlined cell; cell_underline.frag places
 // the actual decoration band (and, for curly, its wave) within it using
@@ -25,4 +27,5 @@ void main() {
 	vLocal = aPos;
 	vColor = aColor;
 	vStyle = aStyle;
+	vCellPos = aCellPos;
 }
