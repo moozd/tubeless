@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/term"
@@ -54,6 +55,18 @@ type ui struct {
 	fontErr     string   // set when fc-list failed; picker falls back to free text
 	fontMatches []string
 	fontSel     int
+
+	// Live stats pane (see stats.go): the parent tubeless process's own
+	// resource usage, sampled on a timer — statsChecked/statsOK latch once
+	// detectTubelessParent has run, so a standalone invocation (no
+	// tubeless parent) doesn't keep re-probing every tick.
+	statsChecked bool
+	statsOK      bool
+	statsPID     int
+	stats        procStats
+	cpuHist      *ring
+	ramHist      *ring
+	spinPhase    int
 }
 
 type rowKind uint8
@@ -118,7 +131,7 @@ func main() {
 	}
 	defer raw.restore()
 
-	u := &ui{cfg: cfg, path: path, cols: cols, rows: rows}
+	u := &ui{cfg: cfg, path: path, cols: cols, rows: rows, cpuHist: newRing(30), ramHist: newRing(30)}
 	u.buildList()
 
 	// Alternate screen + hidden cursor so the UI owns the window and
@@ -133,9 +146,16 @@ func main() {
 	keys := make(chan byte, 64)
 	go readKeys(os.Stdin, keys)
 
-	// The loop below only redraws in response to a keypress or a resize —
-	// draw the initial screen once up front, or it stays blank (just the
-	// 2J clear from above) until the user's first input arrives.
+	// Drives the live stats pane (see stats.go) — a live gauge needs to
+	// keep sampling and redrawing on its own timer, not just in response
+	// to keypresses/resizes like the rest of this otherwise event-driven
+	// UI.
+	statsTick := time.NewTicker(500 * time.Millisecond)
+	defer statsTick.Stop()
+
+	// The loop below only redraws in response to a keypress, resize, or
+	// stats tick — draw the initial screen once up front, or it stays
+	// blank (just the 2J clear from above) until the first such event.
 	u.redraw()
 
 	for {
@@ -149,9 +169,35 @@ func main() {
 			if c, r, err := termSize(); err == nil {
 				u.cols, u.rows = c, r
 			}
+		case <-statsTick.C:
+			u.refreshStats()
 		}
 		u.redraw()
 	}
+}
+
+// refreshStats samples the parent tubeless process's resource usage once
+// per tick (see stats.go). detectTubelessParent only ever runs once — a
+// standalone invocation (statsOK stays false) shouldn't keep spawning `ps`
+// for a process that was never found, and a genuine tubeless parent's PID
+// doesn't change for the lifetime of this process.
+func (u *ui) refreshStats() {
+	if !u.statsChecked {
+		u.statsChecked = true
+		u.statsPID, u.statsOK = detectTubelessParent()
+	}
+	if !u.statsOK {
+		return
+	}
+	s, err := sampleProc(u.statsPID)
+	if err != nil {
+		u.statsOK = false // parent exited (or `ps` unavailable) — stop polling
+		return
+	}
+	u.stats = s
+	u.cpuHist.push(s.cpuPercent)
+	u.ramHist.push(float64(s.rssKB))
+	u.spinPhase++
 }
 
 // ---------------- input ----------------
@@ -701,21 +747,23 @@ func (u *ui) redraw() {
 	rightX := leftW + 1
 	rightW := cols - leftW
 
-	settingH, swatchesH := 5, 5
-	previewH := contentH - settingH - swatchesH
+	settingH, swatchesH, statsH := 5, 5, 5
+	previewH := contentH - settingH - swatchesH - statsH
 	ySetting0 := contentTop
 	ySwatches0 := ySetting0 + settingH
-	yPreview0 := ySwatches0 + swatchesH
+	yStats0 := ySwatches0 + swatchesH
+	yPreview0 := yStats0 + statsH
 
 	u.drawSettings(b, 1, contentTop, leftW, contentBottom, accent)
 	u.drawSetting(b, rightX, ySetting0, rightW, settingH, accent)
 	u.drawSwatches(b, rightX, ySwatches0, rightW, swatchesH, accent)
+	u.drawStats(b, rightX, yStats0, rightW, statsH, accent)
 	if previewH >= 6 {
 		u.drawPreview(b, rightX, yPreview0, rightW, contentBottom, accent)
 	}
 
 	// Footer bar.
-	u.revRow(b, rows, " ↑↓/jk select · ←→/hl adjust · s save · r reset · q quit ")
+	u.footerRow(b, rows, " ↑↓/jk select · ←→/hl adjust · s save · r reset · q quit ")
 
 	if u.fontPicker {
 		u.drawFontPicker(b)
@@ -753,11 +801,13 @@ func (s *styledLine) chunk(text string, width int) {
 	s.w += width
 }
 
-// paneTitle draws a solid accent-colored title bar spanning w columns —
-// every pane's flat "colorful solid box" header.
+// paneTitle draws a rounded-corner top border with the title set inline,
+// in the accent color — every pane's outline header. A thin accent-tinted
+// outline reads calmer than a solid color-filled bar, closer to Claude
+// Code's own bordered-box chrome, while still tying every pane to the
+// active theme's own color the way the old solid bar did.
 func (u *ui) paneTitle(b *strings.Builder, y, x0, w int, title string, accent [3]float32) {
-	bar := colPad(" "+strings.ToUpper(title), w)
-	u.at(b, y, x0, truecolorBg(accent)+contrastFg(accent)+sgrBold+bar+sgrReset)
+	u.at(b, y, x0, truecolorFg(accent)+sgrBold+boxTop(strings.ToUpper(title), w)+sgrReset)
 }
 
 // paneBottom draws a pane's accent-tinted rounded bottom border.
@@ -865,7 +915,10 @@ func (u *ui) drawSettings(b *strings.Builder, x0, y0, w, y1 int, accent [3]float
 	u.paneTitle(b, y0, x0, w, "settings", accent)
 	u.paneBottom(b, y1, x0, w, accent)
 
-	innerY0, innerY1 := y0+1, y1-1
+	// A blank row of breathing room under the title, rather than the list
+	// starting flush against the border.
+	u.paneRow(b, y0+1, x0, w, "", "", accent, false)
+	innerY0, innerY1 := y0+2, y1-1
 	capRows := innerY1 - innerY0 + 1
 	n := len(u.list)
 	start := 0
@@ -994,6 +1047,92 @@ func (u *ui) drawRampSwatch(b *strings.Builder, x0, y0, w int, accent [3]float32
 	u.paneRow(b, y0+1, x0, w, " low → high phosphor ramp", sgrDim, accent, false)
 }
 
+// spinnerFrames cycles through a braille dot sequence — a small "this is
+// live" cue next to the stats pane's title while it's actively sampling,
+// in the spirit of Claude Code's own activity spinner.
+var spinnerFrames = []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
+func spinnerFrame(phase int) rune {
+	return spinnerFrames[phase%len(spinnerFrames)]
+}
+
+// sparkBlocks renders a 0..max series as a compact block-character
+// sparkline, one column per sample, oldest first, most recent at the
+// right — the same "small block-character gauge" idea as meterStr/
+// rampStr above, just varying over a history instead of one instant.
+var sparkBlocks = []rune("▁▂▃▄▅▆▇█")
+
+func sparkStr(vals []float64, w int, max float64) string {
+	if w < 1 {
+		return ""
+	}
+	if len(vals) > w {
+		vals = vals[len(vals)-w:]
+	}
+	var b strings.Builder
+	for i := 0; i < w; i++ {
+		if i >= len(vals) || max <= 0 {
+			b.WriteByte(' ')
+			continue
+		}
+		frac := clampFloat(vals[i]/max, 0, 1)
+		b.WriteRune(sparkBlocks[int(frac*float64(len(sparkBlocks)-1))])
+	}
+	return b.String()
+}
+
+// ringMax is the largest sample currently held by r, floored at 1 — used
+// to scale the RAM sparkline (which has no natural fixed ceiling the way
+// CPU% does) to whatever range it's actually varied over recently.
+func ringMax(r *ring) float64 {
+	m := 1.0
+	for _, v := range r.values() {
+		if v > m {
+			m = v
+		}
+	}
+	return m
+}
+
+// drawStats shows the parent tubeless process's live resource usage (see
+// stats.go/refreshStats) — PID, uptime, and CPU%/RAM each with a recent-
+// history sparkline. Degrades to a one-line notice, rather than erroring
+// or showing stale zeros, when tubeless-config isn't actually running
+// under a tubeless process (e.g. a standalone/dev invocation).
+func (u *ui) drawStats(b *strings.Builder, x0, y0, w, h int, accent [3]float32) {
+	title := "stats"
+	if u.statsOK {
+		title += " " + string(spinnerFrame(u.spinPhase))
+	}
+	u.paneTitle(b, y0, x0, w, title, accent)
+	u.paneBottom(b, y0+h-1, x0, w, accent)
+
+	if !u.statsOK {
+		u.paneRow(b, y0+1, x0, w, " not running under tubeless", sgrDim, accent, false)
+		for y := y0 + 2; y < y0+h-1; y++ {
+			u.paneRow(b, y, x0, w, "", "", accent, false)
+		}
+		return
+	}
+
+	innerW := w - 2
+	u.paneRow(b, y0+1, x0, w,
+		fmt.Sprintf(" pid %d · up %s", u.statsPID, formatUptime(u.stats.uptimeSec)),
+		"", accent, false)
+
+	sparkW := clampInt(innerW-14, 4, 24)
+
+	var cpuLine styledLine
+	cpuLine.plain(fmt.Sprintf(" cpu %5.1f%% ", u.stats.cpuPercent))
+	cpuLine.chunk(sparkStr(u.cpuHist.values(), sparkW, 100), sparkW)
+	u.paneRowRaw(b, y0+2, x0, w, cpuLine.buf.String(), cpuLine.w, accent)
+
+	var ramLine styledLine
+	ramLine.plain(fmt.Sprintf(" ram %6s ", formatRSS(u.stats.rssKB)))
+	ramLine.chunk(sparkStr(u.ramHist.values(), sparkW, ringMax(u.ramHist)), sparkW)
+	u.paneRowRaw(b, y0+3, x0, w, ramLine.buf.String(), ramLine.w, accent)
+}
+
 // drawPreview is a small visual test bench: an inverted block bar, a rounded
 // box with crisp text, border-weight samples, a block meter and a luminance
 // ramp — all exercising the host's shape blur, inside its own pane.
@@ -1040,9 +1179,18 @@ func (u *ui) row(b *strings.Builder, y int, content string) {
 	fmt.Fprintf(b, "\x1b[%d;1H%s", y, content)
 }
 
-// revRow emits a full-width reverse bar.
+// revRow emits a full-width reverse bar — reserved for states that should
+// actually grab attention (the "window too small" warning), not routine
+// chrome.
 func (u *ui) revRow(b *strings.Builder, y int, s string) {
 	u.row(b, y, sgrReverse+colPad(trunc(s, u.cols), u.cols)+sgrReset)
+}
+
+// footerRow emits a full-width dim, non-inverted status line — a quieter
+// footer than a solid reverse-video block, closer to Claude Code's own
+// status line styling.
+func (u *ui) footerRow(b *strings.Builder, y int, s string) {
+	u.row(b, y, sgrDim+colPad(trunc(s, u.cols), u.cols)+sgrReset)
 }
 
 // meterStr renders a horizontal block bar for frac in [0,1].
