@@ -140,12 +140,19 @@ ICNS = packaging/darwin/tubeless.icns
 # install-darwin builds a minimal Tubeless.app bundle. Must be run on an
 # actual Mac: GLFW's macOS backend needs the real Cocoa/OpenGL frameworks,
 # which can't be cross-compiled from this Makefile's usual Linux host.
+# codesign --sign - (ad hoc, no certificate) doesn't get past Gatekeeper
+# on its own — that needs a paid Apple Developer ID and notarization —
+# but it's the difference between macOS calling an unsigned, quarantined
+# app "damaged and can't be opened" (blocked outright) versus "from an
+# unidentified developer" (allow via System Settings > Privacy & Security,
+# or `xattr -cr` the quarantine flag away, same as install.sh does).
 install-darwin: tubeless tubeless-config $(ICNS)
 	@mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_BUNDLE)/Contents/Resources
 	cp $(BIN_DIR)/$(BINARY_NAME) $(APP_BUNDLE)/Contents/MacOS/
 	cp $(BIN_DIR)/tubeless-config $(APP_BUNDLE)/Contents/MacOS/
 	sed -e 's|__VERSION__|$(VERSION)|' packaging/darwin/Info.plist > $(APP_BUNDLE)/Contents/Info.plist
 	cp $(ICNS) $(APP_BUNDLE)/Contents/Resources/
+	codesign --force --deep --sign - $(APP_BUNDLE)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME) $(CLI_BIN_DIR)/$(BINARY_NAME)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/tubeless-config $(CLI_BIN_DIR)/tubeless-config
 	@echo "Installed $(APP_BUNDLE)"
@@ -206,6 +213,7 @@ package-darwin: $(ICNS)
 	cp $(BIN_DIR)/tubeless-config $(DIST_DIR)/Tubeless.app/Contents/MacOS/
 	sed -e 's|__VERSION__|$(VERSION)|' packaging/darwin/Info.plist > $(DIST_DIR)/Tubeless.app/Contents/Info.plist
 	cp $(ICNS) $(DIST_DIR)/Tubeless.app/Contents/Resources/
+	codesign --force --deep --sign - $(DIST_DIR)/Tubeless.app
 	cd $(DIST_DIR) && zip -qr tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip Tubeless.app && rm -rf Tubeless.app
 	@echo "Packaged $(DIST_DIR)/tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip"
 

@@ -110,6 +110,11 @@ install_darwin() {
 	mkdir -p "$app_dir"
 	rm -rf "$app_dir/Tubeless.app"
 	unzip -q "$zip" -d "$app_dir"
+	# The zip download sets com.apple.quarantine, and the app is only
+	# ad-hoc signed (no paid Apple Developer ID / notarization) — without
+	# clearing this, Gatekeeper reports "Tubeless is damaged and can't be
+	# opened" instead of actually launching it.
+	xattr -cr "$app_dir/Tubeless.app"
 	local bundle="$app_dir/Tubeless.app/Contents/MacOS"
 	local bin_dir="/usr/local/bin"
 	mkdir -p "$bin_dir"
