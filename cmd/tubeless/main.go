@@ -175,16 +175,24 @@ func main() {
 	}
 	wireResize(win, resizeCh, cs)
 	win.SetContentScaleCallback(func(_ *glfw.Window, x, y float32) {
-		if cs.dpiX > 0 {
-			cs.w *= x / cs.dpiX
-			cs.h *= y / cs.dpiY
-		} else {
-			cs.w = float32(faces.Regular.CellWidth) / float32(cfg.Atlas.Scale) * x
-			cs.h = float32(faces.Regular.CellHeight) / float32(cfg.Atlas.Scale) * y
-		}
-		cs.dpiX, cs.dpiY = x, y
-		pushResize(win, resizeCh, cs)
+		applyContentScale(win, cs, faces, cfg, resizeCh, x, y)
 	})
+	// The callback above can't be relied on alone: on some platforms
+	// (observed on macOS) the real content scale isn't delivered via
+	// either GetContentScale or the callback until something re-triggers
+	// GLFW's display-assignment logic — e.g. toggling fullscreen — which
+	// left the grid laid out for a 1x cell size against an already-2x
+	// Retina framebuffer (RenderScene/RenderEffects poll the real
+	// framebuffer size fresh every frame — see runLoop), so content only
+	// ever covered a quarter of the window instead of filling it. Pumping
+	// events once more and re-querying right before the render loop
+	// starts — after every other startup step (font atlas build, GL
+	// context/shader setup) has given the window time to fully settle —
+	// catches that case without waiting on an event that may never come.
+	glfw.PollEvents()
+	if x, y := win.GetContentScale(); x != cs.dpiX || y != cs.dpiY {
+		applyContentScale(win, cs, faces, cfg, resizeCh, x, y)
+	}
 
 	sel := &render.Selection{}
 	wireInput(win, sess, &shared, sel)
@@ -436,6 +444,23 @@ func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
 			return
 		}
 	}
+}
+
+// applyContentScale updates cs's physical-pixel cell size for a newly
+// reported content scale (x, y) and reflows cols/rows against it — shared
+// by SetContentScaleCallback and the one-off re-check right before the
+// render loop starts (see NewWindow's caller), since both need the exact
+// same correction.
+func applyContentScale(win *render.Window, cs *cellSize, faces *font.Faces, cfg config.Config, resizeCh chan resizeReq, x, y float32) {
+	if cs.dpiX > 0 {
+		cs.w *= x / cs.dpiX
+		cs.h *= y / cs.dpiY
+	} else {
+		cs.w = float32(faces.Regular.CellWidth) / float32(cfg.Atlas.Scale) * x
+		cs.h = float32(faces.Regular.CellHeight) / float32(cfg.Atlas.Scale) * y
+	}
+	cs.dpiX, cs.dpiY = x, y
+	pushResize(win, resizeCh, cs)
 }
 
 // wireResize reflows the grid (and the PTY's reported size) to fill the
