@@ -10,6 +10,15 @@ on:
   push:
     tags:
       - "v*"
+  # A manual fallback: re-pushing a deleted-and-recreated tag doesn't
+  # reliably redeliver a push event (observed — GitHub sometimes just
+  # doesn't fire one), so this lets a rebuild be forced against an
+  # existing tag on demand: `gh workflow run release.yml -f tag=v0.1.0`.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v0.1.0)"
+        required: true
 
 jobs:
   linux:
@@ -75,6 +84,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -84,7 +95,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" dist/* \
+          # Idempotent: a manual re-run (see workflow_dispatch above)
+          # targets a tag that may already have a release from an earlier
+          # attempt — replace it rather than failing outright.
+          gh release delete "$TAG" --repo "${{ github.repository }}" --yes || true
+          gh release create "$TAG" dist/* \
             --repo "${{ github.repository }}" \
-            --title "${{ github.ref_name }}" \
+            --title "$TAG" \
             --generate-notes
