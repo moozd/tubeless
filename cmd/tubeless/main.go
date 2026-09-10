@@ -314,13 +314,24 @@ func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], 
 			parser.Write(chunk)
 			// A single redraw an app writes in one syscall (a full-screen
 			// clear-and-redraw, a colored highlight bar) can still arrive
-			// here split across multiple 4KB reads (see pumpPTYOutput) —
-			// publishing after every chunk risked a frame landing exactly
-			// between the clear and the redraw, which read as a visible
-			// blink. Draining whatever's already queued before publishing
-			// once coalesces that back into a single, complete frame.
+			// here split across multiple 4KB reads (see pumpPTYOutput), or
+			// as several small writes a few hundred microseconds apart (a
+			// pager or editor repainting one line at a time, tmux relaying
+			// a pane's redraw through its own pty) — publishing after every
+			// one of those doesn't just risk a frame landing mid-redraw, it
+			// publishes each intermediate line as its own complete Screen,
+			// so a scroll that only reads as one once it's finished instead
+			// renders as a rapid sequence of one-line jumps, and it means
+			// work.PendingScrolls() below would only ever hold one small
+			// piece of what's really a single continuous scroll (see
+			// pkg/render's ApplyScrollEvents, which nets same-region shifts
+			// but can only net what it's actually given in one batch).
+			// Draining whatever's already queued, then waiting a short
+			// quiet window for more before publishing, coalesces a burst
+			// back into the single complete frame it actually is.
 			drainPending(readCh, parser)
 			shared.Store(work.Clone())
+			work.ClearPendingScrolls()
 		case req := <-resizeCh:
 			if req.cols == work.Cols && req.rows == work.Rows {
 				continue
@@ -330,13 +341,35 @@ func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], 
 				log.Printf("pty resize: %v", err)
 			}
 			shared.Store(work.Clone())
+			work.ClearPendingScrolls()
 		}
 	}
 }
 
-// drainPending feeds parser every chunk already sitting in readCh, without
-// blocking once it's empty — see ptyCoordinator's case above for why.
+// pubCoalesceQuiet is how long drainPending waits after the last chunk for
+// another one before giving up and letting ptyCoordinator publish — long
+// enough to catch the next line of a multi-line redraw arriving a few
+// hundred microseconds later, short enough to stay well under a frame
+// (imperceptible added latency for an isolated keystroke's echo).
+// pubCoalesceMax bounds the total time a single publish can be held back
+// by a continuous stream (heavy scrollback-filling output, a fast
+// redraw): once a burst has been running this long, publish what's been
+// parsed so far rather than starving the screen of any update at all.
+const (
+	pubCoalesceQuiet = 3 * time.Millisecond
+	pubCoalesceMax   = 12 * time.Millisecond
+)
+
+// drainPending feeds parser every chunk already sitting in readCh, then
+// keeps waiting up to pubCoalesceQuiet for one more (resetting that
+// window each time one arrives) so a burst of small, closely-spaced
+// writes — see ptyCoordinator's case above for why that matters — gets
+// parsed as a whole before publishing, capped overall by pubCoalesceMax
+// so a continuous stream still publishes regularly instead of starving.
 func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
+	deadline := time.Now().Add(pubCoalesceMax)
+	timer := time.NewTimer(pubCoalesceQuiet)
+	defer timer.Stop()
 	for {
 		select {
 		case chunk, ok := <-readCh:
@@ -344,7 +377,14 @@ func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
 				return
 			}
 			parser.Write(chunk)
-		default:
+			if time.Now().After(deadline) {
+				return
+			}
+			if !timer.Stop() {
+				<-timer.C
+			}
+			timer.Reset(pubCoalesceQuiet)
+		case <-timer.C:
 			return
 		}
 	}
@@ -595,8 +635,19 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		}
 		r.UpdateScroll(scroll.target, dt)
 		scrollLine := r.CurrentScrollLine()
+		if scr != lastScr && w == lastW && h == lastH {
+			// A genuinely new screen at the same size — apply whatever
+			// exact scroll shifts pkg/screen recorded while building it
+			// (see Screen.PendingScrolls) so a real terminal scroll (an
+			// editor paging, our own scrollback view moving) glides
+			// instead of cutting straight to the new state. Empty for any
+			// screen that was never a scroll (plain typing, a full
+			// repaint) — this is O(1) in that overwhelmingly common case.
+			r.ApplyScrollEvents(scr.PendingScrolls(), cs.h)
+		}
+		r.UpdateContentScroll(dt)
 
-		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
+		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload || r.ContentScrollActive()
 		reload = false
 
 		if dirty {

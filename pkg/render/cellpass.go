@@ -147,6 +147,18 @@ func attachInstanceAttrib(loc uint32, size int32, stride int32, offset int) {
 	gl.VertexAttribDivisor(loc, 1)
 }
 
+// RowShift nudges every cell in rows [Top,Bottom] (inclusive) by OffsetPx
+// physical pixels vertically, on top of their normal y*ch grid position.
+// It's how the "content just scrolled" glide (see
+// Renderer.ApplyScrollEvents) reads as a continuous slide instead of
+// an instant cut: the affected band renders a few pixels off its resting
+// position and eases back to zero over a few frames. The zero value is a
+// no-op (Bottom < Top matches no row).
+type RowShift struct {
+	Top, Bottom int
+	OffsetPx    float32
+}
+
 // BuildInstances reads scr (an immutable published snapshot — see
 // cmd/tubeless) into GPU-upload-ready instance buffers. Split from Draw so
 // the GPU work (issued by Draw) never needs to touch scr at all. Content is
@@ -158,8 +170,9 @@ func attachInstanceAttrib(loc uint32, size int32, stride int32, offset int) {
 // scr.VisibleWindow is drawn, for scrollback viewing. sel highlights the
 // current mouse selection, if any, by swapping fg/bg for cells inside it
 // (see Selection.Contains) — the same reverse-video convention the
-// terminal's own SGR 7 already uses for highlights.
-func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch float32, scrollOffset int, sel Selection) {
+// terminal's own SGR 7 already uses for highlights. shift applies the
+// in-progress scroll glide, if any (see RowShift).
+func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch float32, scrollOffset int, sel Selection, shift RowShift) {
 	cp.bgScratch = cp.bgScratch[:0]
 	cp.blockScratch = cp.blockScratch[:0]
 	cp.shapeScratch = cp.shapeScratch[:0]
@@ -187,6 +200,9 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				fg, bg = bg, fg
 			}
 			px, py := float32(x)*cw, float32(y)*ch
+			if y >= shift.Top && y <= shift.Bottom {
+				py += shift.OffsetPx
+			}
 			if cell.Attr.Underline != screen.UnderlineNone {
 				ulColor := underlineColor(cell.Attr, fg, cfg)
 				cp.underlineScratch = appendUnderlineInstance(cp.underlineScratch, px, py, ulColor, float32(cell.Attr.Underline))

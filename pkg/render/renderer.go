@@ -54,6 +54,16 @@ type Renderer struct {
 	// lines back from the live tail — see UpdateScroll.
 	scrollOffset float32
 
+	// contentShift is the in-progress "content just scrolled" glide (see
+	// ApplyScrollEvents/UpdateContentScroll): the band [shiftTop,
+	// shiftBottom] renders shiftOffsetPx physical pixels off its resting
+	// position and eases back to 0, so a scroll-region shift (nvim
+	// paging, our own scrollback view moving by a line) reads as a slide
+	// instead of a hard cut. shiftActive false is the steady-state no-op.
+	shiftTop, shiftBottom int
+	shiftOffsetPx         float32
+	shiftActive           bool
+
 	pendingImages []screen.PlacedImage
 }
 
@@ -61,7 +71,12 @@ type Renderer struct {
 // distance (in cells) beyond which the cursor snaps instead of flying, and
 // the breathing-pulse floor envelope.
 const (
-	cursorGlideSpeed = 22.0
+	// 40 (time constant ~25ms) rather than a slower ease: held backspace
+	// or arrow-key repeat retargets the cursor every 30-50ms, and a
+	// slower glide never gets to actually close the gap between
+	// retargets, which reads as the cursor perpetually trailing behind
+	// (text already gone, cursor still catching up) instead of gliding.
+	cursorGlideSpeed = 40.0
 	cursorSnapDist   = 4.0
 )
 
@@ -109,7 +124,8 @@ func New(atlas *font.Atlas, cols, rows int) (*Renderer, error) {
 // published snapshot (see cmd/tubeless's publish/load wiring) — this never
 // mutates it and needs no locking.
 func (r *Renderer) PrepareFrame(scr *screen.Screen, cfg config.Config, cellW, cellH float32, scrollOffset int, sel Selection) {
-	r.cellPass.BuildInstances(scr, cfg, cellW, cellH, scrollOffset, sel)
+	shift := RowShift{Top: r.shiftTop, Bottom: r.shiftBottom, OffsetPx: r.shiftOffsetPx}
+	r.cellPass.BuildInstances(scr, cfg, cellW, cellH, scrollOffset, sel, shift)
 	r.pendingImages = scr.Images
 	r.cols, r.rows = scr.Cols, scr.Rows
 	r.cellW, r.cellH = cellW, cellH
@@ -205,6 +221,97 @@ func (r *Renderer) UpdateScroll(target int, dt float64) {
 	if abs32(float32(target)-r.scrollOffset) < 0.05 {
 		r.scrollOffset = float32(target)
 	}
+}
+
+// contentShiftEaseSpeed is UpdateContentScroll's exponential-decay rate
+// (per second) for the scroll glide's pixel offset — snappier than
+// scrollEaseSpeed since this is standing in for a single already-applied
+// content jump (the new text is already correct; only its entrance
+// glides), not chasing a moving target.
+const contentShiftEaseSpeed = 26.0
+
+// BeginContentScroll starts (or restarts) the content-scroll glide: rows
+// [top,bottom] render offsetPx physical pixels off their resting position
+// and ease back to 0 over the next several frames. See
+// ApplyScrollEvents, which is what normally calls this.
+func (r *Renderer) BeginContentScroll(top, bottom int, offsetPx float32) {
+	r.shiftTop, r.shiftBottom = top, bottom
+	r.shiftOffsetPx = offsetPx
+	r.shiftActive = true
+}
+
+// UpdateContentScroll eases the content-scroll glide's pixel offset back
+// to 0, same exponential-approach shape as UpdateCursor/UpdateScroll.
+// Called every frame from the render loop; a no-op once the glide has
+// settled.
+func (r *Renderer) UpdateContentScroll(dt float64) {
+	if !r.shiftActive {
+		return
+	}
+	k := 1.0 - float32(math.Exp(-contentShiftEaseSpeed*dt))
+	r.shiftOffsetPx -= r.shiftOffsetPx * k
+	if abs32(r.shiftOffsetPx) < 0.3 {
+		r.shiftOffsetPx = 0
+		r.shiftActive = false
+	}
+}
+
+// ContentScrollActive reports whether the content-scroll glide is still
+// easing — callers fold this into their dirty check so the scene keeps
+// redrawing (at the shifting offset) until the glide settles, the same
+// way scroll-line changes already force a rebuild.
+func (r *Renderer) ContentScrollActive() bool {
+	return r.shiftActive
+}
+
+// ApplyScrollEvents starts (or restarts) the content-scroll glide from
+// events — the exact scroll-region shifts pkg/screen recorded since the
+// last published Screen (see Screen.PendingScrolls), rather than
+// reconstructing them after the fact by diffing two screens (a former
+// row-shift-detection heuristic this replaced). That heuristic was both
+// expensive (a brute-force shift search re-run on every published
+// Screen, including plain typing and any other content change that was
+// never a scroll — the actual cause of the reported typing/redraw
+// stutter) and unreliable for real editor output (relativenumber
+// gutters, cursorline highlighting, and sign columns all change per-row
+// content independent of a real shift, defeating an exact-match diff).
+// Consuming the ground truth instead costs nothing when events is empty
+// — the overwhelmingly common case — and is exactly right when it isn't.
+//
+// Consecutive events over the same [top,bottom] region are netted into
+// one shift first (see mergeScrollShifts), since a single coalesced
+// PTY-output burst (see cmd/tubeless's ptyCoordinator) can carry several
+// small scrolls — e.g. holding <C-e> in nvim — that together are one
+// continuous glide, not several overlapping ones. If a burst nets down
+// to more than one distinct region (rare — the scroll region changed
+// mid-burst), only the last one animates; the renderer tracks a single
+// glide band at a time, same as before this change.
+func (r *Renderer) ApplyScrollEvents(events []screen.ScrollShift, cellH float32) {
+	merged := mergeScrollShifts(events)
+	if len(merged) == 0 {
+		return
+	}
+	last := merged[len(merged)-1]
+	// Positive Delta (ScrollUp/DeleteLines): content moved up by Delta
+	// rows, so it used to render Delta*cellH pixels further down than it
+	// does now — start the glide there and ease to 0 to read as a slide
+	// up. Negative Delta (ScrollDown/InsertLines) is the mirror image.
+	r.BeginContentScroll(last.Top, last.Bottom, float32(last.Delta)*cellH)
+}
+
+// mergeScrollShifts folds consecutive ScrollShift entries over the same
+// [Top,Bottom] region into one by summing Delta, preserving order —
+// see ApplyScrollEvents.
+func mergeScrollShifts(events []screen.ScrollShift) []screen.ScrollShift {
+	var merged []screen.ScrollShift
+	for _, e := range events {
+		if n := len(merged); n > 0 && merged[n-1].Top == e.Top && merged[n-1].Bottom == e.Bottom {
+			merged[n-1].Delta += e.Delta
+			continue
+		}
+		merged = append(merged, e)
+	}
+	return merged
 }
 
 // CurrentScrollLine rounds the animated scroll offset to the nearest
