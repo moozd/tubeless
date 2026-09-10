@@ -25,23 +25,18 @@ func NewCursorPass() (*CursorPass, error) {
 	return &CursorPass{prog: prog, vao: newFullscreenQuadVAO()}, nil
 }
 
-// Draw renders the cursor spanning frontCol/Row to backCol/Row — in grid
-// coordinates, i.e. before the centering offset — into dst, which covers
-// the whole window. The two corners come from Renderer.UpdateCursor's
-// elastic front/back easing: front tracks the real cursor closely, back
-// trails behind it, and the rect spanning both (extended by one cell so
-// it fully covers each end) is what draws the stretch. When front and
-// back coincide (the idle/settled case) this reduces to exactly one
-// cell, same as a single rigid cursor. offsetX/Y are the cell grid's
+// Draw renders the cursor at col/row — in grid coordinates, i.e. before
+// the centering offset — into dst, which covers the whole window.
+// col/row come from Renderer.UpdateCursor's eased glide, so the position
+// moves smoothly between cells, but the drawn size is always exactly one
+// cell — it never stretches or resizes. offsetX/Y are the cell grid's
 // centering offset in pixels (same convention as CellPass.Draw).
 // cellW/cellH are the physical pixel size of one cell, cfg supplies the
 // cursor color and edge softness, and bright is the breathing-phase
 // intensity (0 = hidden).
-func (c *CursorPass) Draw(dst *FBO, frontCol, frontRow, backCol, backRow, offsetX, offsetY, cellW, cellH float32, outW, outH int, bright float32, cfg config.Config) {
-	minCol, maxCol := min(frontCol, backCol), max(frontCol, backCol)
-	minRow, maxRow := min(frontRow, backRow), max(frontRow, backRow)
-	pos := [2]float32{offsetX + minCol*cellW, offsetY + minRow*cellH}
-	size := [2]float32{(maxCol-minCol)*cellW + cellW, (maxRow-minRow)*cellH + cellH}
+func (c *CursorPass) Draw(dst *FBO, col, row, offsetX, offsetY, cellW, cellH float32, outW, outH int, bright float32, cfg config.Config) {
+	pos := [2]float32{offsetX + col*cellW, offsetY + row*cellH}
+	size := [2]float32{cellW, cellH}
 
 	dst.Resize(outW, outH)
 	dst.Bind()

@@ -8,7 +8,7 @@ package render
 // mutator would violate, and selection is a local UI concept the PTY
 // stream has no say in anyway — the same "overlay, don't bake into the
 // grid" treatment the cursor already gets (see Renderer's
-// cursorFrontCol/Row).
+// cursorCol/Row).
 type Selection struct {
 	Active bool
 	// StartX/Y is where the drag began, EndX/Y is the current/final

@@ -43,20 +43,14 @@ type Renderer struct {
 	cols, rows   int
 	cellW, cellH float32
 
-	// Cursor animation state (see UpdateCursor). Positions are in grid
-	// cell units; phase drives the breathing pulse. The cursor is drawn
-	// as a rect spanning front to back (see CursorPass.Draw) rather than
-	// a single point: front tracks the real cursor closely so it never
-	// visibly detaches from the text, while back trails behind it,
-	// easing toward front rather than the raw target — the mismatch
-	// between the two is what draws the elastic stretch. front == back
-	// (the idle/settled case) draws exactly one cell, same as a single
-	// rigid cursor would.
-	cursorFrontCol, cursorFrontRow float32
-	cursorBackCol, cursorBackRow   float32
-	cursorInit                     bool
-	cursorVisible                  bool
-	cursorPhase                    float64
+	// Cursor animation state (see UpdateCursor). Position is in grid cell
+	// units; phase drives the breathing pulse. Always drawn as exactly
+	// one cell (see CursorPass.Draw) — only the position glides between
+	// cells, the size never stretches or resizes.
+	cursorCol, cursorRow float32
+	cursorInit           bool
+	cursorVisible        bool
+	cursorPhase          float64
 
 	// scrollOffset is the animated (eased) scrollback view position, in
 	// lines back from the live tail — see UpdateScroll.
@@ -75,25 +69,20 @@ type Renderer struct {
 	pendingImages []screen.PlacedImage
 }
 
-// Cursor glide tuning: exponential approach speeds (per second) for the
-// front/back pair (see UpdateCursor), and the jump distance (in cells)
-// beyond which the cursor snaps instead of flying.
+// Cursor glide tuning: UpdateCursor's exponential-approach rate (per
+// second), and the jump distance (in cells) beyond which the cursor
+// snaps instead of gliding.
 const (
-	// front chases the real cursor: fast enough that even at a 20ms
-	// key-repeat retarget interval it closes ~75% of the remaining gap
-	// per tick, so it stays visually attached to the actual text
-	// position instead of trailing behind it during held backspace or
-	// arrow-key repeat (the single shared cursorGlideSpeed this replaced
-	// couldn't be tuned this fast without also making every deliberate,
-	// slower cursor move — a single arrow press, a click — an
-	// imperceptible snap instead of a visible glide).
-	cursorFrontSpeed = 70.0
-	// back chases front (not the raw target) at a gentler pace, close to
-	// the original single-cursor tuning — this is what actually draws
-	// the visible glide/elastic trail, decoupled from having to also
-	// keep up with rapid retargets.
-	cursorBackSpeed = 18.0
-	cursorSnapDist  = 4.0
+	// Fast enough that even at a 20ms key-repeat retarget interval it
+	// closes ~75% of the remaining gap per tick, so the cursor stays
+	// visually attached to the actual text position instead of trailing
+	// behind it during held backspace or arrow-key repeat, while a
+	// single deliberate move (an arrow press, a click) still reads as a
+	// visible glide rather than an imperceptible snap.
+	cursorGlideSpeed = 70.0
+	// A scrollback jump or window resize shouldn't animate the cursor
+	// "flying" across unrelated content in between.
+	cursorSnapDist = 4.0
 )
 
 func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
@@ -210,25 +199,19 @@ func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 	r.cursorPhase += dt
 
 	if !r.cursorInit {
-		r.cursorFrontCol, r.cursorFrontRow = tx, ty
-		r.cursorBackCol, r.cursorBackRow = tx, ty
+		r.cursorCol, r.cursorRow = tx, ty
 		r.cursorInit = true
 		return
 	}
-	dc := tx - r.cursorFrontCol
-	dr := ty - r.cursorFrontRow
+	dc := tx - r.cursorCol
+	dr := ty - r.cursorRow
 	if dc*dc+dr*dr > cursorSnapDist*cursorSnapDist {
-		r.cursorFrontCol, r.cursorFrontRow = tx, ty
-		r.cursorBackCol, r.cursorBackRow = tx, ty
+		r.cursorCol, r.cursorRow = tx, ty
 		return
 	}
-	kf := 1.0 - float32(math.Exp(-cursorFrontSpeed*dt))
-	r.cursorFrontCol += (tx - r.cursorFrontCol) * kf
-	r.cursorFrontRow += (ty - r.cursorFrontRow) * kf
-
-	kb := 1.0 - float32(math.Exp(-cursorBackSpeed*dt))
-	r.cursorBackCol += (r.cursorFrontCol - r.cursorBackCol) * kb
-	r.cursorBackRow += (r.cursorFrontRow - r.cursorBackRow) * kb
+	k := 1.0 - float32(math.Exp(-cursorGlideSpeed*dt))
+	r.cursorCol += (tx - r.cursorCol) * k
+	r.cursorRow += (ty - r.cursorRow) * k
 }
 
 // scrollEaseSpeed is UpdateScroll's exponential-approach rate (per
@@ -394,6 +377,6 @@ func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config) {
 	if !r.cursorVisible {
 		bright = 0
 	}
-	r.cursorPass.Draw(r.cursorFBO, r.cursorFrontCol, r.cursorFrontRow, r.cursorBackCol, r.cursorBackRow, offsetX, offsetY, r.cellW, r.cellH, outW, outH, bright, cfg)
+	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, outW, outH, bright, cfg)
 	r.insetPass.Draw(r.sceneFBO.tex, r.cursorFBO.tex, cfg, outW, outH)
 }

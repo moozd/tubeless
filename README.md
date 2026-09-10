@@ -5,7 +5,7 @@ A GPU-rendered terminal emulator, written in Go on top of GLFW/OpenGL.
 ## Features
 
 - GPU-rendered text with real italic/bold glyphs, curly underlines, and
-  a rounded-rect glow cursor with an elastic front/back trail
+  a rounded-rect glow cursor that glides smoothly between cells
 - Native Wayland and X11 backends on Linux; native Cocoa on macOS
 - True-color rendering with 10 built-in themes (rosepine, rosepine-moon,
   gruvbox-dark-hard, nord, dracula, catppuccin-mocha, tokyo-night,
