@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -125,11 +126,23 @@ func main() {
 	if err != nil {
 		log.Fatalf("probe GPU texture limit: %v", err)
 	}
-
-	faceBytes := loadFontFaces(cfg.Font.Family)
-	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale, cfg.Font.LineHeight, maxTextureSize)
+	// Best-effort guess at the display the window is about to open on —
+	// there's no window yet to ask directly (see effectiveAtlasScale;
+	// the atlas has to exist before the window can be sized for it). If
+	// this turns out wrong (a multi-monitor setup that doesn't open on
+	// the primary, or Wayland's real scale arriving late), the window
+	// size itself is unaffected — dividing by the same effectiveScale
+	// used to build it cancels the DPI factor back out — and the
+	// correction right after window creation below fixes the atlas
+	// itself before the first frame ever renders.
+	initDpiX, _, err := render.PrimaryMonitorContentScale()
 	if err != nil {
-		log.Fatalf("build font atlas: %v", err)
+		log.Fatalf("probe display scale: %v", err)
+	}
+
+	faces, effectiveScale, err := buildFacesFor(cfg, initDpiX, maxTextureSize)
+	if err != nil {
+		log.Fatalf("%v", err)
 	}
 
 	sess := startShell(*shell)
@@ -148,8 +161,8 @@ func main() {
 	shared.Store(screen.New(cols, rows))
 	go ptyCoordinator(sess, &shared, resizeCh, cfg.Scrollback.Lines, closeRequested)
 
-	winW := cols * (faces.Regular.CellWidth / cfg.Atlas.Scale) * windowScale
-	winH := rows * (faces.Regular.CellHeight / cfg.Atlas.Scale) * windowScale
+	winW := cols * (faces.Regular.CellWidth / effectiveScale) * windowScale
+	winH := rows * (faces.Regular.CellHeight / effectiveScale) * windowScale
 	win, err := render.NewWindow(fmt.Sprintf("tubeless (%s)", cfg.Theme), winW, winH)
 	if err != nil {
 		fatal("open window: %v", err)
@@ -165,33 +178,38 @@ func main() {
 	// wp_fractional_scale_v1 "preferred_scale" event is a genuine round
 	// trip over the socket, and how long that takes is unpredictable
 	// (observed anywhere from ~130ms to several seconds under load), so
-	// no fixed startup wait is reliable. cs is shared (mutated only from
-	// this locked OS thread, alongside every other GLFW/GL call, so no
-	// synchronization is needed) between the short best-effort wait
-	// below, the content-scale callback that corrects it whenever the
-	// real value does arrive — even well after startup, or if the window
-	// moves to a differently-scaled monitor later — and the render loop.
+	// no fixed startup wait is reliable. This is a best-effort check
+	// only — runLoop's own per-frame re-check (see there) is what
+	// actually guarantees the atlas eventually matches reality, on
+	// platforms (observed on macOS) where GLFW doesn't deliver the real
+	// scale via GetContentScale until well after the window opens,
+	// sometimes not until a later, unrelated event (a real resize,
+	// entering fullscreen) prods it.
 	dpiX, dpiY := win.GetContentScale()
 	for i := 0; i < 5 && dpiX == 1 && dpiY == 1; i++ {
 		glfw.WaitEventsTimeout(0.05)
 		dpiX, dpiY = win.GetContentScale()
 	}
+	if dpiX != initDpiX {
+		// The pre-window guess didn't match this display — rebuild now
+		// so the very first rendered frame is already at the right
+		// quality, rather than looking soft for a frame or two until
+		// runLoop's own check catches up.
+		if newFaces, newScale, err := buildFacesFor(cfg, dpiX, render.MaxTextureSize()); err != nil {
+			log.Printf("rebuild atlas for display scale %.2f: %v", dpiX, err)
+		} else if newRenderer, err := render.New(newFaces, cols, rows); err != nil {
+			log.Printf("rebuild renderer for display scale %.2f: %v", dpiX, err)
+		} else {
+			faces, effectiveScale, renderer = newFaces, newScale, newRenderer
+		}
+	}
 	cs := &cellSize{
-		w:    float32(faces.Regular.CellWidth) / float32(cfg.Atlas.Scale) * dpiX,
-		h:    float32(faces.Regular.CellHeight) / float32(cfg.Atlas.Scale) * dpiY,
+		w:    float32(faces.Regular.CellWidth) / float32(effectiveScale) * dpiX,
+		h:    float32(faces.Regular.CellHeight) / float32(effectiveScale) * dpiY,
 		dpiX: dpiX,
 		dpiY: dpiY,
 	}
 	wireResize(win, resizeCh, cs)
-	win.SetContentScaleCallback(func(_ *glfw.Window, x, y float32) {
-		applyContentScale(win, cs, faces, cfg, resizeCh, x, y)
-	})
-	// This callback isn't the only place a content-scale correction
-	// happens — see runLoop's per-frame re-check, which covers platforms
-	// (observed on macOS) where GLFW doesn't deliver the real scale via
-	// either this callback or GetContentScale until well after the window
-	// opens, sometimes not until a later, unrelated event (a real resize,
-	// entering fullscreen) prods it.
 
 	sel := &render.Selection{}
 	wireInput(win, sess, &shared, sel)
@@ -206,7 +224,7 @@ func main() {
 		focused = isFocused
 	})
 
-	runLoop(win, renderer, &shared, cfg, cs, faces, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused)
+	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused)
 }
 
 // runUpgrade runs `tubeless upgrade`: checks GitHub for a release newer
@@ -291,10 +309,42 @@ func loadConfig(fs *flag.FlagSet, flagTheme, flagFamily string, flagSize int) (c
 // cellSize is the physical-pixel size of one cell — fixed regardless of
 // window size (resizing reflows the grid instead of stretching glyphs),
 // but not fixed for the process lifetime: it depends on display content
-// scale, which can change (see SetContentScaleCallback above). dpiX/dpiY
-// remember the scale cs.w/h were derived from so later scale changes can
-// be applied proportionally, even after a runtime font rebuild.
+// scale, which can change (see runLoop's per-frame content-scale check).
+// dpiX/dpiY remember the scale the current atlas was actually built for.
 type cellSize struct{ w, h, dpiX, dpiY float32 }
+
+// effectiveAtlasScale turns cfg.Atlas.Scale — the supersampling-vs-mip
+// depth the user actually wants, calibrated by eye on whatever display
+// they're looking at — into the raw raster multiplier BuildFaces needs,
+// by scaling it up with the current display's own DPI factor. Without
+// this, the same cfg.Atlas.Scale means a much deeper (and, at least on
+// some GPU drivers, visibly blurrier) mipmap minification on a
+// standard-DPI display than on a Retina one, since the on-screen cell
+// size the atlas gets minified down to is itself proportional to DPI —
+// moving the raster resolution up by the same factor keeps the ratio
+// between the two constant, so one number looks the same everywhere.
+// dpi <= 0 is treated as 1 (unknown/unreported scale).
+func effectiveAtlasScale(scale int, dpi float32) int {
+	if dpi <= 0 {
+		dpi = 1
+	}
+	return max(1, int(math.Round(float64(scale)*float64(dpi))))
+}
+
+// buildFacesFor builds cfg's glyph atlas at the raster resolution
+// effectiveAtlasScale computes for dpi, returning that effective scale
+// alongside the faces since callers need it again to convert the
+// atlas's raster cell size back to physical pixels (see cellSize).
+// GL-independent — safe to call before any window exists.
+func buildFacesFor(cfg config.Config, dpi float32, maxTextureSize int) (*font.Faces, int, error) {
+	effectiveScale := effectiveAtlasScale(cfg.Atlas.Scale, dpi)
+	faceBytes := loadFontFaces(cfg.Font.Family)
+	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*effectiveScale, cfg.Atlas.Gamma, effectiveScale, cfg.Font.LineHeight, maxTextureSize)
+	if err != nil {
+		return nil, 0, fmt.Errorf("build font atlas: %w", err)
+	}
+	return faces, effectiveScale, nil
+}
 
 // loadFontBytes resolves cfg.Font.Family to a font file via fontconfig
 // (see font.ResolveFamily) and reads it. An empty family, or any failure
@@ -458,23 +508,6 @@ func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
 	}
 }
 
-// applyContentScale updates cs's physical-pixel cell size for a newly
-// reported content scale (x, y) and reflows cols/rows against it — shared
-// by SetContentScaleCallback and the one-off re-check right before the
-// render loop starts (see NewWindow's caller), since both need the exact
-// same correction.
-func applyContentScale(win *render.Window, cs *cellSize, faces *font.Faces, cfg config.Config, resizeCh chan resizeReq, x, y float32) {
-	if cs.dpiX > 0 {
-		cs.w *= x / cs.dpiX
-		cs.h *= y / cs.dpiY
-	} else {
-		cs.w = float32(faces.Regular.CellWidth) / float32(cfg.Atlas.Scale) * x
-		cs.h = float32(faces.Regular.CellHeight) / float32(cfg.Atlas.Scale) * y
-	}
-	cs.dpiX, cs.dpiY = x, y
-	pushResize(win, resizeCh, cs)
-}
-
 // wireResize reflows the grid (and the PTY's reported size) to fill the
 // window at a fixed cell pixel size, instead of stretching glyphs. cs is
 // read fresh on every callback (see cellSize) so a content-scale change
@@ -556,26 +589,31 @@ func pumpPTYOutput(sess *ptyio.Session, out chan<- []byte) {
 	}
 }
 
-// newRendererFor rebuilds the glyph atlas + renderer for cfg and updates
-// cs with the resulting physical cell size. Used by runLoop when the config
-// file's font/atlas settings change at runtime.
+// newRendererFor rebuilds the glyph atlas + renderer for cfg at the
+// window's current display scale and updates cs with the resulting
+// physical cell size. Used by runLoop both when the config file's
+// font/atlas settings change at runtime, and when the display's content
+// scale itself changes (a monitor switch, or GLFW's delayed real-scale
+// delivery — see runLoop's per-frame check) — either way, the atlas
+// needs to be rebuilt at the new effective scale, not just have cs's
+// cell size adjusted proportionally, or the raster resolution keeps
+// matching whatever display was current the last time it was built.
 func newRendererFor(win *render.Window, cfg config.Config, cs *cellSize) (*render.Renderer, error) {
-	faceBytes := loadFontFaces(cfg.Font.Family)
-	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale, cfg.Font.LineHeight, render.MaxTextureSize())
+	dx, dy := win.GetContentScale()
+	if dx == 0 {
+		dx, dy = 1, 1
+	}
+	faces, effectiveScale, err := buildFacesFor(cfg, dx, render.MaxTextureSize())
 	if err != nil {
-		return nil, fmt.Errorf("build font atlas: %w", err)
+		return nil, err
 	}
 	r, err := render.New(faces, cols, rows)
 	if err != nil {
 		return nil, fmt.Errorf("init renderer: %w", err)
 	}
-	dx, dy := win.GetContentScale()
-	if dx == 0 {
-		dx, dy = 1, 1
-	}
 	cs.dpiX, cs.dpiY = dx, dy
-	cs.w = float32(faces.Regular.CellWidth) / float32(cfg.Atlas.Scale) * dx
-	cs.h = float32(faces.Regular.CellHeight) / float32(cfg.Atlas.Scale) * dy
+	cs.w = float32(faces.Regular.CellWidth) / float32(effectiveScale) * dx
+	cs.h = float32(faces.Regular.CellHeight) / float32(effectiveScale) * dy
 	return r, nil
 }
 
@@ -623,7 +661,7 @@ func (w *cfgWatch) changed(now time.Time) bool {
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, faces *font.Faces, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool) {
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool) {
 	r := renderer
 	var lastScr *screen.Screen
 	var lastW, lastH int
@@ -687,16 +725,21 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		// always enough — observed on macOS, where GLFW can keep reporting
 		// the wrong (1x) scale for a while after the window opens, only
 		// correcting itself once some later event (a real resize, entering
-		// fullscreen) prods it. Until that correction lands, cs.w/cs.h stay
-		// sized for the wrong scale while RenderScene/RenderEffects below
-		// already draw into the real (correct, Retina-sized) framebuffer —
-		// so content only ever filled a fraction of the window. Checking
-		// every frame instead of once means this self-heals the moment
-		// GLFW's own answer changes, without needing the user to resize
-		// anything themselves. The comparison is two float reads — free
-		// next to everything else this loop already does per frame.
+		// fullscreen) prods it, or a monitor switch changing it for real.
+		// Either way the glyph atlas itself was built for the old scale
+		// (see effectiveAtlasScale) and needs rebuilding, not just a
+		// proportional resize of cs — a stale-resolution atlas is what
+		// used to make text look sharp on one display and soft on
+		// another even after cs.w/h caught up. The comparison is two
+		// float reads — free next to everything else this loop already
+		// does per frame.
 		if x, y := win.GetContentScale(); x != cs.dpiX || y != cs.dpiY {
-			applyContentScale(win, cs, faces, cfg, resizeCh, x, y)
+			if nr, err := newRendererFor(win, cfg, cs); err != nil {
+				log.Printf("rebuild renderer for display scale change: %v", err)
+			} else {
+				r = nr
+				pushResize(win, resizeCh, cs)
+			}
 		}
 
 		now := time.Now()

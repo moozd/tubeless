@@ -107,3 +107,26 @@ func ProbeMaxTextureSize() (int, error) {
 	}
 	return MaxTextureSize(), nil
 }
+
+// PrimaryMonitorContentScale reports the primary monitor's content
+// scale (1 on a standard display, 2 on Retina, etc.) — unlike a
+// window's own GetContentScale, this needs no window or GL context at
+// all, just glfw initialized, so cmd/tubeless can size the very first
+// glyph atlas for the display it's actually about to open on instead of
+// blindly assuming 1x and only correcting after the window exists (see
+// runLoop's per-frame content-scale check for how a later, genuine
+// change — moving to a different monitor — is handled).
+func PrimaryMonitorContentScale() (float32, float32, error) {
+	if err := glfw.Init(); err != nil {
+		return 1, 1, fmt.Errorf("glfw init: %w", err)
+	}
+	m := glfw.GetPrimaryMonitor()
+	if m == nil {
+		return 1, 1, nil
+	}
+	x, y := m.GetContentScale()
+	if x <= 0 || y <= 0 {
+		return 1, 1, nil
+	}
+	return x, y, nil
+}
