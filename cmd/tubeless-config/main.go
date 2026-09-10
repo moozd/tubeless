@@ -534,7 +534,7 @@ func (u *ui) buildList() {
 		key: "font.family", label: "family", help: "installed font family; Enter to search", fontFamily: true,
 		get: func(c *config.Config) string {
 			if c.Font.Family == "" {
-				return "(bundled FiraCode Nerd)"
+				return "FiraCode Nerd Font"
 			}
 			return c.Font.Family
 		},
@@ -592,68 +592,56 @@ const (
 // blocks come from its blurred shape layer while text stays sharp — the
 // config screen doubles as a live test bench for those effects.
 
+// accent is the one color that ties every pane together: the theme's own
+// CRT-chrome accent (Phosphor.High — see pkg/config's doc comment on
+// Phosphor), set for every theme, monochrome or TrueColor alike, so pane
+// headers/borders always paint in a color that actually belongs to the
+// active theme instead of a fixed one.
+func (u *ui) accent() [3]float32 { return u.cfg.Phosphor.High }
+
 func (u *ui) redraw() {
 	b := &strings.Builder{}
 	b.WriteString("\x1b[2J")
 
-	if u.cols < 50 || u.rows < 14 {
-		u.revRow(b, 1, " window too small — resize larger ")
+	if u.cols < 90 || u.rows < 22 {
+		u.revRow(b, 1, " window too small — resize larger (needs 90x22+) ")
 		flush(b)
 		return
 	}
 	cols, rows := u.cols, u.rows
-	s := u.cur()
+	accent := u.accent()
 
-	// Header bar.
-	head := "TUBELESS CONFIG"
+	// Top bar: app name + unsaved flag only — the selected setting's own
+	// detail now lives entirely in the SETTING pane below, not duplicated
+	// up here.
+	head := " TUBELESS CONFIG"
 	if u.unsaved {
 		head += "  ·  unsaved changes (s to save)"
-	}
-	if s != nil {
-		head += "  ·  " + s.label
 	}
 	if u.fontPicker {
 		head += "  ·  searching fonts…"
 	}
-	u.revRow(b, 1, trunc(head, cols))
+	u.at(b, 1, 1, truecolorBg(accent)+contrastFg(accent)+sgrBold+colPad(trunc(head, cols), cols)+sgrReset)
 
-	// Focus line: selected setting = value, live block meter, short help.
-	core := ""
-	if s != nil {
-		name := padRight(s.label, 18)
-		core = "  " + name + " = " + s.get(&u.cfg)
-		if v, ok := knob(&u.cfg, s.key); ok {
-			frac := 0.0
-			if v.max > v.min {
-				frac = (v.v - v.min) / (v.max - v.min)
-			}
-			mw := 14
-			if cols < 70 {
-				mw = 6
-			}
-			core += "   " + meterStr(frac, mw)
-		}
-		if help := trunc(s.help, max(0, cols-colLen(core)-2)); colLen(help) > 0 {
-			core += "  " + sgrDim + help + sgrReset
-		}
-	}
-	if u.status != "" {
-		core += "  " + sgrDim + u.status + sgrReset
-	}
-	u.row(b, 2, core)
+	// Grid: SETTINGS spans the full left column; SETTING/SWATCHES/PREVIEW
+	// stack in the right column.
+	contentTop, contentBottom := 2, rows-1
+	contentH := contentBottom - contentTop + 1
+	leftW := clampInt(cols*42/100, 34, 50)
+	rightX := leftW + 1
+	rightW := cols - leftW
 
-	// Panels: settings box on top, preview box at the bottom.
-	previewH := 0
-	if rows >= 24 {
-		previewH = 7
-	}
-	listBottom := rows - previewH - 1
-	if listBottom < 5 {
-		listBottom = 5
-	}
-	u.drawSettings(b, 3, listBottom)
-	if previewH > 0 && listBottom+6 <= rows-1 {
-		u.drawPreview(b, listBottom+1, listBottom+6)
+	settingH, swatchesH := 5, 5
+	previewH := contentH - settingH - swatchesH
+	ySetting0 := contentTop
+	ySwatches0 := ySetting0 + settingH
+	yPreview0 := ySwatches0 + swatchesH
+
+	u.drawSettings(b, 1, contentTop, leftW, contentBottom, accent)
+	u.drawSetting(b, rightX, ySetting0, rightW, settingH, accent)
+	u.drawSwatches(b, rightX, ySwatches0, rightW, swatchesH, accent)
+	if previewH >= 6 {
+		u.drawPreview(b, rightX, yPreview0, rightW, contentBottom, accent)
 	}
 
 	// Footer bar.
@@ -665,10 +653,83 @@ func (u *ui) redraw() {
 	flush(b)
 }
 
+// at writes content at (y, x), both 1-based — the positioned equivalent
+// of row(), for panes that don't start at column 1.
+func (u *ui) at(b *strings.Builder, y, x int, content string) {
+	fmt.Fprintf(b, "\x1b[%d;%dH%s", y, x, content)
+}
+
+// styledLine composes one pane row's interior content while tracking its
+// true on-screen column width alongside the ANSI-laden string — plain()
+// measures via colLen, chunk() trusts a caller-supplied width for
+// already-colored fixed-width fragments (meterStr/rampStr/swatch blocks,
+// whose own escape codes colLen can't see through). Building rows this way is what lets
+// drawSetting/drawSwatches/drawPreview embed real color inside a
+// bordered pane without corrupting the border alignment math trunc/
+// colPad alone would get wrong on a string that already contains escape
+// sequences.
+type styledLine struct {
+	buf strings.Builder
+	w   int
+}
+
+func (s *styledLine) plain(text string) {
+	s.buf.WriteString(text)
+	s.w += colLen(text)
+}
+
+func (s *styledLine) chunk(text string, width int) {
+	s.buf.WriteString(text)
+	s.w += width
+}
+
+// paneTitle draws a solid accent-colored title bar spanning w columns —
+// every pane's flat "colorful solid box" header.
+func (u *ui) paneTitle(b *strings.Builder, y, x0, w int, title string, accent [3]float32) {
+	bar := colPad(" "+strings.ToUpper(title), w)
+	u.at(b, y, x0, truecolorBg(accent)+contrastFg(accent)+sgrBold+bar+sgrReset)
+}
+
+// paneBottom draws a pane's accent-tinted rounded bottom border.
+func (u *ui) paneBottom(b *strings.Builder, y, x0, w int, accent [3]float32) {
+	u.at(b, y, x0, truecolorFg(accent)+boxBottomNoTitle(w)+sgrReset)
+}
+
+// paneRow draws one bordered content row from plain text: content is
+// colPad/trunc'd to the pane's interior width first (so it must not
+// already contain ANSI codes — see paneRowRaw for that case), then
+// optionally wrapped in style (a dim/bold/color SGR prefix) or, when
+// selected, painted as a solid accent bar (the settings list's
+// highlighted row).
+func (u *ui) paneRow(b *strings.Builder, y, x0, w int, content, style string, accent [3]float32, selected bool) {
+	innerW := w - 2
+	line := colPad(trunc(content, innerW), innerW)
+	switch {
+	case selected:
+		line = truecolorBg(accent) + contrastFg(accent) + sgrBold + line + sgrReset
+	case style != "":
+		line = style + line + sgrReset
+	}
+	edge := truecolorFg(accent)
+	u.at(b, y, x0, edge+"│"+sgrReset+line+edge+"│"+sgrReset)
+}
+
+// paneRowRaw draws one bordered content row from a string that already
+// contains its own ANSI styling (a styledLine.buf) — visibleWidth is the
+// caller-tracked on-screen width (styledLine.w), since colLen can't
+// measure through embedded escape codes.
+func (u *ui) paneRowRaw(b *strings.Builder, y, x0, w int, content string, visibleWidth int, accent [3]float32) {
+	innerW := w - 2
+	pad := max(0, innerW-visibleWidth)
+	edge := truecolorFg(accent)
+	u.at(b, y, x0, edge+"│"+sgrReset+content+strings.Repeat(" ", pad)+edge+"│"+sgrReset)
+}
+
 // drawFontPicker overlays a centered modal on top of the normal screen (it
 // draws last, after everything else in redraw): a search box, then either
 // the matching family list or — when fc-list wasn't available — a hint
-// that Enter uses whatever was typed literally.
+// that Enter uses whatever was typed literally. Tinted with the theme's
+// accent, matching every other pane, for visual consistency.
 func (u *ui) drawFontPicker(b *strings.Builder) {
 	cols, rows := u.cols, u.rows
 	w := min(cols-4, 60)
@@ -678,8 +739,11 @@ func (u *ui) drawFontPicker(b *strings.Builder) {
 	}
 	x0 := (cols - w) / 2
 	y0 := (rows - h) / 2
+	accent := u.accent()
 
-	line := func(y int, s string) { fmt.Fprintf(b, "\x1b[%d;%dH%s", y, x0+1, s) }
+	line := func(y int, s string) {
+		fmt.Fprintf(b, "\x1b[%d;%dH%s%s%s", y, x0+1, truecolorFg(accent), s, sgrReset)
+	}
 
 	line(y0, boxTop("font family", w))
 	line(y0+1, boxText("search: "+u.fontQuery+"_", w))
@@ -722,13 +786,14 @@ func (u *ui) drawFontPicker(b *strings.Builder) {
 	line(y0+h, trunc(" ↑↓ select · Enter pick · Esc cancel ", cols))
 }
 
-// drawSettings renders the list inside a boxed panel; the selected row is
-// a full-width reverse block (bright phosphor bar, black text).
-func (u *ui) drawSettings(b *strings.Builder, y0, y1 int) {
-	cols := u.cols
-	innerW := cols - 2
-	u.row(b, y0, boxTop("settings", cols))
-	u.row(b, y1, boxBottom(cols))
+// drawSettings renders the section+setting list inside its own pane — the
+// primary nav surface, spanning the full left column. The selected row
+// paints as a solid accent bar (the theme's own color, not a fixed
+// reverse-video invert); section headers dim in the same accent.
+func (u *ui) drawSettings(b *strings.Builder, x0, y0, w, y1 int, accent [3]float32) {
+	innerW := w - 2
+	u.paneTitle(b, y0, x0, w, "settings", accent)
+	u.paneBottom(b, y1, x0, w, accent)
 
 	innerY0, innerY1 := y0+1, y1-1
 	capRows := innerY1 - innerY0 + 1
@@ -737,23 +802,23 @@ func (u *ui) drawSettings(b *strings.Builder, y0, y1 int) {
 	if n > capRows && u.sel >= capRows {
 		start = u.sel - capRows + 1
 	}
+	dimAccent := truecolorFg(accent) + sgrDim
 
 	for y := innerY0; y <= innerY1; y++ {
 		i := start + (y - innerY0)
 		sel := i < n && i == u.sel
-		plain := strings.Repeat(" ", innerW)
-		isSection := false
+		plain, style := "", ""
 		if i < n {
 			r := u.list[i]
 			switch r.kind {
 			case rowSection:
-				isSection = true
-				plain = "  " + trunc(strings.ToUpper(r.section), innerW-2)
+				plain = "  " + strings.ToUpper(r.section)
+				style = dimAccent
 			case rowSetting:
 				value := r.set.get(&u.cfg)
-				ll, vl := colLen(r.set.label), colLen(value)
+				vl := colLen(value)
 				label := trunc(r.set.label, max(0, innerW-vl-3))
-				ll = colLen(label)
+				ll := colLen(label)
 				gap := innerW - 2 - ll - vl
 				if sel {
 					plain = " " + label + strings.Repeat(" ", max(0, gap)) + value
@@ -762,43 +827,140 @@ func (u *ui) drawSettings(b *strings.Builder, y0, y1 int) {
 				}
 			}
 		}
-		plain = colPad(plain, innerW)
-		switch {
-		case sel:
-			u.row(b, y, "│"+sgrReverse+plain+sgrReset+"│")
-		case isSection:
-			u.row(b, y, "│"+sgrDim+plain+sgrReset+"│")
-		default:
-			u.row(b, y, "│"+plain+"│")
-		}
+		u.paneRow(b, y, x0, w, plain, style, accent, sel)
 	}
+}
+
+// drawSetting is the focused-setting detail pane: label = value, a live
+// block meter, and the short help text (or the status line, once one is
+// set) — this is the old full-width "focus line" promoted into its own
+// pane, and its only home now.
+func (u *ui) drawSetting(b *strings.Builder, x0, y0, w, h int, accent [3]float32) {
+	u.paneTitle(b, y0, x0, w, "setting", accent)
+	u.paneBottom(b, y0+h-1, x0, w, accent)
+	innerW := w - 2
+
+	s := u.cur()
+	if s == nil {
+		for y := y0 + 1; y < y0+h-1; y++ {
+			u.paneRow(b, y, x0, w, "", "", accent, false)
+		}
+		return
+	}
+	u.paneRow(b, y0+1, x0, w, " "+s.label+" = "+s.get(&u.cfg), sgrBold, accent, false)
+
+	var meterLine styledLine
+	meterLine.plain(" ")
+	if v, ok := knob(&u.cfg, s.key); ok {
+		frac := 0.0
+		if v.max > v.min {
+			frac = (v.v - v.min) / (v.max - v.min)
+		}
+		mw := min(max(innerW-4, 4), 28)
+		meterLine.chunk(meterStr(frac, mw), mw)
+	}
+	u.paneRowRaw(b, y0+2, x0, w, meterLine.buf.String(), meterLine.w, accent)
+
+	help := s.help
+	if u.status != "" {
+		help = u.status
+	}
+	u.paneRow(b, y0+3, x0, w, " "+help, sgrDim, accent, false)
+}
+
+// drawSwatches shows the active theme's real colors as solid blocks —
+// the pane that makes "colorful solid boxes" literal, using the theme's
+// own RGB rather than a fixed 256-color approximation. A TrueColor theme
+// gets its full 16-color palette plus default fg/bg; a monochrome theme
+// (which leaves Colors unset — see pkg/config's amber/green presets) gets
+// its phosphor Low→High ramp instead, since Palette would just be black.
+func (u *ui) drawSwatches(b *strings.Builder, x0, y0, w, h int, accent [3]float32) {
+	u.paneTitle(b, y0, x0, w, "swatches", accent)
+	u.paneBottom(b, y0+h-1, x0, w, accent)
+	innerW := w - 2
+
+	if !u.cfg.TrueColor {
+		u.drawRampSwatch(b, x0, y0+1, w, accent)
+		return
+	}
+
+	blockRow := func(y int, colors [][3]float32) {
+		var sl styledLine
+		sl.plain(" ")
+		for _, c := range colors {
+			if sl.w+3 > innerW {
+				break
+			}
+			sl.chunk(truecolorBg(c)+"  "+sgrReset, 2)
+			sl.plain(" ")
+		}
+		u.paneRowRaw(b, y, x0, w, sl.buf.String(), sl.w, accent)
+	}
+	blockRow(y0+1, u.cfg.Colors.Palette[0:8])
+	blockRow(y0+2, u.cfg.Colors.Palette[8:16])
+
+	var fgbg styledLine
+	fgbg.plain(" ")
+	fgbg.chunk(truecolorBg(u.cfg.Colors.DefaultFg)+"  "+sgrReset, 2)
+	fgbg.plain(" fg    ")
+	fgbg.chunk(truecolorBg(u.cfg.Colors.DefaultBg)+"  "+sgrReset, 2)
+	fgbg.plain(" bg")
+	u.paneRowRaw(b, y0+3, x0, w, fgbg.buf.String(), fgbg.w, accent)
+}
+
+// drawRampSwatch renders the monochrome phosphor Low→High ramp as a wide
+// gradient bar, for themes with no real per-cell color to swatch.
+func (u *ui) drawRampSwatch(b *strings.Builder, x0, y0, w int, accent [3]float32) {
+	innerW := w - 2
+	steps := max(4, innerW-2)
+	var sl styledLine
+	sl.plain(" ")
+	for i := 0; i < steps; i++ {
+		t := float32(i) / float32(steps-1)
+		c := lerpColor(u.cfg.Phosphor.Low, u.cfg.Phosphor.High, t)
+		sl.chunk(truecolorBg(c)+" "+sgrReset, 1)
+	}
+	u.paneRowRaw(b, y0, x0, w, sl.buf.String(), sl.w, accent)
+	u.paneRow(b, y0+1, x0, w, " low → high phosphor ramp", sgrDim, accent, false)
 }
 
 // drawPreview is a small visual test bench: an inverted block bar, a rounded
 // box with crisp text, border-weight samples, a block meter and a luminance
-// ramp — all exercising the host's shape blur.
-func (u *ui) drawPreview(b *strings.Builder, y0, y1 int) {
-	cols := u.cols
-	innerW := cols - 4
-	if innerW < 20 {
-		return
-	}
-	u.row(b, y0, boxTop("preview · effects test", cols))
+// ramp — all exercising the host's shape blur, inside its own pane.
+func (u *ui) drawPreview(b *strings.Builder, x0, y0, w, y1 int, accent [3]float32) {
+	innerW := w - 2
+	u.paneTitle(b, y0, x0, w, "preview · effects test", accent)
+	u.paneBottom(b, y1, x0, w, accent)
 
 	// Inverted block bar: a solid colored band the host rounds/blurs.
-	band := colPad(" block band (inverted) ", min(innerW, 30))
-	u.row(b, y0+1, "  "+sgrReverse+band+sgrReset)
+	band := colPad(" block band (inverted) ", min(innerW-2, 30))
+	var bandLine styledLine
+	bandLine.plain(" ")
+	bandLine.chunk(sgrReverse+band+sgrReset, colLen(band))
+	u.paneRowRaw(b, y0+1, x0, w, bandLine.buf.String(), bandLine.w, accent)
 
-	// Rounded box with text inside: crisp glyphs, smooth borders.
+	// Nested rounded box with crisp text — boxTopNoTitle/boxText/
+	// boxBottomNoTitle are plain (no embedded ANSI), so these are safe
+	// through the normal colPad/trunc path.
 	bw := min(innerW-2, 46)
-	u.row(b, y0+2, "  "+boxTopNoTitle(bw))
-	u.row(b, y0+3, "  "+boxText(" text stays sharp · borders stay smooth ", bw))
-	u.row(b, y0+4, "  "+boxBottomNoTitle(bw))
+	u.paneRow(b, y0+2, x0, w, " "+boxTopNoTitle(bw), "", accent, false)
+	u.paneRow(b, y0+3, x0, w, " "+boxText(" text stays sharp · borders stay smooth ", bw), "", accent, false)
+	u.paneRow(b, y0+4, x0, w, " "+boxBottomNoTitle(bw), "", accent, false)
 
 	// Border weights + a meter + a luminance ramp.
-	u.row(b, y0+5, "  ─ │   ━ ┃   ═ ║   ╭ ╮ ╰ ╯    "+meterStr(0.65, 12)+"   "+rampStr(14))
+	weights := "─ │   ━ ┃   ═ ║   ╭ ╮ ╰ ╯    "
+	mw, rw := 10, 12
+	var sample styledLine
+	sample.plain(" ")
+	sample.plain(weights)
+	sample.chunk(meterStr(0.65, mw), mw)
+	sample.plain("   ")
+	sample.chunk(rampStr(rw), rw)
+	u.paneRowRaw(b, y0+5, x0, w, sample.buf.String(), sample.w, accent)
 
-	u.row(b, y1, boxBottom(cols))
+	for y := y0 + 6; y < y1; y++ {
+		u.paneRow(b, y, x0, w, "", "", accent, false)
+	}
 }
 
 // row emits one line at y (1-based). The screen is cleared with 2J at the
@@ -894,14 +1056,8 @@ func boxText(t string, w int) string {
 	return "│ " + strings.Repeat(" ", side) + t + strings.Repeat(" ", w-4-side-tl) + " │"
 }
 
-func padTo(s string, w int) string { return colPad(s, w) }
-
 func flush(b *strings.Builder) {
 	os.Stdout.WriteString(b.String())
-}
-
-func padRight(s string, w int) string {
-	return colPad(trunc(s, w), w)
 }
 
 func colLen(s string) int { return utf8.RuneCountInString(s) }
