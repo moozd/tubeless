@@ -179,7 +179,15 @@ func main() {
 	scroll := &scrollState{}
 	wireMouse(win, sess, &shared, scroll, cs, sel)
 
-	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh)
+	// focused tracks real window focus, read/written only from this
+	// locked OS thread (see runLoop's visibility gate) — no
+	// synchronization needed, same as cs above.
+	focused := win.GetAttrib(glfw.Focused) == glfw.True
+	win.SetFocusCallback(func(_ *glfw.Window, isFocused bool) {
+		focused = isFocused
+	})
+
+	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused)
 }
 
 // runConfigTUI runs `tubeless config`: cmd/tubeless-config is a plain
@@ -486,7 +494,7 @@ func (w *cfgWatch) changed(now time.Time) bool {
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq) {
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool) {
 	r := renderer
 	var lastScr *screen.Screen
 	var lastW, lastH int
@@ -495,18 +503,56 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	lastFrame := time.Now()
 	watch := &cfgWatch{path: cfgPath}
 	reload := false
+	// lastFocused starts deliberately mismatched against *focused so the
+	// branch below always runs (and sets the right SwapInterval) on the
+	// very first iteration, regardless of whatever focus state the
+	// window happened to open in.
+	lastFocused := !*focused
 
 	for !win.ShouldClose() && !closeRequested.Load() {
 		if win.GetAttrib(glfw.Iconified) == glfw.True {
-			// Iconified windows must not burn GPU presenting frames the
-			// user can't see. WaitEvents blocks (no spin) until the window
-			// comes back; the clock is reset so the cursor pulse doesn't
-			// jump on restore.
+			// Truly minimized windows must not burn GPU presenting frames
+			// the user can't see at all. WaitEvents blocks (no spin) until
+			// the window comes back; the clock is reset so the cursor
+			// pulse doesn't jump on restore.
 			glfw.WaitEvents()
 			lastFrame = time.Now()
 			continue
 		}
-		glfw.PollEvents()
+		if *focused != lastFocused {
+			// win.SwapBuffers below is vsync'd, and on compositors where a
+			// window that's occluded or switched away from (another
+			// virtual desktop/workspace, another application) stops
+			// receiving frame callbacks, presenting through that
+			// unconditionally can block SwapBuffers forever — freezing
+			// this whole loop, including glfw.PollEvents, since both run
+			// on the single OS-locked thread the window manager expects
+			// to keep pumping events. That read as "not responding" until
+			// the window manager killed the process.
+			//
+			// The fix is NOT to stop presenting while unfocused: many
+			// window managers (tiling WMs especially) never auto-focus a
+			// newly opened window, and a compositor won't even map a
+			// surface before its first buffer commit — skipping
+			// presentation until focus arrives previously meant the
+			// window never appeared at all. Instead, disable vsync while
+			// unfocused so SwapBuffers presents immediately without
+			// waiting on a frame callback that might never come, and
+			// restore normal vsync-paced presentation the instant focus
+			// returns. The loop below is throttled via WaitEventsTimeout
+			// while unfocused so this doesn't spin unbounded.
+			if *focused {
+				glfw.SwapInterval(1)
+			} else {
+				glfw.SwapInterval(0)
+			}
+			lastFocused = *focused
+		}
+		if *focused {
+			glfw.PollEvents()
+		} else {
+			glfw.WaitEventsTimeout(1.0 / 30.0)
+		}
 
 		now := time.Now()
 		if watch.changed(now) {

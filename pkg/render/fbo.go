@@ -39,6 +39,11 @@ func newFBOFormat(w, h int, format int32, pixType uint32) *FBO {
 }
 
 func (f *FBO) allocate(w, h int) {
+	// A fast interactive-resize drag can momentarily report a 0-sized
+	// framebuffer; clamping here (main.go's pushResizeSize already does
+	// the same for cols/rows) keeps TexImage2D from ever allocating a
+	// degenerate 0x0 texture.
+	w, h = max(1, w), max(1, h)
 	f.W, f.H = w, h
 	gl.BindTexture(gl.TEXTURE_2D, f.tex)
 	gl.TexImage2D(gl.TEXTURE_2D, 0, f.format, int32(w), int32(h), 0, gl.RGBA, f.pixType, nil)
