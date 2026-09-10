@@ -181,22 +181,12 @@ func main() {
 	win.SetContentScaleCallback(func(_ *glfw.Window, x, y float32) {
 		applyContentScale(win, cs, faces, cfg, resizeCh, x, y)
 	})
-	// The callback above can't be relied on alone: on some platforms
-	// (observed on macOS) the real content scale isn't delivered via
-	// either GetContentScale or the callback until something re-triggers
-	// GLFW's display-assignment logic — e.g. toggling fullscreen — which
-	// left the grid laid out for a 1x cell size against an already-2x
-	// Retina framebuffer (RenderScene/RenderEffects poll the real
-	// framebuffer size fresh every frame — see runLoop), so content only
-	// ever covered a quarter of the window instead of filling it. Pumping
-	// events once more and re-querying right before the render loop
-	// starts — after every other startup step (font atlas build, GL
-	// context/shader setup) has given the window time to fully settle —
-	// catches that case without waiting on an event that may never come.
-	glfw.PollEvents()
-	if x, y := win.GetContentScale(); x != cs.dpiX || y != cs.dpiY {
-		applyContentScale(win, cs, faces, cfg, resizeCh, x, y)
-	}
+	// This callback isn't the only place a content-scale correction
+	// happens — see runLoop's per-frame re-check, which covers platforms
+	// (observed on macOS) where GLFW doesn't deliver the real scale via
+	// either this callback or GetContentScale until well after the window
+	// opens, sometimes not until a later, unrelated event (a real resize,
+	// entering fullscreen) prods it.
 
 	sel := &render.Selection{}
 	wireInput(win, sess, &shared, sel)
@@ -211,7 +201,7 @@ func main() {
 		focused = isFocused
 	})
 
-	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused)
+	runLoop(win, renderer, &shared, cfg, cs, faces, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused)
 }
 
 // runUpgrade runs `tubeless upgrade`: checks GitHub for a release newer
@@ -628,7 +618,7 @@ func (w *cfgWatch) changed(now time.Time) bool {
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool) {
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, faces *font.Faces, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool) {
 	r := renderer
 	var lastScr *screen.Screen
 	var lastW, lastH int
@@ -686,6 +676,22 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			glfw.PollEvents()
 		} else {
 			glfw.WaitEventsTimeout(1.0 / 30.0)
+		}
+
+		// A one-off content-scale check right after window creation isn't
+		// always enough — observed on macOS, where GLFW can keep reporting
+		// the wrong (1x) scale for a while after the window opens, only
+		// correcting itself once some later event (a real resize, entering
+		// fullscreen) prods it. Until that correction lands, cs.w/cs.h stay
+		// sized for the wrong scale while RenderScene/RenderEffects below
+		// already draw into the real (correct, Retina-sized) framebuffer —
+		// so content only ever filled a fraction of the window. Checking
+		// every frame instead of once means this self-heals the moment
+		// GLFW's own answer changes, without needing the user to resize
+		// anything themselves. The comparison is two float reads — free
+		// next to everything else this loop already does per frame.
+		if x, y := win.GetContentScale(); x != cs.dpiX || y != cs.dpiY {
+			applyContentScale(win, cs, faces, cfg, resizeCh, x, y)
 		}
 
 		now := time.Now()
