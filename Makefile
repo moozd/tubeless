@@ -150,7 +150,7 @@ install-darwin: tubeless tubeless-config $(ICNS)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/tubeless-config $(CLI_BIN_DIR)/tubeless-config
 	@echo "Installed $(APP_BUNDLE)"
 	@echo "Symlinked $(BINARY_NAME) + tubeless-config into $(CLI_BIN_DIR)"
-	@echo "Your config at ~/Library/Application Support/tubeless/config.toml is untouched."
+	@echo "Your config at ~/.config/tubeless/config.toml is untouched."
 
 # $(ICNS) is only (re)built when packaging/icon.svg is newer than it —
 # make-icns.sh needs macOS-native tooling (sips/qlmanage/iconutil), so this
@@ -162,7 +162,7 @@ uninstall-darwin:
 	rm -rf $(APP_BUNDLE)
 	rm -f $(CLI_BIN_DIR)/$(BINARY_NAME) $(CLI_BIN_DIR)/tubeless-config
 	@echo "Removed $(APP_BUNDLE) and its $(CLI_BIN_DIR) symlinks."
-	@echo "Your config at ~/Library/Application Support/tubeless/config.toml was left in place."
+	@echo "Your config at ~/.config/tubeless/config.toml was left in place."
 
 DIST_DIR = dist
 GOARCH_TARGET ?= $(shell go env GOARCH)

@@ -381,11 +381,17 @@ func oneDarkPreset() Config {
 }
 
 // DefaultPath is where Load/Save operate unless told otherwise:
-// $XDG_CONFIG_HOME/tubeless/config.toml (usually ~/.config).
+// $XDG_CONFIG_HOME/tubeless/config.toml, defaulting to ~/.config —
+// deliberately the same on every platform, including macOS, where
+// os.UserConfigDir() would otherwise pick ~/Library/Application Support.
 func DefaultPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, ".config")
 	}
 	return filepath.Join(dir, "tubeless", "config.toml"), nil
 }

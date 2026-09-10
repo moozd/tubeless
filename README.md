@@ -15,8 +15,8 @@ A GPU-rendered terminal emulator, written in Go on top of GLFW/OpenGL.
 - Mouse selection and clipboard copy/paste (Cmd+C/V on macOS,
   Ctrl+Shift+C/V on Linux), aware of apps that request their own mouse
   reporting (tmux, vim, htop) so it doesn't fight them for the mouse
-- Config-file driven (`~/.config/tubeless/config.toml` on Linux,
-  `~/Library/Application Support/tubeless/config.toml` on macOS)
+- Config-file driven: `~/.config/tubeless/config.toml` (same path on
+  every platform, including macOS; respects `$XDG_CONFIG_HOME`)
 
 ## Install
 
