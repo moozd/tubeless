@@ -178,7 +178,7 @@ func main() {
 	})
 
 	sel := &render.Selection{}
-	wireInput(win, sess, &shared)
+	wireInput(win, sess, &shared, sel)
 	scroll := &scrollState{}
 	wireMouse(win, sess, &shared, scroll, cs, sel)
 

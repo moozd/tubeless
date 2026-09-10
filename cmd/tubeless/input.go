@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
@@ -76,7 +77,7 @@ var tildeKey = map[glfw.Key]int{
 	glfw.KeyF12:      24,
 }
 
-func wireInput(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[screen.Screen]) {
+func wireInput(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], sel *render.Selection) {
 	win.SetCharModsCallback(func(_ *glfw.Window, r rune, mods glfw.ModifierKey) {
 		// Ctrl is handled entirely by handleSpecialKey below, which owns
 		// every Ctrl combination this terminal forwards (Ctrl+A..Z, Ctrl+
@@ -103,12 +104,12 @@ func wireInput(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 		if action != glfw.Press && action != glfw.Repeat {
 			return
 		}
-		// Shift+Insert (the conventional cross-DE terminal paste binding)
-		// and Ctrl+Shift+V — Ctrl+V alone is left to whatever the shell's
-		// own line editing does with it, same as every other terminal.
-		if key == glfw.KeyInsert && mods&glfw.ModShift != 0 ||
-			key == glfw.KeyV && mods&glfw.ModControl != 0 && mods&glfw.ModShift != 0 {
+		if isPasteShortcut(key, mods) {
 			pasteFromClipboard(win, sess, shared)
+			return
+		}
+		if isCopyShortcut(key, mods) {
+			copySelectionToClipboard(win, shared, *sel)
 			return
 		}
 		handleSpecialKey(sess, key, mods, shared.Load().ApplicationCursorKeys)
@@ -153,6 +154,38 @@ func handleSpecialKey(sess *ptyio.Session, key glfw.Key, mods glfw.ModifierKey, 
 		sess.Write(encodeTildeKey(n, mods))
 		return
 	}
+}
+
+// isCopyShortcut reports whether key+mods is this platform's terminal
+// copy binding: Cmd+C on macOS (Cmd is never claimed by a shell control
+// code, so it's free for the OS-level convention), Ctrl+Shift+C
+// elsewhere (plain Ctrl+C must stay SIGINT).
+func isCopyShortcut(key glfw.Key, mods glfw.ModifierKey) bool {
+	if key != glfw.KeyC {
+		return false
+	}
+	if runtime.GOOS == "darwin" {
+		return mods&glfw.ModSuper != 0
+	}
+	return mods&glfw.ModControl != 0 && mods&glfw.ModShift != 0
+}
+
+// isPasteShortcut reports whether key+mods is this platform's terminal
+// paste binding: Shift+Insert everywhere (the conventional cross-DE
+// binding), plus Cmd+V on macOS or Ctrl+Shift+V elsewhere — Ctrl+V alone
+// is left to whatever the shell's own line editing does with it, same as
+// every other terminal.
+func isPasteShortcut(key glfw.Key, mods glfw.ModifierKey) bool {
+	if key == glfw.KeyInsert && mods&glfw.ModShift != 0 {
+		return true
+	}
+	if key != glfw.KeyV {
+		return false
+	}
+	if runtime.GOOS == "darwin" {
+		return mods&glfw.ModSuper != 0
+	}
+	return mods&glfw.ModControl != 0 && mods&glfw.ModShift != 0
 }
 
 // writeMeta ESC-prefixes seq when Alt is held — the same metaSendsEscape
