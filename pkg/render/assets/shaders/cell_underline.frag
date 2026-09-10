@@ -47,7 +47,19 @@ void main() {
 	} else if (vStyle == STYLE_CURLY) {
 		float cycles = 1.5; // wave periods per cell width
 		float amp = thickness * 1.3;
-		float wave = baseline + amp * sin(vLocal.x * cycles * 6.2831853);
+		float twoPi = 6.2831853;
+		// A pure sine reads as a mechanically perfect wave — every hump
+		// identical, like it was drafted rather than drawn. Riding two
+		// smaller, higher-frequency ripples on top (odd integer multiples
+		// of cycles, so each still lands on exactly 0 at x=0 and x=1,
+		// same as the base wave alone) breaks that uniformity into an
+		// uneven, slightly tremulous line without ever creating a seam
+		// where one cell's curl meets the next.
+		float wobble = sin(vLocal.x * cycles * twoPi)
+			+ 0.30 * sin(vLocal.x * cycles * 3.0 * twoPi)
+			+ 0.15 * sin(vLocal.x * cycles * 5.0 * twoPi);
+		wobble /= 0.88; // renormalize so the combined peak still matches amp, same as the plain sine's peak did
+		float wave = baseline + amp * wobble;
 		float d = abs(vLocal.y - wave);
 		alpha = 1.0 - smoothstep(halfBand * 0.7, halfBand, d);
 	} else if (vStyle == STYLE_DOTTED || vStyle == STYLE_DASHED) {
