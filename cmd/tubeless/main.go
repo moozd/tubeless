@@ -255,6 +255,10 @@ func runConfigTUI() {
 	}
 	cmd := exec.Command(bin, os.Args[2:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	// This process already ran platform.FixEnv (see main's top) — don't
+	// have the child repeat ensureCLIOnPath's exact same PATH-symlink
+	// writes (and, on failure, the exact same warning) a second time.
+	cmd.Env = append(os.Environ(), platform.SkipPathHealEnv+"=1")
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

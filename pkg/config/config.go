@@ -5,7 +5,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -464,11 +466,25 @@ func Save(path string, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return permissionHintError(fmt.Errorf("mkdir %s: %w", dir, err), dir)
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+		return permissionHintError(fmt.Errorf("write %s: %w", path, err), dir)
 	}
 	return nil
+}
+
+// permissionHintError appends an ownership hint to err when it's a
+// permission failure — the leading suspect for "tubeless config" failing
+// to save on a machine where ~/.config/tubeless (or one of its parents)
+// was previously created by a `sudo`-run instance and is now root-owned.
+// Left as a plain wrap for every other error, so a genuinely different
+// cause (a full disk, a read-only filesystem) isn't misattributed.
+func permissionHintError(err error, dir string) error {
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("%w (if tubeless was previously run with sudo, this may be root-owned — try: sudo chown -R $(whoami) %s)", err, dir)
+	}
+	return err
 }

@@ -42,16 +42,31 @@ func FixEnv() {
 	ensureCLIOnPath()
 }
 
+// warnPath logs an ensureCLIOnPath failure with a prefix that reads
+// unambiguously as a non-fatal warning rather than a crash — this can
+// print right as `tubeless`/`tubeless config` starts, before the terminal
+// or config TUI's alt-screen clears the scrollback, where a bare
+// log.Printf timestamp is easy to mistake for the program failing outright.
+func warnPath(format string, args ...any) {
+	log.Printf("tubeless: warning: "+format, args...)
+}
+
 // ensureCLIOnPath symlinks the running app's CLI binaries into
 // ~/.local/bin and bootstraps ~/.zprofile with that dir if needed.
 // install.sh and `make install-darwin` already do this once at install
 // time, but a manual reinstall — dragging a freshly downloaded
-// Tubeless.app over the old one in ~/Applications — never runs either,
-// so PATH would otherwise silently go stale on every such update. Runs
-// on every launch since it's cheap and fully idempotent; failures are
-// logged, never fatal — a broken PATH symlink shouldn't stop the app
-// from starting.
+// Tubeless.app over the old one in ~/Applications, or unzipping a release
+// straight into /Applications by hand — never runs either, so PATH would
+// otherwise silently go stale (or never get set up at all) on every such
+// install/update. Runs on every launch since it's cheap and fully
+// idempotent; failures are logged via warnPath, never fatal — a broken
+// PATH symlink shouldn't stop the app from starting, but the warning
+// should be clear enough that a `tubeless` command staying stale after
+// this doesn't read as an unrelated crash.
 func ensureCLIOnPath() {
+	if os.Getenv(SkipPathHealEnv) != "" {
+		return
+	}
 	exe, err := os.Executable()
 	if err != nil || !strings.Contains(exe, ".app/Contents/MacOS/") {
 		return // not running from an installed .app bundle (e.g. a dev build)
@@ -62,7 +77,7 @@ func ensureCLIOnPath() {
 	}
 	binDir := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		log.Printf("ensure PATH: mkdir %s: %v", binDir, err)
+		warnPath("could not create %s (%v) — your tubeless/tubeless-config commands on PATH may be missing or stale; check that %s is writable by you", binDir, err, binDir)
 		return
 	}
 	dir := filepath.Dir(exe)
@@ -83,7 +98,7 @@ func symlinkInto(binDir, target string) {
 	}
 	os.Remove(link)
 	if err := os.Symlink(target, link); err != nil {
-		log.Printf("ensure PATH: symlink %s: %v", link, err)
+		warnPath("could not update %s (%v) — it may still point at an old install; check its ownership (ls -la %s) or remove it and re-run `tubeless`", link, err, link)
 	}
 }
 
@@ -99,7 +114,7 @@ func bootstrapZprofile(home, binDir string) {
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		log.Printf("ensure PATH: open %s: %v", path, err)
+		warnPath("could not update %s (%v) — add %q to your PATH manually, or fix this file's ownership (ls -la %s)", path, err, binDir, path)
 		return
 	}
 	defer f.Close()
