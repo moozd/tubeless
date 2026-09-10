@@ -144,6 +144,74 @@ func TestApplyDarwin(t *testing.T) {
 	assertFileContent(t, filepath.Join(bundleRoot, "Contents", "Info.plist"), "new-plist")
 }
 
+// TestApplyDarwinDropsStaleFiles guards the actual point of swapping the
+// whole bundle directory in with rename() rather than patching files
+// in-place one by one: a file that existed in the old install but isn't
+// in the new release's zip must not survive the upgrade. The old
+// per-file-patch approach left the mix of old and new files half-and-half
+// under the same code signature — this both fixes that (see applyDarwin's
+// doc comment) and, as a side effect, cleans up files an old version left
+// behind that the new one no longer ships.
+func TestApplyDarwinDropsStaleFiles(t *testing.T) {
+	archive := buildAppZip(t, map[string]string{
+		"Tubeless.app/Contents/MacOS/tubeless": "new-tubeless",
+	})
+	bundleRoot := filepath.Join(t.TempDir(), "Tubeless.app")
+	stalePath := filepath.Join(bundleRoot, "Contents", "Resources", "old-leftover.txt")
+	if err := os.MkdirAll(filepath.Dir(stalePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stalePath, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(bundleRoot, "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundleRoot, "Contents", "MacOS", "tubeless"), []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := applyDarwin(archive, bundleRoot); err != nil {
+		t.Fatalf("applyDarwin: %v", err)
+	}
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Fatalf("stale file %s survived the swap (err=%v)", stalePath, err)
+	}
+}
+
+// TestApplyDarwinNoLeftoverStagingOrBackup confirms a successful upgrade
+// leaves neither the ".old" backup directory nor the temporary staging
+// directory it extracted into behind — applyDarwin cleans up both once
+// the swap itself has succeeded.
+func TestApplyDarwinNoLeftoverStagingOrBackup(t *testing.T) {
+	archive := buildAppZip(t, map[string]string{
+		"Tubeless.app/Contents/MacOS/tubeless": "new-tubeless",
+	})
+	parent := t.TempDir()
+	bundleRoot := filepath.Join(parent, "Tubeless.app")
+	if err := os.MkdirAll(filepath.Join(bundleRoot, "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundleRoot, "Contents", "MacOS", "tubeless"), []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := applyDarwin(archive, bundleRoot); err != nil {
+		t.Fatalf("applyDarwin: %v", err)
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "Tubeless.app" {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Fatalf("leftover entries in %s after upgrade: %v", parent, names)
+	}
+}
+
 func assertFileContent(t *testing.T, path, want string) {
 	t.Helper()
 	got, err := os.ReadFile(path)

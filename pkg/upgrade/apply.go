@@ -85,14 +85,56 @@ func bundleRootFor(execPath string) string {
 }
 
 // applyDarwin extracts archivePath (the darwin-<arch>.zip asset, a
-// zipped Tubeless.app — see package-darwin) and replaces every file
-// under bundleRoot (the currently-installed Tubeless.app, resolved from
-// the running executable's path) with its counterpart from the archive.
-// Returns the path to the now-upgraded tubeless binary inside it.
+// zipped Tubeless.app — see package-darwin) into a fresh directory next
+// to bundleRoot (the currently-installed Tubeless.app, resolved from the
+// running executable's path), then atomically swaps it in for the old
+// one. Patching individual files inside an already-signed .app bundle in
+// place — the previous approach — leaves the bundle's code signature
+// covering a mix of old and new files partway through the extraction;
+// macOS's launch-time signature check can reject that outright, and
+// silently from this process's point of view — `open -a` on a bundle
+// that fails validation just never launches anything, no error surfaced
+// back here. Swapping the whole directory in with rename() means the
+// bundle on disk is always either the fully-intact old one or the
+// fully-intact new one, never a partial mix — the same reasoning
+// replaceFile already applies to a single file, one level up. Returns
+// the path to the now-upgraded tubeless binary inside it.
 func applyDarwin(archivePath, bundleRoot string) (string, error) {
+	stagingDir, err := os.MkdirTemp(filepath.Dir(bundleRoot), "tubeless-upgrade-*")
+	if err != nil {
+		return "", fmt.Errorf("create staging dir: %w", err)
+	}
+	defer os.RemoveAll(stagingDir)
+
+	newBundle := filepath.Join(stagingDir, filepath.Base(bundleRoot))
+	if err := extractBundle(archivePath, newBundle); err != nil {
+		return "", err
+	}
+	newExec := filepath.Join(newBundle, "Contents", "MacOS", "tubeless")
+	if _, err := os.Stat(newExec); err != nil {
+		return "", fmt.Errorf("extracted bundle missing %s: %w", newExec, err)
+	}
+
+	oldBundle := bundleRoot + ".old"
+	os.RemoveAll(oldBundle) // leftover from a previous failed swap, if any
+	if err := os.Rename(bundleRoot, oldBundle); err != nil {
+		return "", fmt.Errorf("move aside old bundle: %w", err)
+	}
+	if err := os.Rename(newBundle, bundleRoot); err != nil {
+		if rerr := os.Rename(oldBundle, bundleRoot); rerr != nil {
+			return "", fmt.Errorf("install new bundle: %w (rollback also failed: %v — old app is at %s, new one at %s)", err, rerr, oldBundle, newBundle)
+		}
+		return "", fmt.Errorf("install new bundle: %w (rolled back to the previous version)", err)
+	}
+	os.RemoveAll(oldBundle)
+	return filepath.Join(bundleRoot, "Contents", "MacOS", "tubeless"), nil
+}
+
+// extractBundle extracts archivePath (a zipped Tubeless.app) into destRoot.
+func extractBundle(archivePath, destRoot string) error {
 	zr, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return "", fmt.Errorf("open zip: %w", err)
+		return fmt.Errorf("open zip: %w", err)
 	}
 	defer zr.Close()
 
@@ -101,11 +143,11 @@ func applyDarwin(archivePath, bundleRoot string) (string, error) {
 		if rel == "" || entry.FileInfo().IsDir() {
 			continue
 		}
-		if err := extractZipEntry(entry, filepath.Join(bundleRoot, rel)); err != nil {
-			return "", err
+		if err := extractZipEntry(entry, filepath.Join(destRoot, rel)); err != nil {
+			return err
 		}
 	}
-	return filepath.Join(bundleRoot, "Contents", "MacOS", "tubeless"), nil
+	return nil
 }
 
 // stripBundlePrefix turns a zip entry's "Tubeless.app/Contents/..." name
