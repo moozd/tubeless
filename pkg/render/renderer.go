@@ -73,13 +73,15 @@ type Renderer struct {
 // second), and the jump distance (in cells) beyond which the cursor
 // snaps instead of gliding.
 const (
-	// Fast enough that even at a 20ms key-repeat retarget interval it
-	// closes ~75% of the remaining gap per tick, so the cursor stays
-	// visually attached to the actual text position instead of trailing
-	// behind it during held backspace or arrow-key repeat, while a
-	// single deliberate move (an arrow press, a click) still reads as a
-	// visible glide rather than an imperceptible snap.
-	cursorGlideSpeed = 70.0
+	// The value from before the elastic front/back trail existed (see
+	// git history) — 70, inherited from that trail's "front" role
+	// (staying tight to the real cursor through rapid key-repeat
+	// retargets), closes ~69% of the gap in a single 60fps frame, which
+	// reads as an instant snap rather than a glide now that nothing
+	// else draws the motion. 40 still tracks fast typing without
+	// visibly lagging behind, while keeping a single deliberate move (an
+	// arrow press, a click) a visible glide instead of a snap.
+	cursorGlideSpeed = 40.0
 	// A scrollback jump or window resize shouldn't animate the cursor
 	// "flying" across unrelated content in between.
 	cursorSnapDist = 4.0
