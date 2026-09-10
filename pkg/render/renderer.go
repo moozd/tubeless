@@ -256,13 +256,28 @@ func (r *Renderer) UpdateScroll(target int, dt float64) {
 // glides), not chasing a moving target.
 const contentShiftEaseSpeed = 26.0
 
-// BeginContentScroll starts (or restarts) the content-scroll glide: rows
+// BeginContentScroll starts (or extends) the content-scroll glide: rows
 // [top,bottom] render offsetPx physical pixels off their resting position
 // and ease back to 0 over the next several frames. See
 // ApplyScrollEvents, which is what normally calls this.
+//
+// When a glide is already in flight over this same [top,bottom] band,
+// offsetPx is added to whatever's left of it rather than replacing it —
+// a burst of same-region single-line scrolls (holding <C-e>/j in nvim,
+// each arriving as its own call a PTY-coalescing window apart, well
+// under contentShiftEaseSpeed's ~150ms settle time) needs to build into
+// one longer, continuous coasting slide, not keep resetting back to a
+// single line's offset before it's had a chance to visibly ease — which
+// is what reads as a rapid series of tiny identical flicks instead of
+// one Neovide-style glide. A call over a different band (or with nothing
+// in flight) starts fresh, same as before.
 func (r *Renderer) BeginContentScroll(top, bottom int, offsetPx float32) {
-	r.shiftTop, r.shiftBottom = top, bottom
-	r.shiftOffsetPx = offsetPx
+	if r.shiftActive && r.shiftTop == top && r.shiftBottom == bottom {
+		r.shiftOffsetPx += offsetPx
+	} else {
+		r.shiftTop, r.shiftBottom = top, bottom
+		r.shiftOffsetPx = offsetPx
+	}
 	r.shiftActive = true
 }
 
