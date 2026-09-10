@@ -31,6 +31,7 @@ import (
 	"github.com/moozd/tubeless/pkg/ptyio"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
+	"github.com/moozd/tubeless/pkg/upgrade"
 	"github.com/moozd/tubeless/pkg/vtparse"
 )
 
@@ -76,6 +77,9 @@ func main() {
 
 	if len(os.Args) > 1 && os.Args[1] == "config" {
 		runConfigTUI()
+	}
+	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
+		runUpgrade()
 	}
 
 	// Registered before anything else — critically, before any cgo call
@@ -208,6 +212,19 @@ func main() {
 	})
 
 	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused)
+}
+
+// runUpgrade runs `tubeless upgrade`: checks GitHub for a release newer
+// than this build's version, downloads this platform/arch's asset,
+// replaces the installed binaries/app bundle in place, and relaunches —
+// see pkg/upgrade for the actual mechanics. Like runConfigTUI, this is a
+// plain terminal command and never opens a window.
+func runUpgrade() {
+	if err := upgrade.Run(version, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "upgrade: %v\n", err)
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 // runConfigTUI runs `tubeless config`: cmd/tubeless-config is a plain

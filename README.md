@@ -55,6 +55,7 @@ Run `make help` for every target, including `package-linux`/
 tubeless                  # start a terminal with your $SHELL
 tubeless --theme=nord     # start with a specific theme
 tubeless config           # open the in-terminal settings UI
+tubeless upgrade          # check GitHub for a newer release, install it, and restart
 tubeless --version        # print the build version
 ```
 
