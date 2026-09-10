@@ -31,6 +31,7 @@ import (
 
 	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/font"
+	"github.com/moozd/tubeless/pkg/platform"
 )
 
 type ui struct {
@@ -83,6 +84,11 @@ type setting struct {
 }
 
 func main() {
+	// Fixes fc-list lookups (see pkg/font.SystemFamilies) when this binary
+	// runs standalone rather than exec'd by tubeless — a macOS GUI-launched
+	// process's PATH is missing whatever a login shell's profile adds.
+	platform.FixEnv()
+
 	path, err := config.DefaultPath()
 	if err != nil {
 		log.Fatalf("config dir: %v", err)

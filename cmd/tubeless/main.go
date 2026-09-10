@@ -27,6 +27,7 @@ import (
 
 	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/font"
+	"github.com/moozd/tubeless/pkg/platform"
 	"github.com/moozd/tubeless/pkg/ptyio"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
@@ -58,6 +59,12 @@ const (
 type resizeReq struct{ cols, rows int }
 
 func main() {
+	// Must run before any exec.Command below (fc-list via font.SystemFamilies,
+	// the pty shell itself) — a macOS GUI process launched from Finder/Dock
+	// inherits launchd's minimal PATH, missing whatever a login shell's
+	// .zprofile/.zshrc adds (Homebrew's shellenv chief among them).
+	platform.FixEnv()
+
 	if len(os.Args) > 1 && os.Args[1] == "config" {
 		runConfigTUI()
 	}
@@ -460,13 +467,21 @@ func pushResizeSize(resizeCh chan resizeReq, cs *cellSize, w, h int) {
 
 func startShell(shell string) *ptyio.Session {
 	name := shell
+	// -l (login shell) only for the $SHELL auto-detect path: it's what
+	// every other terminal emulator does by default (Terminal.app, iTerm,
+	// kitty, Alacritty) so .zprofile/.bash_profile PATH setup actually
+	// runs, but an explicit --shell override (e.g. tektest for run-green)
+	// gets exactly the program named, no injected flag it may not accept.
+	args := []string{"-l"}
 	if name == "" {
 		name = os.Getenv("SHELL")
+	} else {
+		args = nil
 	}
 	if name == "" {
 		name = "/bin/sh"
 	}
-	sess, err := ptyio.Start(name, nil, cols, rows)
+	sess, err := ptyio.Start(name, args, cols, rows)
 	if err != nil {
 		log.Fatalf("start shell: %v", err)
 	}
