@@ -17,12 +17,22 @@ import (
 //go:embed assets/FiraCode-Medium.ttf
 var defaultFontTTF []byte
 
+//go:embed assets/FiraCode-Bold.ttf
+var defaultBoldFontTTF []byte
+
 // DefaultFontBytes is the vendored font. Currently FiraCode (Nerd Font
 // Propo, Medium) — matching the font this was being A/B compared against
 // in Ghostty, so any remaining rendering difference isn't confounded by
 // comparing two different typefaces. Nothing in this package is specific
 // to it; swapping fonts is a one-line change at the call site.
 func DefaultFontBytes() []byte { return defaultFontTTF }
+
+// DefaultBoldFontBytes is the vendored font's real Bold cut (FiraCode
+// Nerd Font Propo, Bold) — used whenever no system font.family is
+// configured, so bold text gets a genuine heavier weight rather than
+// just a brightness nudge. There is no italic cut of this family to
+// bundle alongside it (see ResolveStyle's doc comment).
+func DefaultBoldFontBytes() []byte { return defaultBoldFontTTF }
 
 // Glyph is one atlas entry: its pixel rect within Atlas.Image.
 type Glyph struct {
@@ -161,6 +171,63 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 		atlas.Glyphs[r] = Glyph{X: gx, Y: gy, W: cellW, H: cellH}
 	}
 	return atlas, nil
+}
+
+// FaceBytes is the raw font file bytes for the four style variants a cell
+// can be drawn in. Regular and Bold are always populated (see
+// cmd/tubeless's loadFontFaces — Bold always resolves to something real,
+// falling back to DefaultBoldFontBytes). Italic/BoldItalic are nil when no
+// real italic/bold-italic face was found for the configured family — the
+// renderer falls back to a synthetic slant of Regular/Bold in that case
+// rather than these being populated with something else.
+type FaceBytes struct {
+	Regular, Bold, Italic, BoldItalic []byte
+}
+
+// Faces is the built-atlas counterpart of FaceBytes: one Atlas per style
+// that was actually available. Italic/BoldItalic are nil exactly when the
+// corresponding FaceBytes field was nil.
+type Faces struct {
+	Regular, Bold, Italic, BoldItalic *Atlas
+}
+
+// BuildFaces runs Build once per non-nil FaceBytes entry, at the same
+// pixelHeight/gamma/scale for all of them so their cell grids line up.
+// Regular must be non-nil; Bold is expected to be non-nil too (callers
+// always have a real bold face, bundled or resolved) but isn't required
+// to be.
+func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int) (*Faces, error) {
+	build := func(name string, b []byte) (*Atlas, error) {
+		if b == nil {
+			return nil, nil
+		}
+		runes, err := EnumerateRunes(b)
+		if err != nil {
+			return nil, fmt.Errorf("enumerate %s glyphs: %w", name, err)
+		}
+		atlas, err := Build(b, runes, pixelHeight, gamma, scale)
+		if err != nil {
+			return nil, fmt.Errorf("build %s atlas: %w", name, err)
+		}
+		return atlas, nil
+	}
+	regular, err := build("regular", bytes.Regular)
+	if err != nil {
+		return nil, err
+	}
+	bold, err := build("bold", bytes.Bold)
+	if err != nil {
+		return nil, err
+	}
+	italic, err := build("italic", bytes.Italic)
+	if err != nil {
+		return nil, err
+	}
+	boldItalic, err := build("bold italic", bytes.BoldItalic)
+	if err != nil {
+		return nil, err
+	}
+	return &Faces{Regular: regular, Bold: bold, Italic: italic, BoldItalic: boldItalic}, nil
 }
 
 // blitGlyph rasterizes r and copies its coverage into dst's (gx,gy) cell,

@@ -3,9 +3,18 @@
 in vec2 vUV;
 in vec3 vColor;
 in vec3 vBgColor;
+in float vStyle;
 out vec4 fragColor;
 
-uniform sampler2D uAtlas;
+// Four atlas textures — regular/bold/italic/bold-italic (see
+// CellPass.atlasTex) — vStyle picks which one this instance samples.
+// A style with no real face loaded is routed to a sibling style before
+// it ever reaches here (see CellPass.glyphStyle), so every value vStyle
+// actually takes always has real glyph data behind it.
+uniform sampler2D uAtlas0;
+uniform sampler2D uAtlas1;
+uniform sampler2D uAtlas2;
+uniform sampler2D uAtlas3;
 
 // Ported from Ghostty's cell_text.f.glsl "linear-corrected" mode (its
 // default everywhere but macOS). We always render into an sRGB-capable
@@ -30,7 +39,16 @@ float linearize(float v) {
 }
 
 void main() {
-	float a = texture(uAtlas, vUV).r;
+	float a;
+	if (vStyle < 0.5) {
+		a = texture(uAtlas0, vUV).r;
+	} else if (vStyle < 1.5) {
+		a = texture(uAtlas1, vUV).r;
+	} else if (vStyle < 2.5) {
+		a = texture(uAtlas2, vUV).r;
+	} else {
+		a = texture(uAtlas3, vUV).r;
+	}
 
 	float fgL = luminance(vColor);
 	float bgL = luminance(vBgColor);

@@ -10,9 +10,20 @@ import (
 	"github.com/moozd/tubeless/pkg/screen"
 )
 
-const glyphInstanceFloats = 12    // aCellPos(2) + aUVOffset(2) + aUVSize(2) + aColor(3) + aBgColor(3)
+const glyphInstanceFloats = 14    // aCellPos(2) + aUVOffset(2) + aUVSize(2) + aColor(3) + aBgColor(3) + aStyle(1) + aShear(1)
 const rectInstanceFloats = 13     // aCellPos(2) + aRectOffset(2) + aRectSize(2) + aColor(3) + aRadius(4)
 const underlineInstanceFloats = 6 // aCellPos(2) + aColor(3) + aStyle(1)
+
+// Glyph atlas style indices — which of CellPass's four atlas textures a
+// glyph instance samples (aStyle, see appendGlyphInstance/glyphStyle).
+// Must match cell_glyph.frag's sampler selection chain.
+const (
+	styleRegular = iota
+	styleBold
+	styleItalic
+	styleBoldItalic
+	styleCount
+)
 
 // CellPass renders the terminal grid into offscreen FBOs, split into three
 // layers: a "rect" layer (background color fills and single-rect block
@@ -21,8 +32,10 @@ const underlineInstanceFloats = 6 // aCellPos(2) + aColor(3) + aStyle(1)
 // which get a gaussian bloom instead — see shapeblur.frag), and a "text"
 // layer (everything else) that stays sharp on top of both.
 type CellPass struct {
-	atlas            *font.Atlas
-	atlasTex         uint32
+	faces            *font.Faces
+	atlasTex         [styleCount]uint32
+	availItalic      bool // Faces.Italic was a real resolved face, not nil
+	availBoldItalic  bool // Faces.BoldItalic was a real resolved face, not nil
 	progGlyph        uint32
 	progRect         uint32
 	progUnderline    uint32
@@ -43,7 +56,7 @@ type CellPass struct {
 	cols, rows       int
 }
 
-func NewCellPass(atlas *font.Atlas) (*CellPass, error) {
+func NewCellPass(faces *font.Faces) (*CellPass, error) {
 	progGlyph, err := linkProgram(cellGlyphVertSrc, cellGlyphFragSrc)
 	if err != nil {
 		return nil, fmt.Errorf("glyph program: %w", err)
@@ -57,14 +70,27 @@ func NewCellPass(atlas *font.Atlas) (*CellPass, error) {
 		return nil, fmt.Errorf("underline program: %w", err)
 	}
 	cp := &CellPass{
-		atlas:         atlas,
-		atlasTex:      uploadAtlas(atlas),
-		progGlyph:     progGlyph,
-		progRect:      progRect,
-		progUnderline: progUnderline,
+		faces:           faces,
+		availItalic:     faces.Italic != nil,
+		availBoldItalic: faces.BoldItalic != nil,
+		progGlyph:       progGlyph,
+		progRect:        progRect,
+		progUnderline:   progUnderline,
+	}
+	cp.atlasTex[styleRegular] = uploadAtlas(faces.Regular)
+	cp.atlasTex[styleBold] = uploadAtlas(faces.Bold)
+	if faces.Italic != nil {
+		cp.atlasTex[styleItalic] = uploadAtlas(faces.Italic)
+	} else {
+		cp.atlasTex[styleItalic] = cp.atlasTex[styleRegular]
+	}
+	if faces.BoldItalic != nil {
+		cp.atlasTex[styleBoldItalic] = uploadAtlas(faces.BoldItalic)
+	} else {
+		cp.atlasTex[styleBoldItalic] = cp.atlasTex[styleBold]
 	}
 	cp.quadVBO = newQuadVBO()
-	cp.glyphVAO, cp.glyphInstVBO = newInstancedVAO(cp.quadVBO, glyphInstanceFloats, 3)
+	cp.glyphVAO, cp.glyphInstVBO = newGlyphVAO(cp.quadVBO)
 	cp.rectVAO, cp.rectInstVBO = newInstancedVAO(cp.quadVBO, rectInstanceFloats, 4)
 	cp.underlineVAO, cp.underlineInstVBO = newUnderlineVAO(cp.quadVBO)
 	return cp, nil
@@ -115,6 +141,34 @@ func newInstancedVAO(quadVBO uint32, floats, extra int) (vao, instVBO uint32) {
 	if extra > 0 {
 		attachInstanceAttrib(5, int32(extra), stride, 9*4)
 	}
+
+	gl.BindVertexArray(0)
+	return vao, instVBO
+}
+
+// newGlyphVAO builds the VAO for glyph instances: aCellPos(2) +
+// aUVOffset(2) + aUVSize(2) + aColor(3) + aBgColor(3) + aStyle(1) +
+// aShear(1). Its own layout rather than newInstancedVAO's shared "extra"
+// slot, since no other instance kind (rect, underline) carries the
+// trailing style/shear pair.
+func newGlyphVAO(quadVBO uint32) (vao, instVBO uint32) {
+	gl.GenVertexArrays(1, &vao)
+	gl.BindVertexArray(vao)
+
+	gl.BindBuffer(gl.ARRAY_BUFFER, quadVBO)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointerWithOffset(0, 2, gl.FLOAT, false, 2*4, 0)
+
+	gl.GenBuffers(1, &instVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, instVBO)
+	stride := int32(glyphInstanceFloats * 4)
+	attachInstanceAttrib(1, 2, stride, 0)    // aCellPos
+	attachInstanceAttrib(2, 2, stride, 2*4)  // aUVOffset
+	attachInstanceAttrib(3, 2, stride, 4*4)  // aUVSize
+	attachInstanceAttrib(4, 3, stride, 6*4)  // aColor
+	attachInstanceAttrib(5, 3, stride, 9*4)  // aBgColor
+	attachInstanceAttrib(6, 1, stride, 12*4) // aStyle
+	attachInstanceAttrib(7, 1, stride, 13*4) // aShear
 
 	gl.BindVertexArray(0)
 	return vao, instVBO
@@ -179,7 +233,6 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 	cp.textScratch = cp.textScratch[:0]
 	cp.underlineScratch = cp.underlineScratch[:0]
 	cp.cols, cp.rows = scr.Cols, scr.Rows
-	atlasW, atlasH := float32(cp.atlas.Image.Bounds().Dx()), float32(cp.atlas.Image.Bounds().Dy())
 	empty := ambientBG(cfg)
 	grid := scr.VisibleWindow(scrollOffset)
 	cp.ensureColorCache(scr.Cols, scr.Rows)
@@ -218,19 +271,47 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, rx, ry, rw, rh, fg, e.Radii)
 				continue
 			}
-			g, ok := cp.atlas.Glyphs[cell.Rune]
-			if !ok || cell.Rune == ' ' {
+			if cell.Rune == ' ' {
 				continue
 			}
-			u0, v0 := float32(g.X)/atlasW, float32(g.Y)/atlasH
-			us, vs := float32(g.W)/atlasW, float32(g.H)/atlasH
 			if font.IsShapeRune(cell.Rune) {
-				cp.shapeScratch = appendGlyphInstance(cp.shapeScratch, px, py, u0, v0, us, vs, fg, bg)
-			} else {
-				cp.textScratch = appendGlyphInstance(cp.textScratch, px, py, u0, v0, us, vs, fg, bg)
+				// Box-drawing/powerline glyphs are synthesized geometry
+				// (see font.spriteGlyph), guaranteed present in every
+				// atlas identically — always drawn from Regular,
+				// unslanted, regardless of the cell's Bold/Italic.
+				g, ok := cp.faces.Regular.Glyphs[cell.Rune]
+				if !ok {
+					continue
+				}
+				u0, v0, us, vs := glyphUV(cp.faces.Regular, g)
+				cp.shapeScratch = appendGlyphInstance(cp.shapeScratch, px, py, u0, v0, us, vs, fg, bg, styleRegular, 0)
+				continue
 			}
+			style, shear := glyphStyle(cell.Attr.Bold, cell.Attr.Italic, cp.availItalic, cp.availBoldItalic)
+			atlas := cp.atlasForStyle(style)
+			g, ok := atlas.Glyphs[cell.Rune]
+			if !ok {
+				// The selected style's face doesn't have this rune (e.g.
+				// a system Bold cut missing a Nerd Font icon the Regular
+				// cut has) — fall back to Regular rather than skipping
+				// the glyph entirely.
+				atlas, style, shear = cp.faces.Regular, styleRegular, 0
+				g, ok = atlas.Glyphs[cell.Rune]
+				if !ok {
+					continue
+				}
+			}
+			u0, v0, us, vs := glyphUV(atlas, g)
+			cp.textScratch = appendGlyphInstance(cp.textScratch, px, py, u0, v0, us, vs, fg, bg, style, shear)
 		}
 	}
+}
+
+// glyphUV converts a Glyph's pixel rect within atlas into normalized
+// texture coordinates.
+func glyphUV(atlas *font.Atlas, g font.Glyph) (u0, v0, us, vs float32) {
+	aw, ah := float32(atlas.Image.Bounds().Dx()), float32(atlas.Image.Bounds().Dy())
+	return float32(g.X) / aw, float32(g.Y) / ah, float32(g.W) / aw, float32(g.H) / ah
 }
 
 func appendRectInstance(dst []float32, px, py, rx, ry, rw, rh float32, color [3]float32, radii [4]float32) []float32 {
@@ -269,8 +350,57 @@ func expandRect(rx, ry, rw, rh, cw, ch float32, e rectEdges) (float32, float32, 
 	return rx, ry, rw, rh
 }
 
-func appendGlyphInstance(dst []float32, px, py, u0, v0, us, vs float32, fg, bg [3]float32) []float32 {
-	return append(dst, px, py, u0, v0, us, vs, fg[0], fg[1], fg[2], bg[0], bg[1], bg[2])
+func appendGlyphInstance(dst []float32, px, py, u0, v0, us, vs float32, fg, bg [3]float32, style, shear float32) []float32 {
+	return append(dst, px, py, u0, v0, us, vs, fg[0], fg[1], fg[2], bg[0], bg[1], bg[2], style, shear)
+}
+
+// glyphStyle picks which atlas a text glyph samples and whether the
+// vertex shader should apply a synthetic slant to it, from the cell's
+// Bold/Italic attributes and which real faces are actually available.
+// Bold is always real (see cmd/tubeless's loadFontFaces — it never
+// leaves cp.faces.Bold nil), so only Bold+Italic combinations ever need
+// to fall back to a synthesized slant.
+func glyphStyle(bold, italic, availItalic, availBoldItalic bool) (style, shear float32) {
+	switch {
+	case bold && italic:
+		if availBoldItalic {
+			return styleBoldItalic, 0
+		}
+		return styleBold, 1
+	case bold:
+		return styleBold, 0
+	case italic:
+		if availItalic {
+			return styleItalic, 0
+		}
+		return styleRegular, 1
+	default:
+		return styleRegular, 0
+	}
+}
+
+// atlasForStyle returns the Atlas a given style index samples from —
+// styleItalic/styleBoldItalic fall back to Regular/Bold when no real
+// face was loaded for them (glyphStyle already routes cells away from
+// those indices in that case, but BuildInstances' per-glyph fallback
+// below needs the same mapping to look up a rune).
+func (cp *CellPass) atlasForStyle(style float32) *font.Atlas {
+	switch int32(style) {
+	case styleBold:
+		return cp.faces.Bold
+	case styleItalic:
+		if cp.faces.Italic != nil {
+			return cp.faces.Italic
+		}
+		return cp.faces.Regular
+	case styleBoldItalic:
+		if cp.faces.BoldItalic != nil {
+			return cp.faces.BoldItalic
+		}
+		return cp.faces.Bold
+	default:
+		return cp.faces.Regular
+	}
 }
 
 func appendUnderlineInstance(dst []float32, px, py float32, color [3]float32, style float32) []float32 {
@@ -414,9 +544,12 @@ func (cp *CellPass) drawGlyphs(instances []float32, cw, ch, screenW, screenH, of
 	}
 	gl.UseProgram(cp.progGlyph)
 	setCommonUniforms(cp.progGlyph, cw, ch, screenW, screenH, offsetX, offsetY)
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, cp.atlasTex)
-	gl.Uniform1i(gl.GetUniformLocation(cp.progGlyph, gl.Str("uAtlas\x00")), 0)
+	uniformNames := [styleCount]string{"uAtlas0\x00", "uAtlas1\x00", "uAtlas2\x00", "uAtlas3\x00"}
+	for i, tex := range cp.atlasTex {
+		gl.ActiveTexture(gl.TEXTURE0 + uint32(i))
+		gl.BindTexture(gl.TEXTURE_2D, tex)
+		gl.Uniform1i(gl.GetUniformLocation(cp.progGlyph, gl.Str(uniformNames[i])), int32(i))
+	}
 	uploadAndDrawInstances(cp.glyphVAO, cp.glyphInstVBO, instances, glyphInstanceFloats)
 }
 

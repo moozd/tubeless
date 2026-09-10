@@ -12,6 +12,12 @@ import (
 // source rasterization — is what actually smooths glyph edges down to
 // display size; plain LINEAR would alias/shimmer on a minification this
 // large.
+//
+// uploadAtlas is also what CellPass.newAtlasTextures calls per style — a
+// nil atlas (no real Italic/BoldItalic face was loaded) is never passed
+// here; callers alias that slot's texture id to a sibling style instead
+// (see newAtlasTextures), since aStyle routing guarantees it's never
+// sampled.
 func uploadAtlas(atlas *font.Atlas) uint32 {
 	var tex uint32
 	gl.GenTextures(1, &tex)

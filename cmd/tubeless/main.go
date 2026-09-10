@@ -101,12 +101,8 @@ func main() {
 		return c
 	}
 
-	fontBytes := loadFontBytes(cfg.Font.Family)
-	runes, err := font.EnumerateRunes(fontBytes)
-	if err != nil {
-		log.Fatalf("enumerate font glyphs: %v", err)
-	}
-	atlas, err := font.Build(fontBytes, runes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale)
+	faceBytes := loadFontFaces(cfg.Font.Family)
+	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale)
 	if err != nil {
 		log.Fatalf("build font atlas: %v", err)
 	}
@@ -127,15 +123,15 @@ func main() {
 	shared.Store(screen.New(cols, rows))
 	go ptyCoordinator(sess, &shared, resizeCh, cfg.Scrollback.Lines, closeRequested)
 
-	winW := cols * (atlas.CellWidth / cfg.Atlas.Scale) * windowScale
-	winH := rows * (atlas.CellHeight / cfg.Atlas.Scale) * windowScale
+	winW := cols * (faces.Regular.CellWidth / cfg.Atlas.Scale) * windowScale
+	winH := rows * (faces.Regular.CellHeight / cfg.Atlas.Scale) * windowScale
 	win, err := render.NewWindow(fmt.Sprintf("tubeless (%s)", cfg.Theme), winW, winH)
 	if err != nil {
 		fatal("open window: %v", err)
 	}
 	defer win.Destroy()
 
-	renderer, err := render.New(atlas, cols, rows)
+	renderer, err := render.New(faces, cols, rows)
 	if err != nil {
 		fatal("init renderer: %v", err)
 	}
@@ -156,8 +152,8 @@ func main() {
 		dpiX, dpiY = win.GetContentScale()
 	}
 	cs := &cellSize{
-		w:    float32(atlas.CellWidth) / float32(cfg.Atlas.Scale) * dpiX,
-		h:    float32(atlas.CellHeight) / float32(cfg.Atlas.Scale) * dpiY,
+		w:    float32(faces.Regular.CellWidth) / float32(cfg.Atlas.Scale) * dpiX,
+		h:    float32(faces.Regular.CellHeight) / float32(cfg.Atlas.Scale) * dpiY,
 		dpiX: dpiX,
 		dpiY: dpiY,
 	}
@@ -167,8 +163,8 @@ func main() {
 			cs.w *= x / cs.dpiX
 			cs.h *= y / cs.dpiY
 		} else {
-			cs.w = float32(atlas.CellWidth) / float32(cfg.Atlas.Scale) * x
-			cs.h = float32(atlas.CellHeight) / float32(cfg.Atlas.Scale) * y
+			cs.w = float32(faces.Regular.CellWidth) / float32(cfg.Atlas.Scale) * x
+			cs.h = float32(faces.Regular.CellHeight) / float32(cfg.Atlas.Scale) * y
 		}
 		cs.dpiX, cs.dpiY = x, y
 		pushResize(win, resizeCh, cs)
@@ -284,6 +280,42 @@ func loadFontBytes(family string) []byte {
 		return font.DefaultFontBytes()
 	}
 	return data
+}
+
+// loadFontFaces resolves all four style variants for family. Regular is
+// loadFontBytes unchanged. Bold always ends up with something real: a
+// system family's own Bold cut if fontconfig genuinely has one (see
+// font.ResolveStyle), otherwise the bundled Bold cut — never a
+// brightness-only fake. Italic/BoldItalic are left nil unless a system
+// family genuinely has that cut; CellPass falls back to a synthetic
+// slant of Regular/Bold in that case rather than these holding a
+// fontconfig substitute that isn't actually italic.
+func loadFontFaces(family string) font.FaceBytes {
+	readStyle := func(style string) []byte {
+		if family == "" {
+			return nil
+		}
+		path, ok := font.ResolveStyle(family, style)
+		if !ok {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("read font %s: %v", path, err)
+			return nil
+		}
+		return data
+	}
+	bold := readStyle("Bold")
+	if bold == nil {
+		bold = font.DefaultBoldFontBytes()
+	}
+	return font.FaceBytes{
+		Regular:    loadFontBytes(family),
+		Bold:       bold,
+		Italic:     readStyle("Italic"),
+		BoldItalic: readStyle("Bold Italic"),
+	}
 }
 
 // ptyCoordinator is the sole mutator of the terminal's working Screen. It
@@ -467,16 +499,12 @@ func pumpPTYOutput(sess *ptyio.Session, out chan<- []byte) {
 // cs with the resulting physical cell size. Used by runLoop when the config
 // file's font/atlas settings change at runtime.
 func newRendererFor(win *render.Window, cfg config.Config, cs *cellSize) (*render.Renderer, error) {
-	fontBytes := loadFontBytes(cfg.Font.Family)
-	runes, err := font.EnumerateRunes(fontBytes)
-	if err != nil {
-		return nil, fmt.Errorf("enumerate glyphs: %w", err)
-	}
-	atlas, err := font.Build(fontBytes, runes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale)
+	faceBytes := loadFontFaces(cfg.Font.Family)
+	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*cfg.Atlas.Scale, cfg.Atlas.Gamma, cfg.Atlas.Scale)
 	if err != nil {
 		return nil, fmt.Errorf("build font atlas: %w", err)
 	}
-	r, err := render.New(atlas, cols, rows)
+	r, err := render.New(faces, cols, rows)
 	if err != nil {
 		return nil, fmt.Errorf("init renderer: %w", err)
 	}
@@ -485,8 +513,8 @@ func newRendererFor(win *render.Window, cfg config.Config, cs *cellSize) (*rende
 		dx, dy = 1, 1
 	}
 	cs.dpiX, cs.dpiY = dx, dy
-	cs.w = float32(atlas.CellWidth) / float32(cfg.Atlas.Scale) * dx
-	cs.h = float32(atlas.CellHeight) / float32(cfg.Atlas.Scale) * dy
+	cs.w = float32(faces.Regular.CellWidth) / float32(cfg.Atlas.Scale) * dx
+	cs.h = float32(faces.Regular.CellHeight) / float32(cfg.Atlas.Scale) * dy
 	return r, nil
 }
 

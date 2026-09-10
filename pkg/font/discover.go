@@ -48,6 +48,28 @@ func SystemFamilies() ([]string, error) {
 	return names, nil
 }
 
+// ResolveStyle reports whether family truly has the given style (e.g.
+// "Bold", "Italic", "Bold Italic") — unlike ResolveFamily/fc-match, which
+// always substitutes *some* file even for a style the family doesn't
+// carry (a plain family match, or its own generic fallback), so it can't
+// tell "no italic cut exists" apart from "resolved fine". fc-list only
+// lists files that actually declare the requested style, so an empty
+// result here means the style genuinely isn't available and callers
+// should fall back to something else (a synthetic slant, a different
+// weight) rather than trusting a substituted file.
+func ResolveStyle(family, style string) (path string, ok bool) {
+	out, err := exec.Command("fc-list", family+":style="+style, "file").Output()
+	if err != nil {
+		return "", false
+	}
+	first, _, _ := strings.Cut(string(out), "\n")
+	first = strings.TrimSuffix(strings.TrimSpace(first), ":")
+	if first == "" {
+		return "", false
+	}
+	return first, true
+}
+
 // ResolveFamily finds the font file fontconfig picks for family, via
 // fc-match — what cmd/tubeless loads instead of a raw path when
 // config.Font.Family is set. fc-match always returns *some* file (it

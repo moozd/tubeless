@@ -19,6 +19,7 @@ package screen
 type Attr struct {
 	Bold      bool
 	Dim       bool
+	Italic    bool
 	Underline UnderlineStyle
 	Blink     bool
 	Reverse   bool

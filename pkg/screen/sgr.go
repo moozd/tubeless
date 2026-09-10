@@ -28,6 +28,8 @@ func (h *Handler) applySGRCode(params []int, subs [][]int, i int) int {
 		h.CurAttr.Bold = true
 	case code == 2:
 		h.CurAttr.Dim = true
+	case code == 3:
+		h.CurAttr.Italic = true
 	case code == 4:
 		h.CurAttr.Underline = UnderlineSingle
 		if sub := subs[i]; len(sub) > 0 && sub[0] >= 0 && sub[0] < len(underlineStyles) {
@@ -41,6 +43,8 @@ func (h *Handler) applySGRCode(params []int, subs [][]int, i int) int {
 		h.CurAttr.Invisible = true
 	case code == 22:
 		h.CurAttr.Bold, h.CurAttr.Dim = false, false
+	case code == 23:
+		h.CurAttr.Italic = false
 	case code == 24:
 		h.CurAttr.Underline = UnderlineNone
 	case code == 25:

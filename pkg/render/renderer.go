@@ -96,8 +96,8 @@ const (
 	cursorSnapDist  = 4.0
 )
 
-func New(atlas *font.Atlas, cols, rows int) (*Renderer, error) {
-	cellPass, err := NewCellPass(atlas)
+func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
+	cellPass, err := NewCellPass(faces)
 	if err != nil {
 		return nil, fmt.Errorf("cell pass: %w", err)
 	}
