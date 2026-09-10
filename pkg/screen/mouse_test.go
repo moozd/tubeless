@@ -3,17 +3,37 @@ package screen
 import "testing"
 
 func TestEncodeMouseEvent(t *testing.T) {
-	got := string(EncodeMouseEvent(MouseButtonLeft, MousePress, 4, 9, false, false, false))
+	got := string(EncodeMouseEvent(true, MouseButtonLeft, MousePress, 4, 9, false, false, false))
 	if want := "\x1b[<0;5;10M"; got != want {
 		t.Fatalf("EncodeMouseEvent press = %q, want %q", got, want)
 	}
-	got = string(EncodeMouseEvent(MouseButtonLeft, MouseRelease, 4, 9, false, false, false))
+	got = string(EncodeMouseEvent(true, MouseButtonLeft, MouseRelease, 4, 9, false, false, false))
 	if want := "\x1b[<0;5;10m"; got != want {
 		t.Fatalf("EncodeMouseEvent release = %q, want %q", got, want)
 	}
-	got = string(EncodeMouseEvent(MouseWheelUp, MousePress, 0, 0, true, false, false))
+	got = string(EncodeMouseEvent(true, MouseWheelUp, MousePress, 0, 0, true, false, false))
 	if want := "\x1b[<68;1;1M"; got != want {
 		t.Fatalf("EncodeMouseEvent wheel+shift = %q, want %q", got, want)
+	}
+}
+
+func TestEncodeMouseEventLegacy(t *testing.T) {
+	got := EncodeMouseEvent(false, MouseButtonLeft, MousePress, 4, 9, false, false, false)
+	want := []byte{0x1b, '[', 'M', 32, 32 + 5, 32 + 10}
+	if string(got) != string(want) {
+		t.Fatalf("EncodeMouseEvent legacy press = %v, want %v", got, want)
+	}
+	// Release reports code 3 regardless of which button, per the legacy spec.
+	got = EncodeMouseEvent(false, MouseButtonRight, MouseRelease, 4, 9, false, false, false)
+	want = []byte{0x1b, '[', 'M', 32 + 3, 32 + 5, 32 + 10}
+	if string(got) != string(want) {
+		t.Fatalf("EncodeMouseEvent legacy release = %v, want %v", got, want)
+	}
+	// Coordinates clamp at the format's 223 ceiling instead of wrapping.
+	got = EncodeMouseEvent(false, MouseButtonLeft, MousePress, 500, 500, false, false, false)
+	want = []byte{0x1b, '[', 'M', 32, 32 + 223, 32 + 223}
+	if string(got) != string(want) {
+		t.Fatalf("EncodeMouseEvent legacy clamp = %v, want %v", got, want)
 	}
 }
 

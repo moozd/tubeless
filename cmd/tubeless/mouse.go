@@ -61,7 +61,7 @@ func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 			}
 			shift, alt, ctrl := currentMods(win)
 			x, y := cellAt(win, cs)
-			sess.Write(screen.EncodeMouseEvent(btn, screen.MousePress, x, y, shift, alt, ctrl))
+			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, btn, screen.MousePress, x, y, shift, alt, ctrl))
 			return
 		}
 		if scr.InAltScreen() {
@@ -85,7 +85,7 @@ func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 			ms.reporting = scr.MouseMode != screen.MouseOff
 			if ms.reporting {
 				shift, alt, ctrl := currentMods(win)
-				sess.Write(screen.EncodeMouseEvent(sgrButton(button), screen.MousePress, x, y, shift, alt, ctrl))
+				sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, sgrButton(button), screen.MousePress, x, y, shift, alt, ctrl))
 				return
 			}
 			if button != glfw.MouseButtonLeft {
@@ -100,7 +100,7 @@ func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 		if ms.reporting {
 			ms.reporting = false
 			shift, alt, ctrl := currentMods(win)
-			sess.Write(screen.EncodeMouseEvent(sgrButton(button), screen.MouseRelease, x, y, shift, alt, ctrl))
+			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, sgrButton(button), screen.MouseRelease, x, y, shift, alt, ctrl))
 			return
 		}
 		if ms.dragging {
@@ -120,10 +120,10 @@ func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 		switch {
 		case ms.reporting && scr.MouseMode == screen.MouseAny:
 			shift, alt, ctrl := currentMods(win)
-			sess.Write(screen.EncodeMouseEvent(screen.MouseButtonNone, screen.MouseMotion, x, y, shift, alt, ctrl))
+			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, screen.MouseButtonNone, screen.MouseMotion, x, y, shift, alt, ctrl))
 		case ms.reporting && scr.MouseMode == screen.MouseDrag:
 			shift, alt, ctrl := currentMods(win)
-			sess.Write(screen.EncodeMouseEvent(screen.MouseButtonLeft, screen.MouseMotion, x, y, shift, alt, ctrl))
+			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, screen.MouseButtonLeft, screen.MouseMotion, x, y, shift, alt, ctrl))
 		case ms.dragging:
 			ms.sel.EndX, ms.sel.EndY = x, y
 		}
