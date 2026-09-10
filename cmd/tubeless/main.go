@@ -336,14 +336,33 @@ func effectiveAtlasScale(scale int, dpi float32) int {
 // alongside the faces since callers need it again to convert the
 // atlas's raster cell size back to physical pixels (see cellSize).
 // GL-independent — safe to call before any window exists.
+//
+// A cfg.Atlas.Scale that's too high for maxTextureSize at the current
+// DPI is stepped down (logging each attempt) until one fits, rather
+// than failing outright: DPI is now part of the effective raster
+// resolution (see effectiveAtlasScale), so a value that was fine on one
+// display — or under the old, DPI-blind formula this replaced — can
+// exceed the limit on a higher-DPI one without the user ever having
+// touched their config. Crashing the whole app on launch over a stale
+// number is worse than a shell-visible warning and a slightly softer
+// atlas.
 func buildFacesFor(cfg config.Config, dpi float32, maxTextureSize int) (*font.Faces, int, error) {
-	effectiveScale := effectiveAtlasScale(cfg.Atlas.Scale, dpi)
-	faceBytes := loadFontFaces(cfg.Font.Family)
-	faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*effectiveScale, cfg.Atlas.Gamma, effectiveScale, cfg.Font.LineHeight, maxTextureSize)
-	if err != nil {
-		return nil, 0, fmt.Errorf("build font atlas: %w", err)
+	scale := cfg.Atlas.Scale
+	for {
+		effectiveScale := effectiveAtlasScale(scale, dpi)
+		faceBytes := loadFontFaces(cfg.Font.Family)
+		faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*effectiveScale, cfg.Atlas.Gamma, effectiveScale, cfg.Font.LineHeight, maxTextureSize)
+		if err == nil {
+			if scale != cfg.Atlas.Scale {
+				log.Printf("atlas.scale %d was too high for this display/GPU; using %d instead — lower it in your config to stop seeing this", cfg.Atlas.Scale, scale)
+			}
+			return faces, effectiveScale, nil
+		}
+		if scale <= 1 {
+			return nil, 0, fmt.Errorf("build font atlas: %w", err)
+		}
+		scale--
 	}
-	return faces, effectiveScale, nil
 }
 
 // loadFontBytes resolves cfg.Font.Family to a font file via fontconfig

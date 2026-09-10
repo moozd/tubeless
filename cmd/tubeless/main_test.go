@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/ptyio"
 	"github.com/moozd/tubeless/pkg/screen"
 )
@@ -65,5 +66,32 @@ func TestEffectiveAtlasScale(t *testing.T) {
 		if got := effectiveAtlasScale(c.scale, c.dpi); got != c.want {
 			t.Errorf("effectiveAtlasScale(%d, %v) = %d, want %d", c.scale, c.dpi, got, c.want)
 		}
+	}
+}
+
+// TestBuildFacesForClampsOversizedScale guards the fix for the app
+// crashing at launch — never even opening a window — when cfg.Atlas.Scale
+// (now multiplied by DPI, see effectiveAtlasScale) produces an atlas
+// texture bigger than the GPU allows: a stale config value should
+// degrade to a smaller, working atlas, not take the whole process down.
+func TestBuildFacesForClampsOversizedScale(t *testing.T) {
+	cfg := config.Config{
+		Font:  config.Font{Size: 14, LineHeight: 1},
+		Atlas: config.Atlas{Scale: 8, Gamma: 1.0},
+	}
+	// Small enough that scale=8 (and several steps below it) can't
+	// possibly fit, forcing the clamp path, but not so small that even
+	// scale=1 fails — this must still succeed, just at a lower scale.
+	const smallMaxTextureSize = 4096
+
+	faces, effectiveScale, err := buildFacesFor(cfg, 1, smallMaxTextureSize)
+	if err != nil {
+		t.Fatalf("buildFacesFor did not clamp down to something that fits: %v", err)
+	}
+	if effectiveScale >= 8 {
+		t.Fatalf("effectiveScale = %d, want it clamped below the requested 8", effectiveScale)
+	}
+	if faces == nil || faces.Regular == nil {
+		t.Fatal("buildFacesFor returned no usable faces")
 	}
 }
