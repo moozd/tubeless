@@ -21,8 +21,18 @@ uniform vec2 uCellSize;
 void main() {
 	float chPx = uCellSize.y;
 	float cwPx = uCellSize.x;
-	float baseline = 0.86;
+	// Underline and undercurl sit a touch closer to the glyph than reads
+	// well — nudge just those two styles further down toward the cell's
+	// bottom edge. Double/dotted/dashed keep the original baseline.
+	float baselineOffset = (vStyle == STYLE_SINGLE || vStyle == STYLE_CURLY) ? 0.03 : 0.0;
+	float baseline = 0.86 + baselineOffset;
 	float thicknessPx = max(1.2, chPx * 0.09);
+	// Plain underline reads too bold at the shared thickness — give it its
+	// own, narrower band. Every other style (including undercurl) keeps
+	// the shared thickness.
+	if (vStyle == STYLE_SINGLE) {
+		thicknessPx = max(1.0, chPx * 0.06);
+	}
 	float thickness = thicknessPx / chPx;
 	float halfBand = thickness * 0.6;
 
