@@ -9,6 +9,18 @@ uniform vec3 uAccent;          // phosphor color (linear) used as the tint hue
 uniform float uBgTint;         // empty-screen brightness, 0..1
 uniform float uInsetShadow;    // strength of the radial tube-face falloff, 0..1
 uniform float uAspect;         // screen width / height
+uniform float uTime;           // wrapped elapsed seconds, for noise/flicker
+
+// Every uniform below is 0 (or Intensity/Amount 0) when its CRT effect is
+// disabled in config — the default for all of them. Each is gated by an
+// `if (u... > 0.0)` branch; since the condition is uniform across the
+// whole draw call, a disabled effect costs nothing (no warp divergence).
+uniform float uCurvature;               // barrel-distortion amount, 0 = flat
+uniform float uAberration;              // chromatic aberration amount, UV units
+uniform float uScanIntensity, uScanPeriod;
+uniform float uMaskIntensity, uMaskCellSize;
+uniform float uNoiseIntensity;
+uniform float uFlickerAmount, uFlickerSpeed;
 
 // Final composite. The cursor is soft-added over the scene — cursor *
 // (1 - scene) adds glow where the screen is dark and barely lifts bright
@@ -44,18 +56,77 @@ float bayer4(vec2 p) {
 	return m[idx] / 16.0;
 }
 
+float hash(vec2 p) {
+	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+// curveUV bends uv (0..1) toward a barrel-distorted tube face: points near
+// the center are nearly unmoved, points toward the corners bow outward.
+// Callers must check the result is still within [0,1] before sampling —
+// see main()'s early-return, which paints outside that range solid black
+// rather than requiring every upstream FBO to be padded.
+vec2 curveUV(vec2 uv, float amount) {
+	vec2 c = uv * 2.0 - 1.0;
+	c += c * (c.yx * c.yx) * amount;
+	return c * 0.5 + 0.5;
+}
+
 void main() {
-	vec3 scene = texture(uScene, vUV).rgb;
-	vec3 cursor = texture(uCursor, vUV).rgb;
+	vec2 uv = vUV;
+	if (uCurvature > 0.0) {
+		uv = curveUV(uv, uCurvature);
+		if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+			fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+			return;
+		}
+	}
+
+	vec3 scene;
+	if (uAberration > 0.0) {
+		vec2 dir = uv - 0.5;
+		scene = vec3(
+			texture(uScene, uv - dir * uAberration).r,
+			texture(uScene, uv).g,
+			texture(uScene, uv + dir * uAberration).b
+		);
+	} else {
+		scene = texture(uScene, uv).rgb;
+	}
+	vec3 cursor = texture(uCursor, uv).rgb;
 	vec3 glow = scene + cursor * (1.0 - scene);
 
 	vec3 color = glow + uAccent * uBgTint;
 
+	// Vignette stays keyed on the original (un-warped) vUV — it's a
+	// separate cosmetic falloff, not meant to compound with curvature's
+	// own geometric bowing.
 	vec2 p = (vUV - 0.5) * 2.0;
 	p.x *= uAspect;
 	float d = clamp(length(p) / length(vec2(uAspect, 1.0)), 0.0, 1.0);
 	float shade = 1.0 - uInsetShadow * pow(d, 2.4);
 	color *= shade;
+
+	if (uScanIntensity > 0.0) {
+		float scan = 0.5 + 0.5 * sin(gl_FragCoord.y / uScanPeriod * 6.2831853);
+		color *= 1.0 - uScanIntensity * scan;
+	}
+
+	if (uMaskIntensity > 0.0) {
+		float col = mod(floor(gl_FragCoord.x / max(uMaskCellSize, 1.0) * 3.0), 3.0);
+		vec3 maskColor = col < 0.5 ? vec3(1.0, 0.55, 0.55)
+			: col < 1.5 ? vec3(0.55, 1.0, 0.55)
+			: vec3(0.55, 0.55, 1.0);
+		color *= mix(vec3(1.0), maskColor, uMaskIntensity);
+	}
+
+	if (uNoiseIntensity > 0.0) {
+		color += (hash(gl_FragCoord.xy + uTime * 1000.0) - 0.5) * uNoiseIntensity;
+	}
+
+	if (uFlickerAmount > 0.0) {
+		float n = hash(vec2(floor(uTime * uFlickerSpeed), 0.0));
+		color *= 1.0 - uFlickerAmount * abs(n - 0.5) * 2.0;
+	}
 
 	// One quarter of an 8-bit step, centered; smooth gradients land between
 	// two representable values and the pattern biases each pixel toward the

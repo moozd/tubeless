@@ -22,10 +22,11 @@ func newSRGBFBO(w, h int) *FBO {
 }
 
 // newFloatFBO is a high-precision 16-bit float target. The phosphor
-// persistence accumulator (see persistpass.go) decays an image over many
-// frames; in an 8-bit target that fade quantizes into visible steps, while
-// a float target keeps the decay smooth. Values are stored as-is (no sRGB
-// encode) — persistence math happens in linear light.
+// persistence accumulator (see persistpass.go's PersistPass) decays an
+// image over many frames; in an 8-bit target that fade quantizes into
+// visible steps, while a float target keeps the decay smooth. Values are
+// stored as-is (no sRGB encode) — persistence math happens in linear
+// light.
 func newFloatFBO(w, h int) *FBO {
 	return newFBOFormat(w, h, gl.RGBA16F, gl.HALF_FLOAT)
 }

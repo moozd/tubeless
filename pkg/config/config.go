@@ -28,6 +28,7 @@ type Config struct {
 	Face       Face       `toml:"face"`
 	Contrast   Contrast   `toml:"contrast"`
 	Scrollback Scrollback `toml:"scrollback"`
+	CRT        CRT        `toml:"crt"`
 }
 
 // Scrollback controls how much scrolled-off history is retained above the

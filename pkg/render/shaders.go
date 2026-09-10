@@ -40,3 +40,6 @@ var insetFragSrc string
 
 //go:embed assets/shaders/cursor.frag
 var cursorFragSrc string
+
+//go:embed assets/shaders/decay.frag
+var decayFragSrc string

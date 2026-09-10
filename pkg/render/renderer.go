@@ -29,16 +29,25 @@ import (
 // visible frame so the cursor glides in real time. There is no decay
 // field — phosphor persistence was removed.
 type Renderer struct {
-	cellPass   *CellPass
-	imagePass  *ImagePass
-	blurPass   *BlurPass
-	copyPass   *CopyPass
-	cursorPass *CursorPass
-	insetPass  *InsetPass
-	shapeFBO   *FBO
-	blurFBO    *FBO
-	sceneFBO   *FBO
-	cursorFBO  *FBO
+	cellPass    *CellPass
+	imagePass   *ImagePass
+	blurPass    *BlurPass
+	copyPass    *CopyPass
+	cursorPass  *CursorPass
+	insetPass   *InsetPass
+	persistPass *PersistPass
+	shapeFBO    *FBO
+	blurFBO     *FBO
+	sceneFBO    *FBO
+	cursorFBO   *FBO
+	persistFBO  [2]*FBO
+	persistIdx  int
+
+	// effectsTime is RenderEffects' own wrapped elapsed-seconds clock,
+	// feeding the CRT noise/flicker shader effects and the phosphor decay
+	// pass — same wrapping pattern as cursorPhase, to avoid ever-growing
+	// floating point imprecision over a long-running process.
+	effectsTime float64
 
 	cols, rows   int
 	cellW, cellH float32
@@ -112,17 +121,23 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("inset pass: %w", err)
 	}
+	persistPass, err := NewPersistPass()
+	if err != nil {
+		return nil, fmt.Errorf("persist pass: %w", err)
+	}
 	return &Renderer{
-		cellPass:   cellPass,
-		imagePass:  imagePass,
-		blurPass:   blurPass,
-		copyPass:   copyPass,
-		cursorPass: cursorPass,
-		insetPass:  insetPass,
-		shapeFBO:   newSRGBFBO(2, 2),
-		blurFBO:    newSRGBFBO(2, 2),
-		sceneFBO:   newSRGBFBO(2, 2),
-		cursorFBO:  newSRGBFBO(2, 2),
+		cellPass:    cellPass,
+		imagePass:   imagePass,
+		blurPass:    blurPass,
+		copyPass:    copyPass,
+		cursorPass:  cursorPass,
+		insetPass:   insetPass,
+		persistPass: persistPass,
+		shapeFBO:    newSRGBFBO(2, 2),
+		blurFBO:     newSRGBFBO(2, 2),
+		sceneFBO:    newSRGBFBO(2, 2),
+		cursorFBO:   newSRGBFBO(2, 2),
+		persistFBO:  [2]*FBO{newFloatFBO(2, 2), newFloatFBO(2, 2)},
 	}, nil
 }
 
@@ -351,10 +366,21 @@ func (r *Renderer) CurrentScrollLine() int {
 
 // RenderEffects draws the animated cursor glow and presents the final
 // composite. It runs every visible frame so the cursor keeps gliding and
-// breathing even with the shell idle.
-func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config) {
+// breathing even with the shell idle. dt is the frame's elapsed seconds —
+// needed for the CRT noise/flicker effects' time uniform and the phosphor
+// decay pass's dt-scaled decay factor, both of which must keep progressing
+// at real time regardless of the scene's own dirty/idle state.
+func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config, dt float64) {
 	offsetX := (float32(outW) - float32(r.cols)*r.cellW) / 2
 	offsetY := (float32(outH) - float32(r.rows)*r.cellH) / 2
+
+	// Wrapped at an arbitrary round period (1 day) rather than a
+	// meaningful one — unlike cursorPhase, nothing here is periodic on a
+	// fixed cycle (noise/flicker just want a monotonically-advancing
+	// clock), so this is purely to bound the float64's magnitude over a
+	// long-running process, same motivation as cursorPhase's own wrap.
+	const effectsTimeWrap = 86400.0
+	r.effectsTime = math.Mod(r.effectsTime+dt, effectsTimeWrap)
 
 	// Wrap the accumulated phase down to one period: UpdateCursor just
 	// keeps adding dt for the process's whole lifetime, and sin() being
@@ -380,5 +406,12 @@ func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config) {
 		bright = 0
 	}
 	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, outW, outH, bright, cfg)
-	r.insetPass.Draw(r.sceneFBO.tex, r.cursorFBO.tex, cfg, outW, outH)
+
+	sceneTex := r.sceneFBO.tex
+	if decaySeconds := cfg.CRT.PhosphorDecay.DecaySeconds; decaySeconds > 0 {
+		var tex uint32
+		r.persistIdx, tex = r.persistPass.Step(r.sceneFBO, &r.persistFBO, r.persistIdx, decaySeconds, dt, outW, outH)
+		sceneTex = tex
+	}
+	r.insetPass.Draw(sceneTex, r.cursorFBO.tex, cfg, outW, outH, r.effectsTime)
 }

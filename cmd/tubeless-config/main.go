@@ -520,6 +520,53 @@ func (u *ui) buildList() {
 		func(c *config.Config) float64 { return float64(c.Contrast.MinDelta) },
 		func(c *config.Config, v float64) { c.Contrast.MinDelta = float32(v) }))
 
+	// Every CRT effect below is off by default (0) and independently
+	// configurable — see pkg/config/crt.go's doc comment for why these are
+	// plain floats rather than a separate Enabled flag.
+	section("crt — curvature")
+	add(slider("crt.curvature.amount", "amount", "barrel-distortion strength; 0 = flat", "", 2, 0.01, 0, 0.5,
+		func(c *config.Config) float64 { return float64(c.CRT.Curvature.Amount) },
+		func(c *config.Config, v float64) { c.CRT.Curvature.Amount = float32(v) }))
+
+	section("crt — scanlines")
+	add(slider("crt.scanlines.intensity", "intensity", "darkens alternating lines; 0 = off", "", 2, 0.01, 0, 1,
+		func(c *config.Config) float64 { return float64(c.CRT.Scanlines.Intensity) },
+		func(c *config.Config, v float64) { c.CRT.Scanlines.Intensity = float32(v) }))
+	add(slider("crt.scanlines.period", "period", "device px per line-pair", "px", 1, 0.5, 1, 12,
+		func(c *config.Config) float64 { return float64(c.CRT.Scanlines.Period) },
+		func(c *config.Config, v float64) { c.CRT.Scanlines.Period = float32(v) }))
+
+	section("crt — chromatic aberration")
+	add(slider("crt.aberration.amount", "amount", "red/blue channel offset; 0 = off", "", 4, 0.0005, 0, 0.02,
+		func(c *config.Config) float64 { return float64(c.CRT.Aberration.Amount) },
+		func(c *config.Config, v float64) { c.CRT.Aberration.Amount = float32(v) }))
+
+	section("crt — shadow mask")
+	add(slider("crt.shadow_mask.intensity", "intensity", "RGB triad overlay strength; 0 = off", "", 2, 0.01, 0, 1,
+		func(c *config.Config) float64 { return float64(c.CRT.ShadowMask.Intensity) },
+		func(c *config.Config, v float64) { c.CRT.ShadowMask.Intensity = float32(v) }))
+	add(slider("crt.shadow_mask.cell_size", "cell size", "device px per triad column", "px", 1, 0.5, 1, 12,
+		func(c *config.Config) float64 { return float64(c.CRT.ShadowMask.CellSize) },
+		func(c *config.Config, v float64) { c.CRT.ShadowMask.CellSize = float32(v) }))
+
+	section("crt — noise")
+	add(slider("crt.noise.intensity", "intensity", "analog signal noise; 0 = off", "", 3, 0.005, 0, 0.2,
+		func(c *config.Config) float64 { return float64(c.CRT.Noise.Intensity) },
+		func(c *config.Config, v float64) { c.CRT.Noise.Intensity = float32(v) }))
+
+	section("crt — flicker")
+	add(slider("crt.flicker.amount", "amount", "whole-screen brightness jitter; 0 = off", "", 2, 0.01, 0, 1,
+		func(c *config.Config) float64 { return float64(c.CRT.Flicker.Amount) },
+		func(c *config.Config, v float64) { c.CRT.Flicker.Amount = float32(v) }))
+	add(slider("crt.flicker.speed", "speed", "flicker rate", "hz", 1, 0.5, 0.5, 30,
+		func(c *config.Config) float64 { return float64(c.CRT.Flicker.Speed) },
+		func(c *config.Config, v float64) { c.CRT.Flicker.Speed = float32(v) }))
+
+	section("crt — phosphor decay")
+	add(slider("crt.phosphor_decay.decay_seconds", "decay seconds", "afterglow trail length; 0 = off", "s", 2, 0.05, 0, 3,
+		func(c *config.Config) float64 { return float64(c.CRT.PhosphorDecay.DecaySeconds) },
+		func(c *config.Config, v float64) { c.CRT.PhosphorDecay.DecaySeconds = float32(v) }))
+
 	section("font")
 	add(&setting{
 		key: "font.size", label: "size", help: "logical pixel height (rebuilds the atlas)",
@@ -1141,6 +1188,26 @@ func knob(c *config.Config, key string) (struct {
 		return rng{float64(c.Atlas.Gamma), 0.5, 2}, true
 	case "font.line_height":
 		return rng{c.Font.LineHeight, 0.8, 2}, true
+	case "crt.curvature.amount":
+		return rng{float64(c.CRT.Curvature.Amount), 0, 0.5}, true
+	case "crt.scanlines.intensity":
+		return rng{float64(c.CRT.Scanlines.Intensity), 0, 1}, true
+	case "crt.scanlines.period":
+		return rng{float64(c.CRT.Scanlines.Period), 1, 12}, true
+	case "crt.aberration.amount":
+		return rng{float64(c.CRT.Aberration.Amount), 0, 0.02}, true
+	case "crt.shadow_mask.intensity":
+		return rng{float64(c.CRT.ShadowMask.Intensity), 0, 1}, true
+	case "crt.shadow_mask.cell_size":
+		return rng{float64(c.CRT.ShadowMask.CellSize), 1, 12}, true
+	case "crt.noise.intensity":
+		return rng{float64(c.CRT.Noise.Intensity), 0, 0.2}, true
+	case "crt.flicker.amount":
+		return rng{float64(c.CRT.Flicker.Amount), 0, 1}, true
+	case "crt.flicker.speed":
+		return rng{float64(c.CRT.Flicker.Speed), 0.5, 30}, true
+	case "crt.phosphor_decay.decay_seconds":
+		return rng{float64(c.CRT.PhosphorDecay.DecaySeconds), 0, 3}, true
 	}
 	return struct {
 		v, min, max float64

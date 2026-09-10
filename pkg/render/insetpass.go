@@ -27,8 +27,9 @@ func NewInsetPass() (*InsetPass, error) {
 
 // Draw composites the sharp scene (sceneTex) with the cursor glow
 // (cursorTex) to the default framebuffer, sized outW x outH, using cfg's
-// tint and shadow parameters.
-func (i *InsetPass) Draw(sceneTex, cursorTex uint32, cfg config.Config, outW, outH int) {
+// tint/shadow/CRT-effect parameters. elapsed is wrapped elapsed seconds,
+// for the effects (noise, flicker) that vary over time.
+func (i *InsetPass) Draw(sceneTex, cursorTex uint32, cfg config.Config, outW, outH int, elapsed float64) {
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 	gl.Viewport(0, 0, int32(outW), int32(outH))
 	gl.UseProgram(i.prog)
@@ -43,6 +44,17 @@ func (i *InsetPass) Draw(sceneTex, cursorTex uint32, cfg config.Config, outW, ou
 	gl.Uniform1f(u("uBgTint"), cfg.Face.BgTint)
 	gl.Uniform1f(u("uInsetShadow"), cfg.Face.InsetShadow)
 	gl.Uniform1f(u("uAspect"), float32(outW)/float32(max(outH, 1)))
+	gl.Uniform1f(u("uTime"), float32(elapsed))
+	crt := cfg.CRT
+	gl.Uniform1f(u("uCurvature"), crt.Curvature.Amount)
+	gl.Uniform1f(u("uAberration"), crt.Aberration.Amount)
+	gl.Uniform1f(u("uScanIntensity"), crt.Scanlines.Intensity)
+	gl.Uniform1f(u("uScanPeriod"), crt.Scanlines.Period)
+	gl.Uniform1f(u("uMaskIntensity"), crt.ShadowMask.Intensity)
+	gl.Uniform1f(u("uMaskCellSize"), crt.ShadowMask.CellSize)
+	gl.Uniform1f(u("uNoiseIntensity"), crt.Noise.Intensity)
+	gl.Uniform1f(u("uFlickerAmount"), crt.Flicker.Amount)
+	gl.Uniform1f(u("uFlickerSpeed"), crt.Flicker.Speed)
 	gl.BindVertexArray(i.vao)
 	gl.DrawArrays(gl.TRIANGLES, 0, 6)
 	gl.BindVertexArray(0)

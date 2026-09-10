@@ -822,7 +822,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			r.RenderScene(w, h, cs.w, cs.h, cfg)
 		}
 		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt)
-		r.RenderEffects(w, h, cfg)
+		r.RenderEffects(w, h, cfg, dt)
 		win.SwapBuffers()
 		lastScr, lastW, lastH, lastScrollLine, lastSel = scr, w, h, scrollLine, *sel
 	}
