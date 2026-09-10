@@ -51,10 +51,11 @@ help:
 	@echo "                        backend can't be cross-compiled from Linux):"
 	@echo "                        builds a Tubeless.app bundle into \$$APP_DIR"
 	@echo "                        (default $(APP_DIR)) and symlinks tubeless/"
-	@echo "                        tubeless-config into /usr/local/bin so they"
-	@echo "                        run from any Terminal shell, not just Finder"
+	@echo "                        tubeless-config into \$$CLI_BIN_DIR (default"
+	@echo "                        $(CLI_BIN_DIR)) so they run from any Terminal"
+	@echo "                        shell, not just Finder"
 	@echo "  make uninstall-darwin - Remove the installed Tubeless.app bundle"
-	@echo "                        and its /usr/local/bin symlinks."
+	@echo "                        and its \$$CLI_BIN_DIR symlinks."
 	@echo "  make package-linux  - Build for the host arch (override with"
 	@echo "                        GOARCH_TARGET=amd64|arm64) and package as"
 	@echo "                        .deb/.rpm/Arch pkg (via nfpm) + .tar.gz into dist/"
@@ -130,11 +131,14 @@ uninstall:
 	@echo "Your config at ~/.config/tubeless/config.toml was left in place."
 
 # CLI_BIN_DIR is where install-darwin symlinks the CLI binaries so they're
-# runnable from any Terminal shell — /usr/local/bin is on macOS's default
-# PATH (via /etc/paths) and user-writable without sudo on modern macOS,
-# unlike dropping something only inside the .app bundle (Contents/MacOS
-# isn't on PATH, and Finder-launched apps can't be run as a CLI command).
-CLI_BIN_DIR ?= /usr/local/bin
+# runnable from any Terminal shell — dropping something only inside the
+# .app bundle isn't enough (Contents/MacOS isn't on PATH, and a
+# Finder-launched app can't be run as a CLI command). Deliberately not
+# /usr/local/bin: on Apple Silicon Macs it's root-owned (the same reason
+# Homebrew uses /opt/homebrew there instead), so writing to it needs sudo.
+# ~/.local/bin needs no sudo, matching the Linux install target's default,
+# but isn't on macOS's PATH by default — see the .zprofile bootstrap below.
+CLI_BIN_DIR ?= $(HOME)/.local/bin
 ICNS = packaging/darwin/tubeless.icns
 
 # install-darwin builds a minimal Tubeless.app bundle. Must be run on an
@@ -147,7 +151,7 @@ ICNS = packaging/darwin/tubeless.icns
 # unidentified developer" (allow via System Settings > Privacy & Security,
 # or `xattr -cr` the quarantine flag away, same as install.sh does).
 install-darwin: tubeless tubeless-config $(ICNS)
-	@mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_BUNDLE)/Contents/Resources
+	@mkdir -p $(APP_BUNDLE)/Contents/MacOS $(APP_BUNDLE)/Contents/Resources $(CLI_BIN_DIR)
 	cp $(BIN_DIR)/$(BINARY_NAME) $(APP_BUNDLE)/Contents/MacOS/
 	cp $(BIN_DIR)/tubeless-config $(APP_BUNDLE)/Contents/MacOS/
 	sed -e 's|__VERSION__|$(VERSION)|' packaging/darwin/Info.plist > $(APP_BUNDLE)/Contents/Info.plist
@@ -155,8 +159,11 @@ install-darwin: tubeless tubeless-config $(ICNS)
 	codesign --force --deep --sign - $(APP_BUNDLE)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME) $(CLI_BIN_DIR)/$(BINARY_NAME)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/tubeless-config $(CLI_BIN_DIR)/tubeless-config
+	@grep -qs '$(CLI_BIN_DIR)' $(HOME)/.zprofile 2>/dev/null || \
+	    printf '\n# Added by tubeless'"'"'s install-darwin\nexport PATH="$(CLI_BIN_DIR):$$PATH"\n' >> $(HOME)/.zprofile
 	@echo "Installed $(APP_BUNDLE)"
 	@echo "Symlinked $(BINARY_NAME) + tubeless-config into $(CLI_BIN_DIR)"
+	@echo "Added $(CLI_BIN_DIR) to PATH in ~/.zprofile if it wasn't already there — open a new terminal (or run: source ~/.zprofile)"
 	@echo "Your config at ~/.config/tubeless/config.toml is untouched."
 
 # $(ICNS) is only (re)built when packaging/icon.svg is newer than it —

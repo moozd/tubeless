@@ -116,10 +116,18 @@ install_darwin() {
 	# opened" instead of actually launching it.
 	xattr -cr "$app_dir/Tubeless.app"
 	local bundle="$app_dir/Tubeless.app/Contents/MacOS"
-	local bin_dir="/usr/local/bin"
+	# ~/.local/bin, not /usr/local/bin: on Apple Silicon Macs /usr/local is
+	# root-owned (the same reason Homebrew uses /opt/homebrew there
+	# instead), so writing to it needs sudo. ~/.local/bin needs none, but
+	# isn't on macOS's PATH by default — bootstrapped into ~/.zprofile below.
+	local bin_dir="$HOME/.local/bin"
 	mkdir -p "$bin_dir"
 	ln -sf "$bundle/tubeless" "$bin_dir/tubeless"
 	ln -sf "$bundle/tubeless-config" "$bin_dir/tubeless-config"
+	if ! grep -qs "$bin_dir" "$HOME/.zprofile" 2>/dev/null; then
+		printf '\n# Added by tubeless install.sh\nexport PATH="%s:$PATH"\n' "$bin_dir" >>"$HOME/.zprofile"
+		echo "Added $bin_dir to PATH in ~/.zprofile — open a new terminal (or run: source ~/.zprofile)"
+	fi
 	echo "Installed $app_dir/Tubeless.app, symlinked into $bin_dir"
 }
 
