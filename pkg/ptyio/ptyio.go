@@ -34,6 +34,15 @@ func Start(name string, args []string, cols, rows int) (*Session, error) {
 	// emulator itself actually implements. xterm-256color is the
 	// universally-supported baseline every terminfo database has.
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	// Every terminal emulator starts a fresh shell in $HOME by default,
+	// not wherever the emulator's own process happened to be cwd'd —
+	// which matters here because a macOS GUI app launched from
+	// Finder/Dock inherits "/" as its process cwd (Finder never cd's
+	// anywhere), so without this the shell opened right at the
+	// filesystem root instead of the user's home directory.
+	if home, err := os.UserHomeDir(); err == nil {
+		cmd.Dir = home
+	}
 	master, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return nil, fmt.Errorf("start pty for %s: %w", name, err)
