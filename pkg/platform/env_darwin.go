@@ -96,7 +96,17 @@ func symlinkInto(binDir, target string) {
 	if existing, err := os.Readlink(link); err == nil && existing == target {
 		return
 	}
-	os.Remove(link)
+	// link can be a stale directory, not just a stale symlink or file —
+	// a past bad install (e.g. unzipping a release straight over
+	// binDir/tubeless instead of into it) can leave a whole directory
+	// tree sitting where the symlink belongs. os.Remove only removes an
+	// empty entry, so it silently no-ops on a non-empty directory, and
+	// the Symlink call below then fails with "file exists" forever —
+	// RemoveAll is the only thing that actually clears any of these.
+	if err := os.RemoveAll(link); err != nil {
+		warnPath("could not remove stale %s (%v) — it may be a leftover directory from a bad install; check its ownership (ls -la %s) or remove it and re-run `tubeless`", link, err, link)
+		return
+	}
 	if err := os.Symlink(target, link); err != nil {
 		warnPath("could not update %s (%v) — it may still point at an old install; check its ownership (ls -la %s) or remove it and re-run `tubeless`", link, err, link)
 	}
