@@ -7,9 +7,12 @@ A GPU-rendered terminal emulator, written in Go on top of GLFW/OpenGL.
 - GPU-rendered text with real italic/bold glyphs, curly underlines, and
   a rounded-rect glow cursor that glides smoothly between cells
 - Native Wayland and X11 backends on Linux; native Cocoa on macOS
-- True-color rendering with 10 built-in themes (rosepine, rosepine-moon,
+- True-color rendering with 13 built-in themes (rosepine, rosepine-moon,
   gruvbox-dark-hard, nord, dracula, catppuccin-mocha, tokyo-night,
-  one-dark, green, amber) plus a colorful in-terminal config UI
+  one-dark, green, amber, green-p39, white-p4, cga) plus a custom theme
+  editor, and a set of period-accurate 80s monitor effect presets (IBM
+  5151/5153, Zenith ZVM-1220, Apple Monitor III, Commodore 1084S,
+  Princeton HX-12) — all in a tabbed, in-terminal config UI
   (`tubeless config`)
 - Scrollback, fast scroll/insert-line/delete-line, sixel image output
 - Mouse selection and clipboard copy/paste (Cmd+C/V on macOS,

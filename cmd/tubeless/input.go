@@ -77,7 +77,7 @@ var tildeKey = map[glfw.Key]int{
 	glfw.KeyF12:      24,
 }
 
-func wireInput(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], sel *render.Selection) {
+func wireInput(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], sel *render.Selection, fontZoom chan<- int) {
 	win.SetCharModsCallback(func(_ *glfw.Window, r rune, mods glfw.ModifierKey) {
 		// Ctrl is handled entirely by handleSpecialKey below, which owns
 		// every Ctrl combination this terminal forwards (Ctrl+A..Z, Ctrl+
@@ -110,6 +110,13 @@ func wireInput(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 		}
 		if isCopyShortcut(key, mods) {
 			copySelectionToClipboard(win, shared, *sel)
+			return
+		}
+		if d, ok := fontZoomDelta(key, mods); ok {
+			select {
+			case fontZoom <- d:
+			default:
+			}
 			return
 		}
 		handleSpecialKey(sess, key, mods, shared.Load().ApplicationCursorKeys)
@@ -186,6 +193,29 @@ func isPasteShortcut(key glfw.Key, mods glfw.ModifierKey) bool {
 		return mods&glfw.ModSuper != 0
 	}
 	return mods&glfw.ModControl != 0 && mods&glfw.ModShift != 0
+}
+
+// fontZoomDelta reports whether key+mods is the live font-zoom shortcut —
+// Ctrl+=/Ctrl+- on Linux/Windows, Cmd+=/Cmd+- on macOS, the same
+// modifier convention isCopyShortcut/isPasteShortcut use to pick Cmd vs
+// Ctrl per platform. The unshifted '=' key doubles as '+' on a US
+// layout, so Ctrl+= alone (no Shift needed) is the zoom-in binding, same
+// as every browser's Ctrl/Cmd+Plus.
+func fontZoomDelta(key glfw.Key, mods glfw.ModifierKey) (delta int, ok bool) {
+	active := mods&glfw.ModControl != 0
+	if runtime.GOOS == "darwin" {
+		active = mods&glfw.ModSuper != 0
+	}
+	if !active {
+		return 0, false
+	}
+	switch key {
+	case glfw.KeyEqual, glfw.KeyKPAdd:
+		return 1, true
+	case glfw.KeyMinus, glfw.KeyKPSubtract:
+		return -1, true
+	}
+	return 0, false
 }
 
 // writeMeta ESC-prefixes seq when Alt is held — the same metaSendsEscape
