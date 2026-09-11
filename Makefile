@@ -141,6 +141,13 @@ uninstall:
 CLI_BIN_DIR ?= $(HOME)/.local/bin
 ICNS = packaging/darwin/tubeless.icns
 
+# ASSETS_CAR is macOS 26 "Tahoe"'s native adaptive icon (see
+# make-assets-car.sh's own doc comment for why tubeless.icns alone
+# renders wrong there) — optional until packaging/darwin/tubeless.icon
+# is authored in Icon Composer, at which point install-darwin/
+# package-darwin below pick it up automatically alongside the .icns.
+ASSETS_CAR = packaging/darwin/assets-car-build/Assets.car
+
 # install-darwin builds a minimal Tubeless.app bundle. Must be run on an
 # actual Mac: GLFW's macOS backend needs the real Cocoa/OpenGL frameworks,
 # which can't be cross-compiled from this Makefile's usual Linux host.
@@ -156,6 +163,11 @@ install-darwin: tubeless tubeless-config $(ICNS)
 	cp $(BIN_DIR)/tubeless-config $(APP_BUNDLE)/Contents/MacOS/
 	sed -e 's|__VERSION__|$(VERSION)|' packaging/darwin/Info.plist > $(APP_BUNDLE)/Contents/Info.plist
 	cp $(ICNS) $(APP_BUNDLE)/Contents/Resources/
+	packaging/darwin/make-assets-car.sh
+	@if [ -f $(ASSETS_CAR) ]; then \
+		cp $(ASSETS_CAR) $(APP_BUNDLE)/Contents/Resources/; \
+		plutil -replace CFBundleIconName -string tubeless $(APP_BUNDLE)/Contents/Info.plist; \
+	fi
 	codesign --force --deep --sign - $(APP_BUNDLE)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME) $(CLI_BIN_DIR)/$(BINARY_NAME)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/tubeless-config $(CLI_BIN_DIR)/tubeless-config
@@ -220,6 +232,11 @@ package-darwin: $(ICNS)
 	cp $(BIN_DIR)/tubeless-config $(DIST_DIR)/Tubeless.app/Contents/MacOS/
 	sed -e 's|__VERSION__|$(VERSION)|' packaging/darwin/Info.plist > $(DIST_DIR)/Tubeless.app/Contents/Info.plist
 	cp $(ICNS) $(DIST_DIR)/Tubeless.app/Contents/Resources/
+	packaging/darwin/make-assets-car.sh
+	@if [ -f $(ASSETS_CAR) ]; then \
+		cp $(ASSETS_CAR) $(DIST_DIR)/Tubeless.app/Contents/Resources/; \
+		plutil -replace CFBundleIconName -string tubeless $(DIST_DIR)/Tubeless.app/Contents/Info.plist; \
+	fi
 	codesign --force --deep --sign - $(DIST_DIR)/Tubeless.app
 	cd $(DIST_DIR) && zip -qr tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip Tubeless.app && rm -rf Tubeless.app
 	@echo "Packaged $(DIST_DIR)/tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip"
