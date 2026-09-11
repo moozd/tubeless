@@ -49,24 +49,10 @@ void main() {
 		float cycles = 1.5; // wave periods per cell width
 		float amp = thickness * 1.3;
 		float twoPi = 6.2831853;
-		// A pure sine reads as mechanically perfect — every hump exactly
-		// the same height, drafted rather than drawn. A hand redrawing
-		// the same wave never repeats a stroke identically, but each
-		// individual stroke is still a single smooth curve — so instead
-		// of adding higher-frequency ripple within a hump (jagged, not
-		// hand-drawn), this cell's own hump gets a small, stable per-cell
-		// jitter to its height and lean, hashed from its grid position so
-		// it's the same every frame (no flicker) and different from its
-		// neighbors (no two humps alike). The lean is weighted by
-		// x*(1-x), which is exactly 0 at both edges, so it only bends the
-		// middle of the hump — x=0 and x=1 stay pinned to the baseline
-		// exactly like the plain sine did, and adjacent cells' curls
-		// still meet without a seam.
-		float seed = fract(sin(dot(vCellPos, vec2(12.9898, 78.233))) * 43758.5453);
-		float ampJitter = 0.8 + 0.35 * seed;
-		float lean = (seed - 0.5) * 1.2;
-		float bend = vLocal.x * (1.0 - vLocal.x);
-		float wave = baseline + amp * ampJitter * sin(vLocal.x * cycles * twoPi + lean * bend);
+		// Plain sine, same amplitude and phase in every cell — x=0 and
+		// x=1 both sit on the baseline, so adjacent cells' curls meet
+		// without a seam and the wave reads as one continuous curve.
+		float wave = baseline + amp * sin(vLocal.x * cycles * twoPi);
 		float d = abs(vLocal.y - wave);
 		alpha = 1.0 - smoothstep(halfBand * 0.7, halfBand, d);
 	} else if (vStyle == STYLE_DOTTED || vStyle == STYLE_DASHED) {
