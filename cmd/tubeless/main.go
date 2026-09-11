@@ -103,7 +103,7 @@ func main() {
 	}()
 
 	fs := flag.NewFlagSet("tubeless", flag.ExitOnError)
-	themeName := fs.String("theme", "", fmt.Sprintf("starting theme preset: %s (config file overrides)", strings.Join(config.PresetNames(), " | ")))
+	themeName := fs.String("theme", "", fmt.Sprintf("starting theme: %s (config file overrides)", strings.Join(config.ThemeNames(), " | ")))
 	shell := fs.String("shell", "", "program to run instead of $SHELL")
 	fontFamily := fs.String("font", "", "installed font family name (default: bundled FiraCode Nerd)")
 	fontSize := fs.Int("font-size", 0, "logical font size in pixels (default: config font.size)")
@@ -113,6 +113,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	// cfgRef mirrors runLoop's own local cfg for the one consumer outside
+	// its single-threaded loop that still needs to read it live: the
+	// framebuffer-resize callback (see wireResize/pushResizeSize), which
+	// GLFW can fire mid-PollEvents on cfg.CRT.AspectRatio's account —
+	// cols/rows must be computed against the letterboxed content box,
+	// not the raw window, whenever one is set. Safe to read from that
+	// callback without further synchronization: GLFW callbacks fire on
+	// the same OS-locked thread runLoop itself runs on (see init's
+	// LockOSThread), so there's no concurrent access, just two call
+	// sites for the same thread-local value.
+	var cfgRef atomic.Pointer[config.Config]
+	storeCfgRef(&cfgRef, cfg)
 	resolve := func() config.Config {
 		c, _, err := loadConfig(fs, *themeName, *fontFamily, *fontSize)
 		if err != nil {
@@ -211,10 +223,11 @@ func main() {
 		dpiX: dpiX,
 		dpiY: dpiY,
 	}
-	wireResize(win, resizeCh, cs)
+	wireResize(win, resizeCh, cs, &cfgRef)
 
 	sel := &render.Selection{}
-	wireInput(win, sess, &shared, sel)
+	fontZoom := make(chan int, 16)
+	wireInput(win, sess, &shared, sel, fontZoom)
 	scroll := &scrollState{}
 	wireMouse(win, sess, &shared, scroll, cs, sel)
 
@@ -226,7 +239,7 @@ func main() {
 		focused = isFocused
 	})
 
-	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused)
+	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef)
 }
 
 // runUpgrade runs `tubeless upgrade`: checks GitHub for a release newer
@@ -295,7 +308,7 @@ func locateConfigBinary() (string, error) {
 func loadConfig(fs *flag.FlagSet, flagTheme, flagFamily string, flagSize int) (config.Config, string, error) {
 	path, err := config.DefaultPath()
 	if err != nil {
-		return config.Preset("rosepine"), "", err
+		return config.Default(), "", err
 	}
 	cfg, err := config.Load(path, flagTheme)
 	if err != nil {
@@ -310,6 +323,14 @@ func loadConfig(fs *flag.FlagSet, flagTheme, flagFamily string, flagSize int) (c
 		cfg.Font.Size = flagSize
 	}
 	return cfg, path, nil
+}
+
+// storeCfgRef publishes a copy of cfg into ref — see cfgRef's own doc
+// comment in main() for why the resize callback needs this instead of
+// reading runLoop's local cfg directly.
+func storeCfgRef(ref *atomic.Pointer[config.Config], cfg config.Config) {
+	c := cfg
+	ref.Store(&c)
 }
 
 // cellSize is the physical-pixel size of one cell — fixed regardless of
@@ -536,9 +557,9 @@ func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
 // read fresh on every callback (see cellSize) so a content-scale change
 // between resizes is picked up automatically, not just at wireResize's
 // call time.
-func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize) {
+func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config]) {
 	win.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
-		pushResizeSize(resizeCh, cs, width, height)
+		pushResizeSize(resizeCh, cs, width, height, cfgRef.Load().CRT.AspectRatio)
 	})
 }
 
@@ -546,16 +567,25 @@ func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize) {
 // size against cs and sends it — used both by wireResize's callback and
 // by the content-scale callback, which needs to reflow immediately when
 // cs itself changes rather than waiting for an unrelated resize event.
-func pushResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize) {
+func pushResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config]) {
 	w, h := win.FramebufferPixelSize()
-	pushResizeSize(resizeCh, cs, w, h)
+	pushResizeSize(resizeCh, cs, w, h, cfgRef.Load().CRT.AspectRatio)
 }
 
-// The send is non-blocking and drops a stale pending resize in favor of
-// the newest one, so a burst of resize events during a drag never backs
-// up.
-func pushResizeSize(resizeCh chan resizeReq, cs *cellSize, w, h int) {
-	req := resizeReq{cols: max(1, int(float32(w)/cs.w)), rows: max(1, int(float32(h)/cs.h))}
+// pushResizeSize computes cols/rows against the letterboxed content box
+// (render.LetterboxBox), not the raw window — when ar is set, that box
+// is smaller than the window (bars around it), so the grid must reflow
+// to exactly that many fewer columns/rows at the *same* fixed cell
+// pixel size, never a scaled-down cell size squeezed to fit. That's what
+// keeps the letterbox from stretching: runLoop renders the scene at
+// exactly this box's pixel size (matching what this produces) and
+// InsetPass.Draw composites it into that same box at 1:1, no resampling.
+// The send itself is non-blocking and drops a stale pending resize in
+// favor of the newest one, so a burst of resize events during a drag
+// never backs up.
+func pushResizeSize(resizeCh chan resizeReq, cs *cellSize, w, h int, ar config.AspectRatio) {
+	_, _, bw, bh := render.LetterboxBox(ar, w, h)
+	req := resizeReq{cols: max(1, int(float32(bw)/cs.w)), rows: max(1, int(float32(bh)/cs.h))}
 	select {
 	case resizeCh <- req:
 	default:
@@ -640,6 +670,29 @@ func newRendererFor(win *render.Window, cfg config.Config, cs *cellSize) (*rende
 	return r, nil
 }
 
+// drainFontZoom collapses every pending Ctrl/Cmd+=/- press (see
+// fontZoomDelta) queued since the last frame into a single net step —
+// several rapid presses should feel like one bigger jump, not a
+// renderer rebuild per keystroke.
+func drainFontZoom(ch <-chan int) int {
+	sum := 0
+	for {
+		select {
+		case d := <-ch:
+			sum += d
+		default:
+			return sum
+		}
+	}
+}
+
+// clampFontSize matches the config TUI's own font.size bounds (see
+// cmd/tubeless-config) so the live zoom shortcut can't drift outside
+// what the config editor itself allows.
+func clampFontSize(v int) int {
+	return min(96, max(10, v))
+}
+
 // cfgWatch polls the config file's mtime so live edits (made by the
 // in-terminal config TUI, or by hand) are picked up without tight-looping
 // os.Stat.
@@ -702,7 +755,7 @@ const (
 	contentShiftMaxCols = 1 << 20
 )
 
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool) {
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config]) {
 	r := renderer
 	var lastScr *screen.Screen
 	var lastW, lastH int
@@ -786,16 +839,34 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 				log.Printf("rebuild renderer for display scale change: %v", err)
 			} else {
 				r = nr
-				pushResize(win, resizeCh, cs)
+				pushResize(win, resizeCh, cs, cfgRef)
 			}
+		}
+
+		if d := drainFontZoom(fontZoom); d != 0 {
+			cfg.Font.Size = clampFontSize(cfg.Font.Size + 2*d)
+			storeCfgRef(cfgRef, cfg)
+			if nr, err := newRendererFor(win, cfg, cs); err != nil {
+				log.Printf("rebuild renderer for font zoom: %v", err)
+			} else {
+				r = nr
+				pushResize(win, resizeCh, cs, cfgRef)
+			}
+			reload = true
 		}
 
 		now := time.Now()
 		if watch.changed(now) {
 			next := resolve()
 			fontChanged := next.Font != cfg.Font || next.Atlas != cfg.Atlas
+			// A pure aspect-ratio edit (no font/atlas change) still needs
+			// cols/rows recomputed against the new letterboxed content box
+			// (see pushResizeSize) — just not a full renderer/atlas rebuild.
+			arChanged := next.CRT.AspectRatio != cfg.CRT.AspectRatio
 			cfg = next
-			if fontChanged {
+			storeCfgRef(cfgRef, cfg)
+			switch {
+			case fontChanged:
 				nr, err := newRendererFor(win, cfg, cs)
 				if err != nil {
 					log.Printf("rebuild renderer for new config: %v", err)
@@ -805,8 +876,10 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 					// size) just did — cols/rows must reflow against it, or
 					// the grid stays sized for the old font until the user
 					// happens to resize the window themselves.
-					pushResize(win, resizeCh, cs)
+					pushResize(win, resizeCh, cs, cfgRef)
 				}
+			case arChanged:
+				pushResize(win, resizeCh, cs, cfgRef)
 			}
 			reload = true
 		}
@@ -882,8 +955,15 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		reload = false
 
 		if dirty {
+			// Rendered at the letterboxed content box's own pixel size
+			// (matching exactly what pushResizeSize computed cols/rows
+			// against — see its doc comment), not the raw window size w,h
+			// — RenderEffects below composites this scene into that same
+			// box at 1:1, so nothing here ever gets resampled/stretched
+			// to a different aspect.
+			_, _, bw, bh := render.LetterboxBox(cfg.CRT.AspectRatio, w, h)
 			r.PrepareFrame(scr, cfg, cs.w, cs.h, scrollLine, *sel)
-			r.RenderScene(w, h, cs.w, cs.h, cfg)
+			r.RenderScene(bw, bh, cs.w, cs.h, cfg)
 		}
 		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt)
 		r.RenderEffects(w, h, cfg, dt)

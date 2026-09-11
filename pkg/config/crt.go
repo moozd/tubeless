@@ -14,6 +14,22 @@ type CRT struct {
 	Noise         Noise         `toml:"noise"`
 	Flicker       Flicker       `toml:"flicker"`
 	PhosphorDecay PhosphorDecay `toml:"phosphor_decay"`
+	AspectRatio   AspectRatio   `toml:"aspect_ratio"`
+}
+
+// AspectRatio locks the rendered picture to a fixed width:height ratio —
+// a real CRT has a fixed tube shape, unlike a freely resizable terminal
+// window. When set (both fields >0), the render pass (see
+// pkg/render/insetpass.go) letterboxes or pillarboxes: it draws the
+// whole scene, uniformly scaled to fit, into a centered box of that
+// ratio within the window, with black bars filling the rest — it never
+// crops or distorts the terminal grid, which is still laid out to fill
+// the actual window regardless of this setting. Width/Height both 0
+// (every non-monitor preset, "modern" included) fills the window
+// exactly, as before.
+type AspectRatio struct {
+	Width  float32 `toml:"width"`
+	Height float32 `toml:"height"`
 }
 
 // Curvature bends the rendered content toward a barrel-distorted tube
