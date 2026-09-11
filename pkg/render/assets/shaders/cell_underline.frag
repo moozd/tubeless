@@ -75,8 +75,20 @@ void main() {
 		// pinches the peaks into points instead of keeping them round —
 		// reads as jagged, not smooth, so it's gone.
 		float wave = baseline + amp * sin(vLocal.x * cycles * twoPi);
-		float d = abs(vLocal.y - wave);
-		alpha = 1.0 - smoothstep(halfBand * 0.7, halfBand, d);
+		// Signed distance from the band's edge (negative = inside), anti-
+		// aliased with fwidth — the screen-space rate of change of that
+		// distance — rather than a fixed fraction of halfBand. A fixed
+		// fraction only smooths correctly at the specific size it was
+		// tuned for: shrink the line's own thickness (as undercurl's is,
+		// deliberately thin) and that same fraction shrinks below a
+		// pixel, so it stops actually blending anything and reads as
+		// jagged/pixelated instead of smooth. fwidth grows the AA band
+		// wherever the curve moves fast per pixel — its steep
+		// zero-crossings especially — so it stays smooth there too,
+		// without needing to be re-tuned by hand for this thickness.
+		float d = abs(vLocal.y - wave) - halfBand;
+		float aa = max(fwidth(d), 0.0005);
+		alpha = 1.0 - smoothstep(-aa, aa, d);
 	} else if (vStyle == STYLE_DOTTED || vStyle == STYLE_DASHED) {
 		bool dotted = vStyle == STYLE_DOTTED;
 		float periodPx = dotted ? cwPx * 0.22 : cwPx * 0.5;
