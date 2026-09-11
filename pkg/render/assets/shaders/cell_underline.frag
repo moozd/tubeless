@@ -23,9 +23,17 @@ void main() {
 	float chPx = uCellSize.y;
 	float cwPx = uCellSize.x;
 	// Underline and undercurl sit a touch closer to the glyph than reads
-	// well — nudge just those two styles further down toward the cell's
-	// bottom edge. Double/dotted/dashed keep the original baseline.
-	float baselineOffset = (vStyle == STYLE_SINGLE || vStyle == STYLE_CURLY) ? 0.03 : 0.0;
+	// well — nudge both further down toward the cell's bottom edge.
+	// Undercurl needs more clearance than a plain straight line: its own
+	// wave amplitude eats into that gap on every upswing, so it gets a
+	// bigger push than plain underline to keep clear of descenders.
+	// Double/dotted/dashed keep the original baseline.
+	float baselineOffset = 0.0;
+	if (vStyle == STYLE_SINGLE) {
+		baselineOffset = 0.03;
+	} else if (vStyle == STYLE_CURLY) {
+		baselineOffset = 0.07;
+	}
 	float baseline = 0.86 + baselineOffset;
 	float thicknessPx = max(1.2, chPx * 0.09);
 	// Plain underline reads too bold at the shared thickness — give it its
@@ -34,12 +42,15 @@ void main() {
 	if (vStyle == STYLE_SINGLE) {
 		thicknessPx = max(1.0, chPx * 0.06);
 	}
-	// Undercurl reads too bold at the shared thickness — same reasoning as
-	// STYLE_SINGLE's own narrower band above, just a hair heavier since a
-	// wavy line needs slightly more weight than a straight one to stay
-	// visible at the same apparent thinness.
+	// Undercurl reads thicker than a straight line of the same nominal
+	// thickness even before any style choice: d below measures vertical
+	// distance from the wave, not perpendicular distance, so the band's
+	// apparent width stretches wherever the sine is sloped rather than
+	// flat at a peak — worst right around its zero-crossings, where the
+	// slope is steepest. Needs a noticeably thinner base thickness than
+	// even plain underline to end up looking thin once drawn.
 	if (vStyle == STYLE_CURLY) {
-		thicknessPx = max(1.0, chPx * 0.07);
+		thicknessPx = max(1.0, chPx * 0.045);
 	}
 	float thickness = thicknessPx / chPx;
 	float halfBand = thickness * 0.6;
@@ -56,21 +67,14 @@ void main() {
 		float cycles = 1.5; // wave periods per cell width
 		float amp = thickness * 1.3;
 		float twoPi = 6.2831853;
-		// A pure sine reads as mechanically perfect — every hump exactly
-		// the same height and shape, drafted rather than drawn. Mixing in
-		// a second harmonic at exactly twice the frequency warps the
-		// curve unevenly along its length — each hump's rise and fall go
-		// uneven relative to each other — while staying a pure, fixed
-		// function of vLocal.x (no randomness, so it's identical every
-		// frame, no flicker). No phase offset on either term: both are
-		// plain sines of a whole number of periods per cell width (1.5
-		// and 3), so both are exactly zero at x=0 and x=1 same as the
-		// single sine was — adjacent cells' curls still meet without a
-		// seam.
-		float wave = baseline + amp * (
-			0.78 * sin(vLocal.x * cycles * twoPi) +
-			0.22 * sin(vLocal.x * cycles * 2.0 * twoPi)
-		);
+		// Plain sine, same amplitude and phase in every cell — x=0 and
+		// x=1 both sit on the baseline, so adjacent cells' curls meet
+		// without a seam and the wave reads as one smooth, continuous
+		// curve rather than a string of separately-drawn humps. A second
+		// harmonic was tried here to fake a hand-drawn wobble, but it
+		// pinches the peaks into points instead of keeping them round —
+		// reads as jagged, not smooth, so it's gone.
+		float wave = baseline + amp * sin(vLocal.x * cycles * twoPi);
 		float d = abs(vLocal.y - wave);
 		alpha = 1.0 - smoothstep(halfBand * 0.7, halfBand, d);
 	} else if (vStyle == STYLE_DOTTED || vStyle == STYLE_DASHED) {
