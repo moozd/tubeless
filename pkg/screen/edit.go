@@ -15,7 +15,6 @@ func (s *Screen) InsertLines(n int) {
 	for y := top; y < top+n; y++ {
 		s.Grid[y] = s.blankRow()
 	}
-	s.pendingScrolls = append(s.pendingScrolls, ScrollShift{Top: top, Bottom: bottom, Delta: -n})
 }
 
 // DeleteLines removes n lines at the cursor row, shifting the rows below
@@ -31,7 +30,6 @@ func (s *Screen) DeleteLines(n int) {
 	for y := bottom - n + 1; y <= bottom; y++ {
 		s.Grid[y] = s.blankRow()
 	}
-	s.pendingScrolls = append(s.pendingScrolls, ScrollShift{Top: top, Bottom: bottom, Delta: n})
 }
 
 // InsertChars inserts n blank cells at the cursor column, shifting the

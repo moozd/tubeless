@@ -464,17 +464,15 @@ func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], 
 			// one of those doesn't just risk a frame landing mid-redraw, it
 			// publishes each intermediate line as its own complete Screen,
 			// so a scroll that only reads as one once it's finished instead
-			// renders as a rapid sequence of one-line jumps, and it means
-			// work.PendingScrolls() below would only ever hold one small
-			// piece of what's really a single continuous scroll (see
-			// pkg/render's ApplyScrollEvents, which nets same-region shifts
-			// but can only net what it's actually given in one batch).
+			// renders as a rapid sequence of one-line jumps the content-shift
+			// detector (see pkg/screen's DetectContentShift, consumed in
+			// runLoop) would have to diff frame by frame instead of once.
 			// Draining whatever's already queued, then waiting a short
 			// quiet window for more before publishing, coalesces a burst
 			// back into the single complete frame it actually is.
 			drainPending(readCh, parser)
 			shared.Store(work.Clone())
-			work.ClearPendingScrolls()
+			work.ClearPendingClipboard()
 		case req := <-resizeCh:
 			if req.cols == work.Cols && req.rows == work.Rows {
 				continue
@@ -484,7 +482,7 @@ func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], 
 				log.Printf("pty resize: %v", err)
 			}
 			shared.Store(work.Clone())
-			work.ClearPendingScrolls()
+			work.ClearPendingClipboard()
 		}
 	}
 }
@@ -686,6 +684,24 @@ func (w *cfgWatch) changed(now time.Time) bool {
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
+//
+// contentShiftMaxRows/contentShiftMaxCols bound how many rows/columns of
+// shift screen.DetectContentShift/DetectHorizontalContentShift consider
+// per axis. Set high enough to never actually constrain a real shift —
+// a full PageUp/PageDown jumps by a whole page (the terminal's entire
+// height), which a small cap (e.g. 25) would miss on any reasonably
+// tall window, falling back to an unanimated snap. detectShift clamps
+// this to the axis's own actual length internally, so passing a large
+// sentinel here costs nothing on a small/typical terminal and simply
+// means "search the whole axis" on a large one — even at that clamped
+// worst case (a very tall/wide terminal), the search stays O(n²) in
+// rows or columns alone, still microseconds, nowhere near a frame
+// budget (see detectShift's own doc for the per-candidate cost shape).
+const (
+	contentShiftMaxRows = 1 << 20
+	contentShiftMaxCols = 1 << 20
+)
+
 func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool) {
 	r := renderer
 	var lastScr *screen.Screen
@@ -815,19 +831,54 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		}
 		r.UpdateScroll(scroll.target, dt)
 		scrollLine := r.CurrentScrollLine()
+		if scr != lastScr {
+			// A yank in tmux (with set-clipboard on) or an OSC52-aware
+			// app relaying a copy out of a nested session — see
+			// Screen.PendingClipboard — lands here as plain text to
+			// forward to the real system clipboard. Gated on scr !=
+			// lastScr (not size, unlike the shift detectors below) since
+			// a clipboard set has nothing to do with grid geometry and
+			// should never be missed just because a resize also landed
+			// this frame.
+			if sets := scr.PendingClipboard(); len(sets) > 0 {
+				win.SetClipboardString(sets[len(sets)-1])
+			}
+		}
 		if scr != lastScr && w == lastW && h == lastH {
-			// A genuinely new screen at the same size — apply whatever
-			// exact scroll shifts pkg/screen recorded while building it
-			// (see Screen.PendingScrolls) so a real terminal scroll (an
-			// editor paging, our own scrollback view moving) glides
-			// instead of cutting straight to the new state. Empty for any
-			// screen that was never a scroll (plain typing, a full
-			// repaint) — this is O(1) in that overwhelmingly common case.
-			r.ApplyScrollEvents(scr.PendingScrolls(), cs.h)
+			// A genuinely new screen at the same size — diff it against
+			// the previous one (screen.DetectContentShift /
+			// DetectHorizontalContentShift) so any uniform content shift,
+			// however the app actually redrew it (a real scroll-region
+			// op, or a TUI framework repainting by repositioning the
+			// cursor and overwriting cells directly), glides instead of
+			// cutting straight to the new state. This is the sole source
+			// of the content-scroll glide — pkg/screen no longer records
+			// scroll ops itself. The diff is a bounded rune-hash scan
+			// (not the old brute-force heuristic), cheap enough to run
+			// unconditionally here. Both axes are checked independently,
+			// so a region shifting vertically and a different region
+			// shifting horizontally in the same frame both animate.
+			// Each axis is gated on its own config flag, live-reloadable
+			// from config.toml/the config TUI — an escape hatch since
+			// this is a heuristic diff, not a guaranteed-exact signal.
+			// The column axis defaults off: it needs far more real
+			// content width than the row axis to tell a genuine
+			// horizontal scroll apart from coincidence.
+			if cfg.Scrolling.SmoothContentShift {
+				if shift, ok := screen.DetectContentShift(lastScr, scr, contentShiftMaxRows); ok {
+					r.ApplyDetectedRowShift(shift, cs.h)
+				}
+			}
+			if cfg.Scrolling.SmoothHorizontalContentShift {
+				if shift, ok := screen.DetectHorizontalContentShift(lastScr, scr, contentShiftMaxCols); ok {
+					r.ApplyDetectedColShift(shift, cs.w)
+				}
+			}
 		}
 		r.UpdateContentScroll(dt)
+		r.UpdateContentScrollCols(dt)
 
-		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload || r.ContentScrollActive()
+		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload || r.ContentScrollActive() || r.ContentScrollColsActive()
 		reload = false
 
 		if dirty {
