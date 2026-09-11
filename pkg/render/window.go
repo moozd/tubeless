@@ -12,9 +12,34 @@ type Window struct {
 	*glfw.Window
 }
 
+// initGLFW initializes GLFW, folding one of its own sharp edges into an
+// ordinary Go error: go-gl/glfw's Init() always logs-and-swallows a
+// PlatformError (see that package's acceptError, which only treats
+// APIUnavailable/PlatformUnavailable as real failures) rather than
+// returning it, even when the platform error means the underlying
+// connection attempt — to Wayland or X11 — genuinely failed and GLFW
+// never actually initialized. The only visible symptom then is the next,
+// completely unrelated GLFW call (WindowHint, GetPlatform, ...) panicking
+// with "NotInitialized", which is what every caller here would otherwise
+// have to guard against individually. Recovering around one such
+// harmless post-Init call turns that panic into a clear, actionable
+// error instead.
+func initGLFW() (err error) {
+	if err = glfw.Init(); err != nil {
+		return fmt.Errorf("glfw init: %w", err)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("glfw init: platform connection failed (%v) — is a display session (Wayland or X11) reachable? On Linux, try the X11 build: make build-x11", r)
+		}
+	}()
+	glfw.GetPlatform()
+	return nil
+}
+
 func NewWindow(title string, width, height int) (*Window, error) {
-	if err := glfw.Init(); err != nil {
-		return nil, fmt.Errorf("glfw init: %w", err)
+	if err := initGLFW(); err != nil {
+		return nil, err
 	}
 	glfw.WindowHint(glfw.ContextVersionMajor, 3)
 	glfw.WindowHint(glfw.ContextVersionMinor, 3)
@@ -85,8 +110,8 @@ func MaxTextureSize() int {
 // Destroy should call glfw.Terminate) so the real window can be created
 // right after.
 func ProbeMaxTextureSize() (int, error) {
-	if err := glfw.Init(); err != nil {
-		return 0, fmt.Errorf("glfw init: %w", err)
+	if err := initGLFW(); err != nil {
+		return 0, err
 	}
 	glfw.WindowHint(glfw.ContextVersionMajor, 3)
 	glfw.WindowHint(glfw.ContextVersionMinor, 3)
@@ -147,8 +172,8 @@ func (w *Window) CurrentMonitorContentScale() (float32, float32) {
 // runLoop's per-frame content-scale check for how a later, genuine
 // change — moving to a different monitor — is handled).
 func PrimaryMonitorContentScale() (float32, float32, error) {
-	if err := glfw.Init(); err != nil {
-		return 1, 1, fmt.Errorf("glfw init: %w", err)
+	if err := initGLFW(); err != nil {
+		return 1, 1, err
 	}
 	m := glfw.GetPrimaryMonitor()
 	if m == nil {

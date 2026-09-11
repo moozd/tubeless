@@ -566,6 +566,36 @@ func (u *ui) buildList() {
 		func(c *config.Config) float64 { return float64(c.Contrast.MinDelta) },
 		func(c *config.Config, v float64) { c.Contrast.MinDelta = float32(v) }))
 
+	section("scrolling")
+	add(&setting{
+		key: "scrolling.smooth_content_shift", label: "smooth content shift",
+		help: "glide detected scroll shifts instead of snapping; a heuristic diff, disable if it wobbles on some app's output",
+		get: func(c *config.Config) string {
+			if c.Scrolling.SmoothContentShift {
+				return "on"
+			}
+			return "off"
+		},
+		applyStep: func(c *config.Config, d int) bool {
+			c.Scrolling.SmoothContentShift = d > 0
+			return false
+		},
+	})
+	add(&setting{
+		key: "scrolling.smooth_horizontal_content_shift", label: "smooth horizontal shift",
+		help: "same, but for left/right shifts; off by default, needs wide real content to stay reliable",
+		get: func(c *config.Config) string {
+			if c.Scrolling.SmoothHorizontalContentShift {
+				return "on"
+			}
+			return "off"
+		},
+		applyStep: func(c *config.Config, d int) bool {
+			c.Scrolling.SmoothHorizontalContentShift = d > 0
+			return false
+		},
+	})
+
 	// Every CRT effect below is off by default (0) and independently
 	// configurable — see pkg/config/crt.go's doc comment for why these are
 	// plain floats rather than a separate Enabled flag.
