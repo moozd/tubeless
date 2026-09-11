@@ -1,6 +1,9 @@
 package screen
 
 import (
+	"bytes"
+	"encoding/base64"
+
 	"github.com/moozd/tubeless/pkg/sixel"
 	"github.com/moozd/tubeless/pkg/vtparse"
 )
@@ -102,7 +105,38 @@ func (h *Handler) reset() {
 	h.Screen.Reset()
 }
 
-func (h *Handler) OSCDispatch(data []byte) {}
+func (h *Handler) OSCDispatch(data []byte) {
+	h.dispatchOSC52(data)
+}
+
+// dispatchOSC52 handles "52;<selector>;<base64>" — an app asking the
+// terminal to set the system clipboard to some text, the portable
+// escape-sequence alternative to shelling out to xclip/wl-copy. This is
+// how tmux's copy-mode reaches past its own internal paste buffer out to
+// the real system clipboard (`set-clipboard on`), and how vim/nvim's
+// OSC52 clipboard providers work over SSH or inside tmux/screen — without
+// it, those all silently stop at whatever nested session or multiplexer
+// they're running under. selector is accepted whatever its value (xterm
+// allows combinations like "c", "p", "cp"); tubeless has only the one
+// system clipboard to set, so any non-empty selector maps to it. Only
+// the "set" direction is handled — a query ("52;c;?") is intentionally
+// ignored, since answering it would let any program silently read
+// whatever's currently on the user's clipboard.
+func (h *Handler) dispatchOSC52(data []byte) {
+	parts := bytes.SplitN(data, []byte(";"), 3)
+	if len(parts) != 3 || string(parts[0]) != "52" || len(parts[1]) == 0 {
+		return
+	}
+	payload := parts[2]
+	if len(payload) == 0 || string(payload) == "?" {
+		return
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(payload))
+	if err != nil {
+		return
+	}
+	h.pendingClipboard = append(h.pendingClipboard, string(decoded))
+}
 
 // DCSStart begins collecting a DCS payload. The sixel introducer is
 // "DCS P1;P2;P3 q" — final 'q', no intermediates, no private marker — with

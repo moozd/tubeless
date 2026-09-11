@@ -205,12 +205,22 @@ func attachInstanceAttrib(loc uint32, size int32, stride int32, offset int) {
 // RowShift nudges every cell in rows [Top,Bottom] (inclusive) by OffsetPx
 // physical pixels vertically, on top of their normal y*ch grid position.
 // It's how the "content just scrolled" glide (see
-// Renderer.ApplyScrollEvents) reads as a continuous slide instead of
+// Renderer.ApplyDetectedRowShift) reads as a continuous slide instead of
 // an instant cut: the affected band renders a few pixels off its resting
 // position and eases back to zero over a few frames. The zero value is a
 // no-op (Bottom < Top matches no row).
 type RowShift struct {
 	Top, Bottom int
+	OffsetPx    float32
+}
+
+// ColShift is RowShift's horizontal mirror: it nudges every cell in
+// columns [Left,Right] (inclusive) by OffsetPx physical pixels
+// horizontally, on top of its normal x*cw grid position. See
+// Renderer.ApplyDetectedColShift. The zero value is a no-op (Right <
+// Left matches no column).
+type ColShift struct {
+	Left, Right int
 	OffsetPx    float32
 }
 
@@ -225,9 +235,10 @@ type RowShift struct {
 // scr.VisibleWindow is drawn, for scrollback viewing. sel highlights the
 // current mouse selection, if any, by swapping fg/bg for cells inside it
 // (see Selection.Contains) — the same reverse-video convention the
-// terminal's own SGR 7 already uses for highlights. shift applies the
-// in-progress scroll glide, if any (see RowShift).
-func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch float32, scrollOffset int, sel Selection, shift RowShift) {
+// terminal's own SGR 7 already uses for highlights. rowShift/colShift
+// apply the in-progress scroll glide, if any, on each axis independently
+// (see RowShift/ColShift).
+func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch float32, scrollOffset int, sel Selection, rowShift RowShift, colShift ColShift) {
 	cp.bgScratch = cp.bgScratch[:0]
 	cp.blockScratch = cp.blockScratch[:0]
 	cp.shapeScratch = cp.shapeScratch[:0]
@@ -254,8 +265,11 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				fg, bg = bg, fg
 			}
 			px, py := float32(x)*cw, float32(y)*ch
-			if y >= shift.Top && y <= shift.Bottom {
-				py += shift.OffsetPx
+			if y >= rowShift.Top && y <= rowShift.Bottom {
+				py += rowShift.OffsetPx
+			}
+			if x >= colShift.Left && x <= colShift.Right {
+				px += colShift.OffsetPx
 			}
 			if cell.Attr.Underline != screen.UnderlineNone {
 				ulColor := underlineColor(cell.Attr, fg, cfg)
