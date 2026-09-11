@@ -55,43 +55,31 @@ type Screen struct {
 	// from a plain CSI sequence. See cmd/tubeless/input.go's encodeCursorKey.
 	ApplicationCursorKeys bool
 
-	// pendingScrolls records the exact scroll-region shifts (see
-	// ScrollShift) that happened since the last ClearPendingScrolls —
-	// appended by ScrollUp/ScrollDown/InsertLines/DeleteLines, the only
-	// mutators that ever shift rows within a region, at the moment each
-	// one runs and the true region/direction/count is known with
-	// certainty. cmd/tubeless's render loop consumes this (via
-	// PendingScrolls, on a published clone) instead of reconstructing a
-	// scroll after the fact by diffing two screens — see pkg/render's
-	// ApplyScrollEvents.
-	pendingScrolls []ScrollShift
+	// pendingClipboard records text an app asked to set the system
+	// clipboard to via OSC 52 (see handler.go's dispatchOSC52) since the
+	// last ClearPendingClipboard — e.g. tmux's copy-mode relaying a yank
+	// out to the host terminal (`set-clipboard on`), or vim/nvim's own
+	// OSC52 clipboard providers, neither of which otherwise reach past a
+	// nested session's own internal buffer. cmd/tubeless's render loop
+	// consumes this (via PendingClipboard, on a published clone) and
+	// forwards the text to the real system clipboard.
+	pendingClipboard []string
 }
 
-// ScrollShift is one exact scroll-region shift: rows [Top,Bottom]
-// (inclusive) moved by Delta rows — positive means content moved up
-// (new blank rows appeared at Bottom, e.g. ScrollUp/DeleteLines),
-// negative means content moved down (new blank rows appeared at Top,
-// e.g. ScrollDown/InsertLines). See Screen.pendingScrolls.
-type ScrollShift struct {
-	Top, Bottom int
-	Delta       int
+// PendingClipboard returns the OSC 52 clipboard-set requests recorded
+// since the last ClearPendingClipboard call, oldest first. Read-only —
+// callers must not mutate the returned slice.
+func (s *Screen) PendingClipboard() []string {
+	return s.pendingClipboard
 }
 
-// PendingScrolls returns the scroll shifts recorded since the last
-// ClearPendingScrolls call, oldest first. Read-only — callers must not
-// mutate the returned slice.
-func (s *Screen) PendingScrolls() []ScrollShift {
-	return s.pendingScrolls
-}
-
-// ClearPendingScrolls empties the pending-scroll queue. cmd/tubeless's
-// ptyCoordinator calls this on its working Screen right after publishing
-// a Clone() of it, so the next batch of recorded shifts reflects only
-// what happened since that publish — the clone already holds its own
-// copy of whatever was pending at Clone() time (see Clone), so clearing
+// ClearPendingClipboard empties the pending-clipboard queue. cmd/tubeless's
+// ptyCoordinator calls this on its working Screen right after publishing a
+// Clone() of it, so the next batch reflects only what happened since that
+// publish — the clone already holds its own copy (see Clone), so clearing
 // the source here never affects an already-published snapshot.
-func (s *Screen) ClearPendingScrolls() {
-	s.pendingScrolls = nil
+func (s *Screen) ClearPendingClipboard() {
+	s.pendingClipboard = nil
 }
 
 // MouseMode is which mouse events (if any) the application has asked to
@@ -169,12 +157,6 @@ func (s *Screen) Clone() *Screen {
 		c.Grid[y] = append([]Cell(nil), row...)
 	}
 	c.Images = append([]PlacedImage(nil), s.Images...)
-	// pendingScrolls needs no explicit handling here: the struct copy
-	// above already gave c its own copy of the slice header, and
-	// ClearPendingScrolls (called on s, never on a clone) only ever
-	// replaces s.pendingScrolls wholesale rather than mutating the
-	// backing array in place — same "replace, don't mutate" contract as
-	// scrollback below — so c's view is unaffected by what s does next.
 	// scrollback is copy-on-write (see its doc comment): the struct copy
 	// above already carries the pointer over, and appendScrollback never
 	// mutates a *scrollbackBuf a clone might be holding, only replaces
@@ -368,7 +350,6 @@ func (s *Screen) ScrollUp(n int) {
 		s.Grid[y] = newRow(s.Cols)
 	}
 	s.shiftImagesUp(n, top)
-	s.pendingScrolls = append(s.pendingScrolls, ScrollShift{Top: top, Bottom: bottom, Delta: n})
 }
 
 // appendScrollback adds row (copied — the caller's slice is about to be
@@ -459,7 +440,6 @@ func (s *Screen) ScrollDown(n int) {
 		s.Grid[y] = newRow(s.Cols)
 	}
 	s.shiftImagesDown(n, top, bottom)
-	s.pendingScrolls = append(s.pendingScrolls, ScrollShift{Top: top, Bottom: bottom, Delta: -n})
 }
 
 // shiftImagesUp moves image anchors that live inside the scrolled band up by
