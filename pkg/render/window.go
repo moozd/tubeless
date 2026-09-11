@@ -108,6 +108,36 @@ func ProbeMaxTextureSize() (int, error) {
 	return MaxTextureSize(), nil
 }
 
+// CurrentMonitorContentScale reports the content scale of whichever
+// monitor currently contains the window, found by checking the window's
+// centre point against every connected monitor's bounds — unlike the
+// window's own GetContentScale (embedded from glfw.Window), which on
+// macOS can keep reporting a stale scale after the window is dragged
+// from one monitor to another with a different backing scale until some
+// unrelated event (a real resize, entering fullscreen) happens to
+// refresh GLFW's cached value. Querying the monitor directly sidesteps
+// that staleness entirely — this is what runLoop's per-frame
+// content-scale check and newRendererFor should use instead of the
+// window's own GetContentScale. Falls back to the window's own
+// GetContentScale if no monitor's bounds contain it (briefly possible
+// mid-drag, or if GetVideoMode fails).
+func (w *Window) CurrentMonitorContentScale() (float32, float32) {
+	wx, wy := w.GetPos()
+	ww, wh := w.GetSize()
+	cx, cy := wx+ww/2, wy+wh/2
+	for _, m := range glfw.GetMonitors() {
+		mx, my := m.GetPos()
+		mode := m.GetVideoMode()
+		if mode == nil {
+			continue
+		}
+		if cx >= mx && cx < mx+mode.Width && cy >= my && cy < my+mode.Height {
+			return m.GetContentScale()
+		}
+	}
+	return w.GetContentScale()
+}
+
 // PrimaryMonitorContentScale reports the primary monitor's content
 // scale (1 on a standard display, 2 on Retina, etc.) — unlike a
 // window's own GetContentScale, this needs no window or GL context at

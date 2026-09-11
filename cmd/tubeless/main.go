@@ -184,11 +184,13 @@ func main() {
 	// platforms (observed on macOS) where GLFW doesn't deliver the real
 	// scale via GetContentScale until well after the window opens,
 	// sometimes not until a later, unrelated event (a real resize,
-	// entering fullscreen) prods it.
-	dpiX, dpiY := win.GetContentScale()
+	// entering fullscreen) prods it. CurrentMonitorContentScale (see its
+	// own doc comment) sidesteps that staleness by asking the monitor
+	// directly instead of the window.
+	dpiX, dpiY := win.CurrentMonitorContentScale()
 	for i := 0; i < 5 && dpiX == 1 && dpiY == 1; i++ {
 		glfw.WaitEventsTimeout(0.05)
-		dpiX, dpiY = win.GetContentScale()
+		dpiX, dpiY = win.CurrentMonitorContentScale()
 	}
 	if dpiX != initDpiX {
 		// The pre-window guess didn't match this display — rebuild now
@@ -622,7 +624,7 @@ func pumpPTYOutput(sess *ptyio.Session, out chan<- []byte) {
 // cell size adjusted proportionally, or the raster resolution keeps
 // matching whatever display was current the last time it was built.
 func newRendererFor(win *render.Window, cfg config.Config, cs *cellSize) (*render.Renderer, error) {
-	dx, dy := win.GetContentScale()
+	dx, dy := win.CurrentMonitorContentScale()
 	if dx == 0 {
 		dx, dy = 1, 1
 	}
@@ -753,10 +755,17 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		// (see effectiveAtlasScale) and needs rebuilding, not just a
 		// proportional resize of cs — a stale-resolution atlas is what
 		// used to make text look sharp on one display and soft on
-		// another even after cs.w/h caught up. The comparison is two
-		// float reads — free next to everything else this loop already
-		// does per frame.
-		if x, y := win.GetContentScale(); x != cs.dpiX || y != cs.dpiY {
+		// another even after cs.w/h caught up. CurrentMonitorContentScale
+		// (not the window's own GetContentScale) is what actually makes
+		// this catch a plain drag to a differently-scaled monitor: on
+		// macOS the window's own cached scale can keep reporting the old
+		// monitor's value indefinitely if the user never triggers a real
+		// resize/fullscreen afterward, which is exactly the "still
+		// degrades on the second monitor" gap the window-level check
+		// alone left open. The comparison is two float reads plus a
+		// monitor-bounds scan — free next to everything else this loop
+		// already does per frame.
+		if x, y := win.CurrentMonitorContentScale(); x != cs.dpiX || y != cs.dpiY {
 			if nr, err := newRendererFor(win, cfg, cs); err != nil {
 				log.Printf("rebuild renderer for display scale change: %v", err)
 			} else {
