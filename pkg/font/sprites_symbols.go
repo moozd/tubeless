@@ -32,6 +32,9 @@ var symbolRunes = []rune{
 	0x279E, // ➞ heavy right arrow
 	0x27A4, // ➤ heavy black right-pointing pointer
 	0x27A6, // ➦ heavy black curved down and rightward arrow (git)
+	0x23FA, // ⏺ black circle for record (Claude Code's status bullet)
+	0x2B24, // ⬤ black large circle
+	0x26AB, // ⚫ medium black circle
 }
 
 func isSymbolSprite(r rune) bool {
@@ -82,6 +85,12 @@ func drawSymbolSprite(r rune, img *image.Alpha, gx, gy, cellW, cellH int) {
 				[2]float64{0.5, 0.08},
 				[2]float64{0.96, 0.5},
 				[2]float64{0.5, 0.92})
+		}
+	case 0x23FA, 0x2B24, 0x26AB: // filled circle bullets
+		pred = func(x, y float64) bool {
+			u, v := toUnit(x, y)
+			du, dv := u-0.5, v-0.5
+			return du*du+dv*dv <= 0.5*0.5
 		}
 	default:
 		return

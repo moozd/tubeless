@@ -175,6 +175,14 @@ var boxLines = func() map[rune]lines {
 	m[0x257E] = mk(lwNone, lwNone, H, L)
 	m[0x257F] = mk(H, L, lwNone, lwNone)
 
+	// ⎿ dentistry symbol light down and horizontal: visually the same
+	// up+right corner as └ (0x2514) at terminal cell sizes, and used the
+	// same way by several CLIs (Claude Code among them) as a sub-item
+	// tree connector — most fonts, ours included, don't carry the
+	// dentistry block at all, so without this it silently renders as an
+	// empty cell instead of the connector line.
+	m[0x23BF] = mk(L, lwNone, lwNone, L)
+
 	return m
 }()
 
