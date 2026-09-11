@@ -106,6 +106,17 @@ func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 		if ms.dragging {
 			ms.dragging = false
 			copySelectionToClipboard(win, shared, *ms.sel)
+			// A plain click (press+release with no movement in between)
+			// leaves a zero-width selection that Contains still matches
+			// against its one cell — without clearing it here, every
+			// click (including the click that just focuses an
+			// unfocused window) leaves a permanent single-cell
+			// highlight behind, only ever relocated, never removed, by
+			// the next click.
+			x0, y0, x1, y1 := ms.sel.Normalized()
+			if x0 == x1 && y0 == y1 {
+				*ms.sel = render.Selection{}
+			}
 		}
 	})
 
