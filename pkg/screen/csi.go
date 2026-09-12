@@ -39,7 +39,13 @@ func (h *Handler) CSIDispatch(final byte, params []int, subs [][]int, intermedia
 	case 'u':
 		h.restoreCursor()
 	case 'm':
-		h.applySGR(params, subs)
+		// A private marker (e.g. xterm's "CSI > 4;2 m" modifyOtherKeys
+		// negotiation) means this isn't SGR at all, just a sequence that
+		// happens to also end in 'm' — applying it as SGR misreads its
+		// params as color/attribute codes.
+		if private == 0 {
+			h.applySGR(params, subs)
+		}
 	case 'r':
 		h.SetScrollRegion(param(params, 0, 1)-1, param(params, 1, h.Rows)-1)
 	case 'h':
