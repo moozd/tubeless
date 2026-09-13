@@ -738,23 +738,6 @@ func (w *cfgWatch) changed(now time.Time) bool {
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
 //
-// contentShiftMaxRows/contentShiftMaxCols bound how many rows/columns of
-// shift screen.DetectContentShift/DetectHorizontalContentShift consider
-// per axis. Set high enough to never actually constrain a real shift —
-// a full PageUp/PageDown jumps by a whole page (the terminal's entire
-// height), which a small cap (e.g. 25) would miss on any reasonably
-// tall window, falling back to an unanimated snap. detectShift clamps
-// this to the axis's own actual length internally, so passing a large
-// sentinel here costs nothing on a small/typical terminal and simply
-// means "search the whole axis" on a large one — even at that clamped
-// worst case (a very tall/wide terminal), the search stays O(n²) in
-// rows or columns alone, still microseconds, nowhere near a frame
-// budget (see detectShift's own doc for the per-candidate cost shape).
-const (
-	contentShiftMaxRows = 1 << 20
-	contentShiftMaxCols = 1 << 20
-)
-
 func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config]) {
 	r := renderer
 	var lastScr *screen.Screen
@@ -917,41 +900,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 				win.SetClipboardString(sets[len(sets)-1])
 			}
 		}
-		if scr != lastScr && w == lastW && h == lastH {
-			// A genuinely new screen at the same size — diff it against
-			// the previous one (screen.DetectContentShift /
-			// DetectHorizontalContentShift) so any uniform content shift,
-			// however the app actually redrew it (a real scroll-region
-			// op, or a TUI framework repainting by repositioning the
-			// cursor and overwriting cells directly), glides instead of
-			// cutting straight to the new state. This is the sole source
-			// of the content-scroll glide — pkg/screen no longer records
-			// scroll ops itself. The diff is a bounded rune-hash scan
-			// (not the old brute-force heuristic), cheap enough to run
-			// unconditionally here. Both axes are checked independently,
-			// so a region shifting vertically and a different region
-			// shifting horizontally in the same frame both animate.
-			// Each axis is gated on its own config flag, live-reloadable
-			// from config.toml/the config TUI — an escape hatch since
-			// this is a heuristic diff, not a guaranteed-exact signal.
-			// The column axis defaults off: it needs far more real
-			// content width than the row axis to tell a genuine
-			// horizontal scroll apart from coincidence.
-			if cfg.Scrolling.SmoothContentShift {
-				if shift, ok := screen.DetectContentShift(lastScr, scr, contentShiftMaxRows); ok {
-					r.ApplyDetectedRowShift(shift, cs.h)
-				}
-			}
-			if cfg.Scrolling.SmoothHorizontalContentShift {
-				if shift, ok := screen.DetectHorizontalContentShift(lastScr, scr, contentShiftMaxCols); ok {
-					r.ApplyDetectedColShift(shift, cs.w)
-				}
-			}
-		}
-		r.UpdateContentScroll(dt)
-		r.UpdateContentScrollCols(dt)
-
-		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload || r.ContentScrollActive() || r.ContentScrollColsActive()
+		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
 		reload = false
 
 		if dirty {

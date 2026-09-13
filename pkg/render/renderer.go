@@ -65,26 +65,6 @@ type Renderer struct {
 	// lines back from the live tail — see UpdateScroll.
 	scrollOffset float32
 
-	// contentShift is the in-progress "content just scrolled" glide (see
-	// ApplyDetectedRowShift/UpdateContentScroll): the band [shiftTop,
-	// shiftBottom] renders shiftOffsetPx physical pixels off its resting
-	// position and eases back to 0, so a detected content shift (nvim
-	// paging, our own scrollback view moving by a line) reads as a slide
-	// instead of a hard cut. shiftActive false is the steady-state no-op.
-	shiftTop, shiftBottom int
-	shiftOffsetPx         float32
-	shiftActive           bool
-
-	// colShift mirrors the vertical shift state above but for a
-	// horizontal content-scroll glide — kept as fully independent state
-	// (not folded into one axis-tagged struct) so a vertical shift in
-	// one screen region and a horizontal shift in a different region can
-	// animate at the same time; see BeginContentScrollCols/
-	// UpdateContentScrollCols.
-	shiftLeft, shiftRight int
-	shiftOffsetPxX        float32
-	colShiftActive        bool
-
 	pendingImages []screen.PlacedImage
 }
 
@@ -156,9 +136,7 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 // published snapshot (see cmd/tubeless's publish/load wiring) — this never
 // mutates it and needs no locking.
 func (r *Renderer) PrepareFrame(scr *screen.Screen, cfg config.Config, cellW, cellH float32, scrollOffset int, sel Selection) {
-	rowShift := RowShift{Top: r.shiftTop, Bottom: r.shiftBottom, OffsetPx: r.shiftOffsetPx}
-	colShift := ColShift{Left: r.shiftLeft, Right: r.shiftRight, OffsetPx: r.shiftOffsetPxX}
-	r.cellPass.BuildInstances(scr, cfg, cellW, cellH, scrollOffset, sel, rowShift, colShift)
+	r.cellPass.BuildInstances(scr, cfg, cellW, cellH, scrollOffset, sel)
 	r.pendingImages = scr.Images
 	r.cols, r.rows = scr.Cols, scr.Rows
 	r.cellW, r.cellH = cellW, cellH
@@ -258,133 +236,6 @@ func (r *Renderer) UpdateScroll(target int, dt float64) {
 	if abs32(float32(target)-r.scrollOffset) < 0.05 {
 		r.scrollOffset = float32(target)
 	}
-}
-
-// contentShiftEaseSpeed is UpdateContentScroll's exponential-decay rate
-// (per second) for the scroll glide's pixel offset — snappier than
-// scrollEaseSpeed since this is standing in for a single already-applied
-// content jump (the new text is already correct; only its entrance
-// glides), not chasing a moving target. Raised from the original 26 —
-// at that rate the entrance read as a visible stretch/rubber-band rather
-// than a quick settle, especially noticeable during a sustained scroll
-// where each new glide restarts before the last one fully decayed.
-const contentShiftEaseSpeed = 48.0
-
-// BeginContentScroll starts (or extends) the content-scroll glide: rows
-// [top,bottom] render offsetPx physical pixels off their resting position
-// and ease back to 0 over the next several frames. See
-// ApplyDetectedRowShift, which is what normally calls this.
-//
-// When a glide is already in flight over this same [top,bottom] band,
-// offsetPx is added to whatever's left of it rather than replacing it —
-// a burst of same-region single-line scrolls (holding <C-e>/j in nvim,
-// each arriving as its own call a PTY-coalescing window apart, well
-// under contentShiftEaseSpeed's ~150ms settle time) needs to build into
-// one longer, continuous coasting slide, not keep resetting back to a
-// single line's offset before it's had a chance to visibly ease — which
-// is what reads as a rapid series of tiny identical flicks instead of
-// one Neovide-style glide. A call over a different band (or with nothing
-// in flight) starts fresh, same as before.
-func (r *Renderer) BeginContentScroll(top, bottom int, offsetPx float32) {
-	if r.shiftActive && r.shiftTop == top && r.shiftBottom == bottom {
-		r.shiftOffsetPx += offsetPx
-	} else {
-		r.shiftTop, r.shiftBottom = top, bottom
-		r.shiftOffsetPx = offsetPx
-	}
-	r.shiftActive = true
-}
-
-// UpdateContentScroll eases the content-scroll glide's pixel offset back
-// to 0, same exponential-approach shape as UpdateCursor/UpdateScroll.
-// Called every frame from the render loop; a no-op once the glide has
-// settled.
-func (r *Renderer) UpdateContentScroll(dt float64) {
-	if !r.shiftActive {
-		return
-	}
-	k := 1.0 - float32(math.Exp(-contentShiftEaseSpeed*dt))
-	r.shiftOffsetPx -= r.shiftOffsetPx * k
-	if abs32(r.shiftOffsetPx) < 0.3 {
-		r.shiftOffsetPx = 0
-		r.shiftActive = false
-	}
-}
-
-// ContentScrollActive reports whether the content-scroll glide is still
-// easing — callers fold this into their dirty check so the scene keeps
-// redrawing (at the shifting offset) until the glide settles, the same
-// way scroll-line changes already force a rebuild.
-func (r *Renderer) ContentScrollActive() bool {
-	return r.shiftActive
-}
-
-// colShiftEaseSpeed reuses contentShiftEaseSpeed's exact shape/rate for
-// the horizontal glide — no reason for the two axes to feel different.
-const colShiftEaseSpeed = contentShiftEaseSpeed
-
-// BeginContentScrollCols is BeginContentScroll's horizontal mirror:
-// columns [left,right] render offsetPx physical pixels off their resting
-// position and ease back to 0. Kept as fully independent state from the
-// vertical glide (shiftTop/shiftBottom/shiftOffsetPx/shiftActive) rather
-// than one axis-tagged struct, so a vertical shift in one screen region
-// and a horizontal shift in a different region can animate at the same
-// time.
-func (r *Renderer) BeginContentScrollCols(left, right int, offsetPx float32) {
-	if r.colShiftActive && r.shiftLeft == left && r.shiftRight == right {
-		r.shiftOffsetPxX += offsetPx
-	} else {
-		r.shiftLeft, r.shiftRight = left, right
-		r.shiftOffsetPxX = offsetPx
-	}
-	r.colShiftActive = true
-}
-
-// UpdateContentScrollCols is UpdateContentScroll's horizontal mirror.
-// Called every frame from the render loop; a no-op once the glide has
-// settled.
-func (r *Renderer) UpdateContentScrollCols(dt float64) {
-	if !r.colShiftActive {
-		return
-	}
-	k := 1.0 - float32(math.Exp(-colShiftEaseSpeed*dt))
-	r.shiftOffsetPxX -= r.shiftOffsetPxX * k
-	if abs32(r.shiftOffsetPxX) < 0.3 {
-		r.shiftOffsetPxX = 0
-		r.colShiftActive = false
-	}
-}
-
-// ContentScrollColsActive reports whether the horizontal content-scroll
-// glide is still easing — see ContentScrollActive.
-func (r *Renderer) ContentScrollColsActive() bool {
-	return r.colShiftActive
-}
-
-// ApplyDetectedRowShift starts (or restarts) the vertical content-scroll
-// glide from a single shift screen.DetectContentShift found by diffing
-// the current published Screen against the previous one — run
-// unconditionally every changed frame, this is now the sole source of
-// the vertical glide (pkg/screen no longer records scroll ops itself).
-// A bounded rune-hash diff replaces both the old exact-op recording and
-// the even older brute-force heuristic this file's history once
-// described as too expensive (re-run on every published Screen,
-// including plain typing) and too easily confused by per-row editor
-// noise (relativenumber gutters, cursorline highlighting, sign columns)
-// — see screen.DetectContentShift's doc for how the new approach avoids
-// both problems.
-func (r *Renderer) ApplyDetectedRowShift(shift screen.RowShift, cellH float32) {
-	// Positive Delta: content moved up by Delta rows, so it used to
-	// render Delta*cellH pixels further down than it does now — start
-	// the glide there and ease to 0 to read as a slide up. Negative
-	// Delta is the mirror image.
-	r.BeginContentScroll(shift.Top, shift.Bottom, float32(shift.Delta)*cellH)
-}
-
-// ApplyDetectedColShift is ApplyDetectedRowShift's horizontal mirror,
-// fed by screen.DetectHorizontalContentShift.
-func (r *Renderer) ApplyDetectedColShift(shift screen.ColShift, cellW float32) {
-	r.BeginContentScrollCols(shift.Left, shift.Right, float32(shift.Delta)*cellW)
 }
 
 // CurrentScrollLine rounds the animated scroll offset to the nearest

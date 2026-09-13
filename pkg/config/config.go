@@ -27,8 +27,8 @@ import (
 //
 //   - Theme governs color: TrueColor, Colors, Phosphor.
 //   - Preset governs every other visual effect: Blur, Rounding, Cursor,
-//     Face, Contrast, Scrolling, CRT. Font/Atlas sit outside both axes —
-//     always user-set directly, never reseeded by either.
+//     Face, Contrast, CRT. Font/Atlas sit outside both axes — always
+//     user-set directly, never reseeded by either.
 type Config struct {
 	Theme  string `toml:"theme"`
 	Preset string `toml:"preset"`
@@ -50,30 +50,7 @@ type Config struct {
 	Face          Face       `toml:"face"`
 	Contrast      Contrast   `toml:"contrast"`
 	Scrollback    Scrollback `toml:"scrollback"`
-	Scrolling     Scrolling  `toml:"scrolling"`
 	CRT           CRT        `toml:"crt"`
-}
-
-// Scrolling controls scroll-related behavior beyond the raw scrollback
-// buffer size (see Scrollback).
-type Scrolling struct {
-	// SmoothContentShift enables the vertical content-shift glide:
-	// detected uniform row shifts (see pkg/screen's DetectContentShift)
-	// ease in like Neovide instead of snapping. It's a heuristic diff
-	// against the previous frame, not a guaranteed-exact signal — this
-	// is the escape hatch for a misdetected shift wobbling on some
-	// particular app's output.
-	SmoothContentShift bool `toml:"smooth_content_shift"`
-
-	// SmoothHorizontalContentShift is SmoothContentShift's column-axis
-	// counterpart (see DetectHorizontalContentShift). Off by default:
-	// terminal text has far less per-column uniqueness than per-row
-	// uniqueness to key off of, so this axis needs substantially more
-	// real content width to tell a genuine horizontal scroll apart from
-	// coincidence than the row axis does — sparse/mostly-blank screens
-	// (an ordinary shell prompt) are more prone to a false-positive
-	// wobble here even with stricter thresholds than the row axis uses.
-	SmoothHorizontalContentShift bool `toml:"smooth_horizontal_content_shift"`
 }
 
 // Scrollback controls how much scrolled-off history is retained above the
@@ -516,7 +493,7 @@ func applyEffectsPreset(cfg *Config, name string) {
 	}
 	e := EffectsPreset(name)
 	cfg.Blur, cfg.Rounding, cfg.Cursor = e.Blur, e.Rounding, e.Cursor
-	cfg.Face, cfg.Contrast, cfg.Scrolling, cfg.CRT = e.Face, e.Contrast, e.Scrolling, e.CRT
+	cfg.Face, cfg.Contrast, cfg.CRT = e.Face, e.Contrast, e.CRT
 }
 
 // Save writes cfg to path as TOML, creating parent directories as needed.
