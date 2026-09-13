@@ -52,22 +52,52 @@ func SystemFamilies() ([]string, error) {
 // "Bold", "Italic", "Bold Italic") — unlike ResolveFamily/fc-match, which
 // always substitutes *some* file even for a style the family doesn't
 // carry (a plain family match, or its own generic fallback), so it can't
-// tell "no italic cut exists" apart from "resolved fine". fc-list only
-// lists files that actually declare the requested style, so an empty
-// result here means the style genuinely isn't available and callers
-// should fall back to something else (a synthetic slant, a different
-// weight) rather than trusting a substituted file.
+// tell "no italic cut exists" apart from "resolved fine".
+//
+// A `family:style=X` fc-list query matches on *any* of a file's
+// comma-separated style aliases, not just its primary one — a
+// multi-weight family commonly tags every weight's italic cut with both
+// its specific style ("ExtraLight Italic") and a generic "Italic" alias
+// so style-matching tools still find an italic at all. Filtering on that
+// query alone found a real file, just an arbitrary (and usually wrong)
+// weight — fc-list doesn't sort by relevance, so whichever weight happens
+// to enumerate first wins, and a thin cut standing in for "the" italic
+// next to a heavier regular weight reads as barely rendering. Listing
+// every file the plain family carries and keeping only the one whose
+// *primary* style is exactly the requested one picks the actual italic
+// cut in the same weight as Regular/Bold, the same way "Bold" alone
+// already worked (a family's own Bold is normally unambiguous).
 func ResolveStyle(family, style string) (path string, ok bool) {
-	out, err := exec.Command("fc-list", family+":style="+style, "file").Output()
+	out, err := exec.Command("fc-list", family, "file", "style").Output()
 	if err != nil {
 		return "", false
 	}
-	first, _, _ := strings.Cut(string(out), "\n")
-	first = strings.TrimSuffix(strings.TrimSpace(first), ":")
-	if first == "" {
-		return "", false
+	return parseStylePrimaryMatch(string(out), style)
+}
+
+// parseStylePrimaryMatch is ResolveStyle's parsing half, split out so it
+// can be tested against canned fc-list output without depending on
+// whatever fonts happen to be installed. fc-list's default format always
+// leads with "%{file}: ", and asking for the extra "style" field appends
+// it as its own ":style=a,b,c" segment rather than a plain comma join —
+// e.g. "/path/Foo-Italic.otf: :style=Italic". Splitting on the literal
+// ":style=" marker is what actually separates the two, however that
+// leading segment is punctuated. Only a file whose *primary* (first)
+// style token exactly matches style is returned — see ResolveStyle's doc
+// for why a secondary alias match picks an arbitrary, usually wrong,
+// weight.
+func parseStylePrimaryMatch(fcListOutput, style string) (path string, ok bool) {
+	for _, line := range strings.Split(fcListOutput, "\n") {
+		file, styles, found := strings.Cut(line, ":style=")
+		if !found {
+			continue
+		}
+		primary, _, _ := strings.Cut(styles, ",")
+		if primary == style {
+			return strings.TrimRight(strings.TrimSpace(file), ":"), true
+		}
 	}
-	return first, true
+	return "", false
 }
 
 // ResolveFamily finds the font file fontconfig picks for family, via
