@@ -148,6 +148,42 @@ func TestBuildRejectsOversizedAtlas(t *testing.T) {
 	}
 }
 
+// TestResizeCoverageSqueezesWidthWithoutCroppingOrChangingHeight
+// reproduces a real user report: an italic cut's slant routinely widens
+// a letter's rendered bitmap past the monospace cell width while its
+// height stays well within the cell — a width-only overflow. Two
+// approaches were tried and rejected before this one: a uniform
+// (aspect-preserving) shrink also shrank the letter's height, reading as
+// that specific letter being smaller than its neighbors; leaving the
+// bitmap alone and letting a hard per-pixel clip drop whatever crossed
+// the cell edge cropped chunks out of the letter, which read as broken
+// glyphs. resizeCoverage's independent per-axis resize (only narrowing
+// the overflowing axis) must square (h unaffected) and must not crop —
+// a uniform fully-covered source resized down should stay fully covered
+// throughout, never leaving a destination pixel untouched at 0.
+func TestResizeCoverageSqueezesWidthWithoutCroppingOrChangingHeight(t *testing.T) {
+	const w, h = 10, 4
+	pix := make([]byte, w*h)
+	for i := range pix {
+		pix[i] = 255
+	}
+	out, ow, oh := resizeCoverage(pix, w, h, 6, h)
+	if oh != h {
+		t.Fatalf("oh = %d, want unchanged %d (height must never be touched by a width-only overflow)", oh, h)
+	}
+	if ow != 6 {
+		t.Fatalf("ow = %d, want 6", ow)
+	}
+	if len(out) != ow*oh {
+		t.Fatalf("len(out) = %d, want %d", len(out), ow*oh)
+	}
+	for i, v := range out {
+		if v != 255 {
+			t.Fatalf("out[%d] = %d, want 255 (box-filtered from a uniform fully-covered source — a crop would leave some destination pixels untouched at 0)", i, v)
+		}
+	}
+}
+
 func hasCoverage(atlas *Atlas, g Glyph) bool {
 	for y := g.Y; y < g.Y+g.H; y++ {
 		for x := g.X; x < g.X+g.W; x++ {
