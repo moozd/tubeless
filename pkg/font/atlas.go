@@ -321,16 +321,49 @@ func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int, line
 // table generated from the Nerd Font patcher's own stretch rules — this
 // is a simpler, general version of the same idea: scale down whatever
 // doesn't fit, uniformly, only when it doesn't) keeps every glyph intact
-// and centered instead.
+// and centered instead. isPrivateUseRune(r) — icon codepoints — get this
+// uniform (aspect-preserving) treatment, since squashing a pictogram
+// non-uniformly is obviously wrong.
+//
+// Ordinary text takes a different fit for the same underlying problem in
+// a different shape: an italic cut's slant routinely widens a letter's
+// rendered bitmap past cellW (a real 'f' in a Nerd Font monospace italic
+// can render 25%+ wider than its upright counterpart, purely from the
+// lean) while its height stays well within cellH — this is a width-only
+// overflow, never a genuine 2D size problem the way an oversized icon is.
+// Two things were tried and both read worse than the fix below: a
+// uniform shrink (this same fitScale, applied to all runes) shrank the
+// letter's height along with its width, so just the couple of wide
+// letters in any given word looked visibly smaller than their neighbors;
+// leaving the bitmap alone and letting the per-pixel clip in the copy
+// loop below silently drop the overflow cropped chunks out of those same
+// letters, which is worse. Squeezing width alone — never touching
+// height — keeps every letter the same height as its neighbors (so nothing
+// reads as "smaller") and keeps the whole glyph shape intact (so nothing
+// reads as "missing"); the trade is a slightly narrower letter, which is
+// far less perceptible than either of those.
 func blitGlyph(face *ftFace, r rune, dst *image.Alpha, gx, gy, cellW, cellH, ascender int, gamma float64) {
 	pix, w, h, left, top, ok := face.glyphBitmap(r)
 	if !ok || w == 0 || h == 0 {
 		return
 	}
-	if scale := fitScale(w, h, cellW, cellH); scale < 1 {
-		pix, w, h = scaleCoverage(pix, w, h, scale)
-		left = int(float64(left) * scale)
-		top = int(float64(top) * scale)
+	switch {
+	case isPrivateUseRune(r):
+		if scale := fitScale(w, h, cellW, cellH); scale < 1 {
+			pix, w, h = scaleCoverage(pix, w, h, scale)
+			left = int(float64(left) * scale)
+			top = int(float64(top) * scale)
+		}
+	case w > cellW || h > cellH:
+		// Independent per-axis clamp, not fitScale's uniform one — a
+		// width-only overflow (the common italic case) stays exactly
+		// full height, only narrower. The rare font where a text glyph
+		// overflows vertically instead gets the same treatment on that
+		// axis, still without touching the other.
+		ow, oh := min(w, cellW), min(h, cellH)
+		wScale, hScale := float64(ow)/float64(w), float64(oh)/float64(h)
+		pix, w, h = resizeCoverage(pix, w, h, ow, oh)
+		left, top = int(float64(left)*wScale), int(float64(top)*hScale)
 	}
 	originX, originY := gx+left, gy+ascender-top
 	// fitScale only guarantees the bitmap's own w x h is small enough to
@@ -375,6 +408,19 @@ func clampOrigin(origin, d, cellStart, cellSize int) int {
 	return origin
 }
 
+// isPrivateUseRune reports whether r falls in one of the three Unicode
+// Private Use Areas — where every Nerd Font icon range lives (Powerline,
+// Devicons, Font Awesome, Seti-UI, Material Design, etc.), whether
+// patched into the configured font directly or pulled from the bundled
+// fallback. Ordinary text (Latin, box-drawing, CJK, emoji, ...) never
+// lands here, which is what lets blitGlyph apply its shrink-to-fit only
+// to icons and leave real letterforms at their natural rasterized size.
+func isPrivateUseRune(r rune) bool {
+	return (r >= 0xE000 && r <= 0xF8FF) ||
+		(r >= 0xF0000 && r <= 0xFFFFD) ||
+		(r >= 0x100000 && r <= 0x10FFFD)
+}
+
 // fitScale returns the uniform scale factor (<= 1) needed to bring a
 // w x h glyph within cellW x cellH, or 1 if it already fits.
 func fitScale(w, h, cellW, cellH int) float64 {
@@ -389,11 +435,21 @@ func fitScale(w, h, cellW, cellH int) float64 {
 }
 
 // scaleCoverage box-filters a single-channel coverage bitmap down by
-// scale (< 1), area-averaging each output texel's source region — a
-// straight nearest/point resample would just re-introduce aliasing on
-// the very edges this exists to clean up.
+// scale (< 1) uniformly on both axes — an icon's aspect ratio must stay
+// fixed, unlike resizeCoverage's independent-axis general case.
 func scaleCoverage(pix []byte, w, h int, scale float64) (out []byte, ow, oh int) {
-	ow, oh = max(1, int(float64(w)*scale)), max(1, int(float64(h)*scale))
+	return resizeCoverage(pix, w, h, max(1, int(float64(w)*scale)), max(1, int(float64(h)*scale)))
+}
+
+// resizeCoverage box-filters a single-channel coverage bitmap from w x h
+// down to ow x oh — independently on each axis, so a width-only squeeze
+// (ow < w, oh == h) is exactly as valid a call as a uniform shrink —
+// area-averaging each output texel's source region. A straight
+// nearest/point resample would just re-introduce aliasing on the very
+// edges this exists to clean up. Only ever shrinks in practice (callers
+// never grow a dimension), though nothing here assumes that.
+func resizeCoverage(pix []byte, w, h, ow, oh int) (out []byte, outW, outH int) {
+	ow, oh = max(1, ow), max(1, oh)
 	out = make([]byte, ow*oh)
 	for oy := range oh {
 		sy0, sy1 := srcRange(oy, oh, h)
