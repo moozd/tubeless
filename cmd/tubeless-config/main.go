@@ -809,6 +809,11 @@ func (u *ui) buildPresetsList() []panelRow {
 		func(c *config.Config) float64 { return float64(c.Blur.Strength) },
 		func(c *config.Config, v float64) { c.Blur.Strength = float32(v) })))
 
+	section("rounding — solid blocks & backgrounds")
+	add(asEffect(newSlider("rounding.radius", "corner radius", "true geometric corner radius on background fills & solid block glyphs (█▀▄▌▐ etc.)", "px", 1, 0.1, 0, 8,
+		func(c *config.Config) float64 { return float64(c.Rounding.Radius) },
+		func(c *config.Config, v float64) { c.Rounding.Radius = float32(v) })))
+
 	section("face — tube")
 	add(asEffect(newSlider("face.bg_tint", "bg tint", "brightness of the unlit screen", "", 3, 0.005, 0, 0.5,
 		func(c *config.Config) float64 { return float64(c.Face.BgTint) },
