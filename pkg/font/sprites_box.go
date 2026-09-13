@@ -21,6 +21,14 @@ const (
 
 type lines struct{ up, down, left, right lineWeight }
 
+// isBoxRune reports whether r is a box-drawing glyph we generate — the
+// U+2500-U+257F block plus ⎿ (U+23BF, the dentistry symbol several CLIs use
+// as a sub-item tree connector), which sits outside that block but is drawn
+// by the same geometry (see boxLines).
+func isBoxRune(r rune) bool {
+	return r >= 0x2500 && r <= 0x257F || r == 0x23BF
+}
+
 func drawBoxSprite(r rune, img *image.Alpha, gx, gy, cellW, cellH int) {
 	thick := lineThickness(cellW, cellH)
 

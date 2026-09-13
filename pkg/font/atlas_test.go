@@ -1,6 +1,9 @@
 package font
 
-import "testing"
+import (
+	"image"
+	"testing"
+)
 
 func TestBuildProducesCoverage(t *testing.T) {
 	atlas, err := Build(DefaultFontBytes(), []rune("Ag@"), 20, 1.0, 1, 1.0, nil, 0)
@@ -181,6 +184,70 @@ func TestResizeCoverageSqueezesWidthWithoutCroppingOrChangingHeight(t *testing.T
 		if v != 255 {
 			t.Fatalf("out[%d] = %d, want 255 (box-filtered from a uniform fully-covered source — a crop would leave some destination pixels untouched at 0)", i, v)
 		}
+	}
+}
+
+// TestSymbolSpriteOnlyFallsBackWhenFontLacksGlyph guards the dispatch
+// boundary behind the symbol fallbacks: a symbol the font ships (U+2713 ✓,
+// present in the bundled FiraCode) must NOT be drawn procedurally, while a
+// symbol it genuinely lacks (U+279C ➜) must be, but only once Build has
+// marked it procedural — a real glyph in a user font keeps it.
+func TestSymbolSpriteOnlyFallsBackWhenFontLacksGlyph(t *testing.T) {
+	img := image.NewAlpha(image.Rect(0, 0, 48, 48))
+	if spriteGlyph(0x2713, img, 0, 0, 16, 16, nil) {
+		t.Fatal("spriteGlyph drew ✓ procedurally when not marked procedural — the font's real glyph must be kept")
+	}
+	if !spriteGlyph(0x279C, img, 0, 0, 16, 16, map[rune]bool{0x279C: true}) {
+		t.Fatal("spriteGlyph did not own ➜ marked procedural")
+	}
+	ink := false
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			if img.AlphaAt(x, y).A > 0 {
+				ink = true
+			}
+		}
+	}
+	if !ink {
+		t.Fatal("procedural ➜ left no ink")
+	}
+}
+
+// TestBuildCoversSymbolFallbacks ensures every symbolRune — procedural or
+// real — reaches the atlas with ink when built from the bundled font. ✓
+// (2713) is shipped by the font and must come through as a real glyph; the
+// rest are generated procedurally (see sprites_symbols.go).
+func TestBuildCoversSymbolFallbacks(t *testing.T) {
+	atlas, err := Build(DefaultFontBytes(), []rune("A"), 24, 1.0, 1, 1.0, DefaultFontBytes(), 0)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, r := range symbolRunes {
+		g, ok := atlas.Glyphs[r]
+		if !ok {
+			t.Fatalf("missing symbol %U", r)
+		}
+		if !hasCoverage(atlas, g) {
+			t.Fatalf("symbol %U has no ink", r)
+		}
+	}
+}
+
+// TestBuildIncludesDentistrySymbol guards the ⎿ (U+23BF) tree connector: it
+// sits outside the U+2500-U+257F block, so it must be force-added to the
+// atlas and drawn by the box-drawing geometry rather than left blank (the
+// bundled font has no glyph for it).
+func TestBuildIncludesDentistrySymbol(t *testing.T) {
+	atlas, err := Build(DefaultFontBytes(), []rune("A"), 24, 1.0, 1, 1.0, nil, 0)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	g, ok := atlas.Glyphs[0x23BF]
+	if !ok {
+		t.Fatal("missing ⎿ (U+23BF)")
+	}
+	if !hasCoverage(atlas, g) {
+		t.Fatal("⎿ (U+23BF) has no ink")
 	}
 }
 

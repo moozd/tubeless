@@ -19,16 +19,23 @@ import (
 
 // spriteGlyph renders rune r into the atlas at cell (gx, gy) of size
 // cellW x cellH, returning whether it owns r (true) or the caller should fall
-// back to FreeType (false).
-func spriteGlyph(r rune, img *image.Alpha, gx, gy, cellW, cellH int) bool {
+// back to FreeType (false). Box drawing, block elements, and powerline glyphs
+// are always generated. Symbol glyphs (checks, arrows, stars, ...) are only
+// generated when proceduralSymbols marks r — i.e. when neither the loaded
+// font nor its fallback ships a real glyph — so a font that carries a real
+// ✓ or ➜ keeps it (see sprites_symbols.go).
+func spriteGlyph(r rune, img *image.Alpha, gx, gy, cellW, cellH int, proceduralSymbols map[rune]bool) bool {
 	switch {
-	case r >= 0x2500 && r <= 0x257F:
+	case isBoxRune(r):
 		drawBoxSprite(r, img, gx, gy, cellW, cellH)
 	case r >= 0x2580 && r <= 0x259F:
 		drawBlockSprite(r, img, gx, gy, cellW, cellH)
 	case isPowerlineSprite(r):
 		drawPowerlineSprite(r, img, gx, gy, cellW, cellH)
 	case isSymbolSprite(r):
+		if !proceduralSymbols[r] {
+			return false
+		}
 		drawSymbolSprite(r, img, gx, gy, cellW, cellH)
 	default:
 		return false
@@ -47,7 +54,7 @@ func spriteGlyph(r rune, img *image.Alpha, gx, gy, cellW, cellH int) bool {
 // symbols, icons — is text and stays crisp.
 func IsShapeRune(r rune) bool {
 	switch {
-	case r >= 0x2500 && r <= 0x259F:
+	case r >= 0x2500 && r <= 0x259F || r == 0x23BF:
 		return true
 	case isPowerlineSprite(r):
 		return true
@@ -63,9 +70,20 @@ func spriteRunes() []rune {
 	for r := 0x2500; r <= 0x259F; r++ {
 		out = append(out, rune(r))
 	}
+	out = append(out, 0x23BF) // ⎿ dentistry tree connector
 	for _, r := range powerlineRunes {
 		out = append(out, r)
 	}
+	return out
+}
+
+// GraphicsRunes returns every codepoint the renderer generates procedurally —
+// box drawing, block elements, powerline glyphs, and symbol fallbacks — the
+// set that must never render blank regardless of the loaded font. Exported
+// for the coverage previewer (cmd/tubeless-icons).
+func GraphicsRunes() []rune {
+	out := spriteRunes()
+	out = append(out, symbolRunes...)
 	return out
 }
 

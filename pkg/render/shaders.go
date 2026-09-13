@@ -38,6 +38,9 @@ var copyFragSrc string
 //go:embed assets/shaders/inset.frag
 var insetFragSrc string
 
+//go:embed assets/shaders/overlay.frag
+var overlayFragSrc string
+
 //go:embed assets/shaders/cursor.frag
 var cursorFragSrc string
 

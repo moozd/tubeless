@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -229,7 +230,7 @@ func main() {
 	fontZoom := make(chan int, 16)
 	wireInput(win, sess, &shared, sel, fontZoom)
 	scroll := &scrollState{}
-	wireMouse(win, sess, &shared, scroll, cs, sel)
+	wireMouse(win, sess, &shared, scroll, cs, &cfgRef, sel)
 
 	// focused tracks real window focus, read/written only from this
 	// locked OS thread (see runLoop's visibility gate) — no
@@ -239,7 +240,9 @@ func main() {
 		focused = isFocused
 	})
 
-	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef)
+	load := &fontLoad{}
+	req, res := startRebuilder(maxTextureSize, load)
+	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef, req, res, load)
 }
 
 // runUpgrade runs `tubeless upgrade`: checks GitHub for a release newer
@@ -374,11 +377,21 @@ func effectiveAtlasScale(scale int, dpi float32) int {
 // number is worse than a shell-visible warning and a slightly softer
 // atlas.
 func buildFacesFor(cfg config.Config, dpi float32, maxTextureSize int) (*font.Faces, int, error) {
+	return buildFacesWithProgress(cfg, dpi, maxTextureSize, nil)
+}
+
+// buildFacesWithProgress is buildFacesFor with per-glyph progress reporting
+// (see font.BuildFaces's Progress) — the async rebuild path reports into a
+// fontLoad so the render thread can draw the loading modal.
+func buildFacesWithProgress(cfg config.Config, dpi float32, maxTextureSize int, progress font.Progress) (*font.Faces, int, error) {
 	scale := cfg.Atlas.Scale
 	for {
 		effectiveScale := effectiveAtlasScale(scale, dpi)
+		if progress != nil && cfg.Font.Family != "" {
+			progress("Resolving font", 0, 0)
+		}
 		faceBytes := loadFontFaces(cfg.Font.Family)
-		faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*effectiveScale, cfg.Atlas.Gamma, effectiveScale, cfg.Font.LineHeight, maxTextureSize)
+		faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*effectiveScale, cfg.Atlas.Gamma, effectiveScale, cfg.Font.LineHeight, maxTextureSize, progress)
 		if err == nil {
 			if scale != cfg.Atlas.Scale {
 				log.Printf("atlas.scale %d was too high for this display/GPU; using %d instead — lower it in your config to stop seeing this", cfg.Atlas.Scale, scale)
@@ -492,6 +505,9 @@ func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], 
 			// quiet window for more before publishing, coalesces a burst
 			// back into the single complete frame it actually is.
 			drainPending(readCh, parser)
+			for _, resp := range work.DrainResponses() {
+				sess.Write(resp)
+			}
 			shared.Store(work.Clone())
 			work.ClearPendingClipboard()
 		case req := <-resizeCh:
@@ -642,24 +658,12 @@ func pumpPTYOutput(sess *ptyio.Session, out chan<- []byte) {
 	}
 }
 
-// newRendererFor rebuilds the glyph atlas + renderer for cfg at the
-// window's current display scale and updates cs with the resulting
-// physical cell size. Used by runLoop both when the config file's
-// font/atlas settings change at runtime, and when the display's content
-// scale itself changes (a monitor switch, or GLFW's delayed real-scale
-// delivery — see runLoop's per-frame check) — either way, the atlas
-// needs to be rebuilt at the new effective scale, not just have cs's
-// cell size adjusted proportionally, or the raster resolution keeps
-// matching whatever display was current the last time it was built.
-func newRendererFor(win *render.Window, cfg config.Config, cs *cellSize) (*render.Renderer, error) {
-	dx, dy := win.CurrentMonitorContentScale()
-	if dx == 0 {
-		dx, dy = 1, 1
-	}
-	faces, effectiveScale, err := buildFacesFor(cfg, dx, render.MaxTextureSize())
-	if err != nil {
-		return nil, err
-	}
+// installFaces builds a renderer from already-built faces — uploading the
+// atlas textures on the render thread — and updates cs with the resulting
+// physical cell size. The GL work here is the only part of a font rebuild
+// that must stay on the render thread; the rasterization itself runs off
+// thread (see startRebuilder).
+func installFaces(faces *font.Faces, effectiveScale int, dx, dy float32, cs *cellSize) (*render.Renderer, error) {
 	r, err := render.New(faces, cols, rows)
 	if err != nil {
 		return nil, fmt.Errorf("init renderer: %w", err)
@@ -668,6 +672,116 @@ func newRendererFor(win *render.Window, cfg config.Config, cs *cellSize) (*rende
 	cs.w = float32(faces.Regular.CellWidth) / float32(effectiveScale) * dx
 	cs.h = float32(faces.Regular.CellHeight) / float32(effectiveScale) * dy
 	return r, nil
+}
+
+// fontLoad is the shared progress state for an in-flight font/atlas rebuild:
+// the background builder writes progress via progress(), the render thread
+// reads a snapshot() each frame to draw the loading overlay. gen tags each
+// rebuild so a stale result from a superseded build can't clear the overlay
+// (or install its faces) while a newer build is still running. Mutex-guarded
+// because the builder and render thread run concurrently.
+type fontLoad struct {
+	mu     sync.Mutex
+	active bool
+	gen    int
+	title  string
+	phase  string
+	done   int
+	total  int
+}
+
+// begin marks a new build active and returns its generation.
+func (l *fontLoad) begin(title string) int {
+	l.mu.Lock()
+	l.gen++
+	l.active = true
+	l.title = title
+	l.phase = ""
+	l.done, l.total = 0, 0
+	g := l.gen
+	l.mu.Unlock()
+	return g
+}
+
+// progress satisfies font.Progress — passed to font.BuildFaces by the
+// background builder.
+func (l *fontLoad) progress(phase string, done, total int) {
+	l.mu.Lock()
+	l.phase, l.done, l.total = phase, done, total
+	l.mu.Unlock()
+}
+
+func (l *fontLoad) clear() {
+	l.mu.Lock()
+	l.active = false
+	l.mu.Unlock()
+}
+
+func (l *fontLoad) currentGen() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.gen
+}
+
+func (l *fontLoad) snapshot() render.Loading {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return render.Loading{Active: l.active, Title: l.title, Phase: l.phase, Done: l.done, Total: l.total}
+}
+
+type fontBuildReq struct {
+	gen    int
+	cfg    config.Config
+	dx, dy float32
+}
+
+type fontBuildResult struct {
+	gen    int
+	faces  *font.Faces
+	scale  int
+	dx, dy float32
+	err    error
+}
+
+// startRebuilder launches the single background goroutine that builds glyph
+// atlases off the render thread. It pulls the latest request from req
+// (buffered size 1, so rapid changes coalesce to the newest), reports
+// progress into load, and hands the finished faces back on res for the
+// render thread to install (the GL upload stays on the render thread). One
+// goroutine only: FreeType isn't thread-safe and is only ever used by Build.
+func startRebuilder(maxTextureSize int, load *fontLoad) (req chan fontBuildReq, res chan fontBuildResult) {
+	req = make(chan fontBuildReq, 1)
+	res = make(chan fontBuildResult, 1)
+	go func() {
+		for r := range req {
+			faces, scale, err := buildFacesWithProgress(r.cfg, r.dx, maxTextureSize, load.progress)
+			res <- fontBuildResult{gen: r.gen, faces: faces, scale: scale, dx: r.dx, dy: r.dy, err: err}
+		}
+	}()
+	return req, res
+}
+
+// requestFontBuild sends a rebuild request, replacing any still-queued one so
+// rapid changes (holding Ctrl+=, a monitor switch mid-build) settle on the
+// newest config instead of building every intermediate one.
+func requestFontBuild(req chan fontBuildReq, r fontBuildReq) {
+	select {
+	case req <- r:
+	default:
+		select {
+		case <-req:
+		default:
+		}
+		req <- r
+	}
+}
+
+// fontTitle names the loading modal from the config's font family.
+func fontTitle(family string) string {
+	if family == "" {
+		return "FiraCode Nerd Font Propo"
+	}
+	return family
 }
 
 // drainFontZoom collapses every pending Ctrl/Cmd+=/- press (see
@@ -737,8 +851,7 @@ func (w *cfgWatch) changed(now time.Time) bool {
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
-//
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config]) {
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config], req chan fontBuildReq, res chan fontBuildResult, load *fontLoad) {
 	r := renderer
 	var lastScr *screen.Screen
 	var lastW, lastH int
@@ -818,23 +931,15 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		// monitor-bounds scan — free next to everything else this loop
 		// already does per frame.
 		if x, y := win.CurrentMonitorContentScale(); x != cs.dpiX || y != cs.dpiY {
-			if nr, err := newRendererFor(win, cfg, cs); err != nil {
-				log.Printf("rebuild renderer for display scale change: %v", err)
-			} else {
-				r = nr
-				pushResize(win, resizeCh, cs, cfgRef)
-			}
+			g := load.begin("Display scale change")
+			requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: x, dy: y})
 		}
 
 		if d := drainFontZoom(fontZoom); d != 0 {
 			cfg.Font.Size = clampFontSize(cfg.Font.Size + 2*d)
 			storeCfgRef(cfgRef, cfg)
-			if nr, err := newRendererFor(win, cfg, cs); err != nil {
-				log.Printf("rebuild renderer for font zoom: %v", err)
-			} else {
-				r = nr
-				pushResize(win, resizeCh, cs, cfgRef)
-			}
+			g := load.begin(fmt.Sprintf("Font size %dpx", cfg.Font.Size))
+			requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: cs.dpiX, dy: cs.dpiY})
 			reload = true
 		}
 
@@ -850,21 +955,34 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			storeCfgRef(cfgRef, cfg)
 			switch {
 			case fontChanged:
-				nr, err := newRendererFor(win, cfg, cs)
-				if err != nil {
-					log.Printf("rebuild renderer for new config: %v", err)
-				} else {
-					r = nr
-					// The window's pixel size didn't change, but cs (cell
-					// size) just did — cols/rows must reflow against it, or
-					// the grid stays sized for the old font until the user
-					// happens to resize the window themselves.
-					pushResize(win, resizeCh, cs, cfgRef)
-				}
+				g := load.begin(fontTitle(cfg.Font.Family))
+				requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: cs.dpiX, dy: cs.dpiY})
 			case arChanged:
 				pushResize(win, resizeCh, cs, cfgRef)
 			}
 			reload = true
+		}
+
+		// A finished background build lands here. If it's the latest request
+		// (gen still current), install its faces on this thread (the GL
+		// upload) and reflow the grid, then clear the overlay; a stale result
+		// from a superseded build is dropped — the newer one, already running
+		// or queued, installs instead. The terminal stays live throughout.
+		select {
+		case result := <-res:
+			if result.gen == load.currentGen() {
+				load.clear()
+				if result.err != nil {
+					log.Printf("rebuild font: %v", result.err)
+				} else if nr, err := installFaces(result.faces, result.scale, result.dx, result.dy, cs); err != nil {
+					log.Printf("rebuild renderer: %v", err)
+				} else {
+					r = nr
+					pushResize(win, resizeCh, cs, cfgRef)
+				}
+				reload = true
+			}
+		default:
 		}
 		// dt drives the cursor glide; clamp it so a scheduling stall or
 		// compositor hiccup doesn't teleport the cursor across the screen.
@@ -897,7 +1015,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			// should never be missed just because a resize also landed
 			// this frame.
 			if sets := scr.PendingClipboard(); len(sets) > 0 {
-				win.SetClipboardString(sets[len(sets)-1])
+				writeClipboard(win, sets[len(sets)-1])
 			}
 		}
 		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
@@ -915,6 +1033,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			r.RenderScene(bw, bh, cs.w, cs.h, cfg)
 		}
 		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt)
+		r.SetLoading(load.snapshot())
 		r.RenderEffects(w, h, cfg, dt)
 		win.SwapBuffers()
 		lastScr, lastW, lastH, lastScrollLine, lastSel = scr, w, h, scrollLine, *sel

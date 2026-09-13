@@ -2,6 +2,7 @@ package render
 
 import (
 	"github.com/moozd/tubeless/pkg/config"
+	"github.com/moozd/tubeless/pkg/font"
 	"github.com/moozd/tubeless/pkg/screen"
 )
 
@@ -285,11 +286,11 @@ func bgRectEdges(grid [][]screen.Cell, cols, rows int, fgCache, bgCache [][3]flo
 			return false
 		}
 		_, nbg := neighborColors(grid, fgCache, bgCache, cols, cfg, x, y, nx, ny)
-		return nbg == bg
+		return sameSurfaceColor(nbg, bg)
 	}
 	up, right, down, left := same(0, -1), same(1, 0), same(0, 1), same(-1, 0)
 	return rectEdges{
-		Radii:     cornerRadii(cfg.Rounding.Radius, true, true, true, true, up, right, down, left),
+		Radii:     surfaceRadii(cfg.Rounding.Radius, up, right, down, left, same(-1, -1), same(1, -1), same(1, 1), same(-1, 1)),
 		ContUp:    up,
 		ContRight: right,
 		ContDown:  down,
@@ -298,35 +299,131 @@ func bgRectEdges(grid [][]screen.Cell, cols, rows int, fgCache, bgCache [][3]flo
 }
 
 // blockRectEdges is bgRectEdges' counterpart for a single-rect block glyph
-// (font.BlockRect): "continues" additionally requires the neighbor to be
-// the exact same rune and foreground color — a different block shape or
-// color can't visually continue the same rectangle. An edge that isn't on
-// the glyph's own sub-rect boundary (x0/y0/x1/y1 against the cell edge)
-// never counts as continuing, since nothing can continue across a boundary
-// internal to the same cell (e.g. the bottom edge of ▀, the upper-half
-// block) — its corners always round, and it's never overshot.
+// (font.BlockRect). Continuity is geometric, not exact-rune based: a full
+// block beside a left-half block still forms one solid surface across their
+// shared filled edge. An edge that isn't on the glyph's own sub-rect boundary
+// (x0/y0/x1/y1 against the cell edge) never counts as continuing, since
+// nothing can continue across a boundary internal to the same cell (e.g. the
+// bottom edge of ▀, the upper-half block) — its corners always round, and it's
+// never overshot.
 func blockRectEdges(grid [][]screen.Cell, cols, rows int, fgCache, bgCache [][3]float32, cfg config.Config, x, y int, r rune, fg [3]float32, x0, y0, x1, y1 float32) rectEdges {
-	same := func(dx, dy int) bool {
+	type edgeJoin struct {
+		any     bool
+		full    bool
+		atStart bool
+		atEnd   bool
+	}
+	join := func(dx, dy int) edgeJoin {
 		nx, ny := x+dx, y+dy
 		if nx < 0 || nx >= cols || ny < 0 || ny >= rows {
-			return false
+			return edgeJoin{}
 		}
 		n := grid[ny][nx]
-		if n.Rune != r {
-			return false
+		nx0, ny0, nx1, ny1, ok := font.BlockRect(n.Rune)
+		if !ok {
+			return edgeJoin{}
 		}
 		nfg, _ := neighborColors(grid, fgCache, bgCache, cols, cfg, x, y, nx, ny)
-		return nfg == fg
+		if !sameSurfaceColor(nfg, fg) {
+			return edgeJoin{}
+		}
+		switch {
+		case dx < 0:
+			return blockEdgeJoin(x0 == 0 && nx1 == 1, y0, y1, ny0, ny1)
+		case dx > 0:
+			return blockEdgeJoin(x1 == 1 && nx0 == 0, y0, y1, ny0, ny1)
+		case dy < 0:
+			return blockEdgeJoin(y0 == 0 && ny1 == 1, x0, x1, nx0, nx1)
+		case dy > 0:
+			return blockEdgeJoin(y1 == 1 && ny0 == 0, x0, x1, nx0, nx1)
+		default:
+			return edgeJoin{}
+		}
 	}
-	touchTop, touchRight := y0 == 0, x1 == 1
-	touchBottom, touchLeft := y1 == 1, x0 == 0
-	up, right, down, left := same(0, -1), same(1, 0), same(0, 1), same(-1, 0)
+	up, right, down, left := join(0, -1), join(1, 0), join(0, 1), join(-1, 0)
+	diagTL, diagTR := blockCornerNeighbor(grid, cols, rows, fgCache, bgCache, cfg, x, y, -1, -1, fg), blockCornerNeighbor(grid, cols, rows, fgCache, bgCache, cfg, x, y, 1, -1, fg)
+	diagBR, diagBL := blockCornerNeighbor(grid, cols, rows, fgCache, bgCache, cfg, x, y, 1, 1, fg), blockCornerNeighbor(grid, cols, rows, fgCache, bgCache, cfg, x, y, -1, 1, fg)
+	radius := func(joined bool) float32 {
+		if joined {
+			return 0
+		}
+		return cfg.Rounding.Radius
+	}
 	return rectEdges{
-		Radii:     cornerRadii(cfg.Rounding.Radius, touchTop, touchRight, touchBottom, touchLeft, up, right, down, left),
-		ContUp:    touchTop && up,
-		ContRight: touchRight && right,
-		ContDown:  touchBottom && down,
-		ContLeft:  touchLeft && left,
+		Radii: [4]float32{
+			radius(up.atStart || left.atStart || diagTL),
+			radius(up.atEnd || right.atStart || diagTR),
+			radius(down.atEnd || right.atEnd || diagBR),
+			radius(down.atStart || left.atEnd || diagBL),
+		},
+		ContUp:    up.full,
+		ContRight: right.full,
+		ContDown:  down.full,
+		ContLeft:  left.full,
+	}
+}
+
+func surfaceRadii(radius float32, up, right, down, left, diagTL, diagTR, diagBR, diagBL bool) [4]float32 {
+	r := func(joined bool) float32 {
+		if joined {
+			return 0
+		}
+		return radius
+	}
+	return [4]float32{
+		r(up || left || diagTL),
+		r(up || right || diagTR),
+		r(down || right || diagBR),
+		r(down || left || diagBL),
+	}
+}
+
+func blockCornerNeighbor(grid [][]screen.Cell, cols, rows int, fgCache, bgCache [][3]float32, cfg config.Config, x, y, dx, dy int, fg [3]float32) bool {
+	nx, ny := x+dx, y+dy
+	if nx < 0 || nx >= cols || ny < 0 || ny >= rows {
+		return false
+	}
+	n := grid[ny][nx]
+	nx0, ny0, nx1, ny1, ok := font.BlockRect(n.Rune)
+	if !ok {
+		return false
+	}
+	nfg, _ := neighborColors(grid, fgCache, bgCache, cols, cfg, x, y, nx, ny)
+	if !sameSurfaceColor(nfg, fg) {
+		return false
+	}
+	switch {
+	case dx < 0 && dy < 0:
+		return nx1 == 1 && ny1 == 1
+	case dx > 0 && dy < 0:
+		return nx0 == 0 && ny1 == 1
+	case dx > 0 && dy > 0:
+		return nx0 == 0 && ny0 == 0
+	case dx < 0 && dy > 0:
+		return nx1 == 1 && ny0 == 0
+	default:
+		return false
+	}
+}
+
+func sameSurfaceColor(a, b [3]float32) bool {
+	const eps = 1.0 / 1024.0
+	return abs32(a[0]-b[0]) <= eps && abs32(a[1]-b[1]) <= eps && abs32(a[2]-b[2]) <= eps
+}
+
+func blockEdgeJoin(enabled bool, a0, a1, b0, b1 float32) struct{ any, full, atStart, atEnd bool } {
+	if !enabled {
+		return struct{ any, full, atStart, atEnd bool }{}
+	}
+	o0, o1 := max(a0, b0), min(a1, b1)
+	if o0 >= o1 {
+		return struct{ any, full, atStart, atEnd bool }{}
+	}
+	return struct{ any, full, atStart, atEnd bool }{
+		any:     true,
+		full:    o0 <= a0 && a1 <= o1,
+		atStart: o0 <= a0 && a0 < o1,
+		atEnd:   o0 < a1 && a1 <= o1,
 	}
 }
 

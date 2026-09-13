@@ -247,6 +247,9 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 			}
 			if bg != empty {
 				e := bgRectEdges(grid, scr.Cols, scr.Rows, cp.fgCache, cp.bgCache, cfg, x, y, bg)
+				if isStructuralRune(cell.Rune) {
+					e.Radii = [4]float32{}
+				}
 				rx, ry, rw, rh := expandRect(0, 0, 1, 1, cw, ch, e)
 				cp.bgScratch = appendRectInstance(cp.bgScratch, px, py, rx, ry, rw, rh, bg, e.Radii)
 			}
@@ -290,6 +293,11 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 			cp.textScratch = appendGlyphInstance(cp.textScratch, px, py, u0, v0, us, vs, fg, bg, style, shear)
 		}
 	}
+}
+
+func isStructuralRune(r rune) bool {
+	_, _, _, _, ok := font.BlockRect(r)
+	return ok || font.IsShapeRune(r)
 }
 
 // glyphUV converts a Glyph's pixel rect within atlas into normalized
@@ -552,6 +560,41 @@ func (cp *CellPass) drawRects(instances []float32, cw, ch, screenW, screenH, off
 	gl.UseProgram(cp.progRect)
 	setCommonUniforms(cp.progRect, cw, ch, screenW, screenH, offsetX, offsetY)
 	uploadAndDrawInstances(cp.rectVAO, cp.rectInstVBO, instances, rectInstanceFloats)
+}
+
+// DrawTextString draws a short string of glyphs onto the default framebuffer,
+// with the first glyph's cell top-left at (x, y) pixels. It's the overlay's
+// title/phase/percentage text: drawn while a font rebuild is in flight, it
+// always samples the current, still-live atlas. bold selects the Bold cut for
+// the title. color is passed for both fg and bg, which makes
+// cell_glyph.frag's linear-corrected blend a no-op — correct over an
+// arbitrary panel color rather than a flat terminal cell background.
+func (cp *CellPass) DrawTextString(text string, x, y, cw, ch float32, color [3]float32, bold bool, outW, outH float32) {
+	atlas := cp.faces.Regular
+	style := float32(styleRegular)
+	if bold {
+		atlas = cp.faces.Bold
+		style = styleBold
+	}
+	rs := []rune(text)
+	inst := make([]float32, 0, len(rs)*glyphInstanceFloats)
+	for i, r := range rs {
+		g, ok := atlas.Glyphs[r]
+		if !ok {
+			continue
+		}
+		u0, v0, us, vs := glyphUV(atlas, g)
+		inst = appendGlyphInstance(inst, x+float32(i)*cw, y, u0, v0, us, vs, color, color, style, 0)
+	}
+	if len(inst) == 0 {
+		return
+	}
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+	gl.Viewport(0, 0, int32(outW), int32(outH))
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+	cp.drawGlyphs(inst, cw, ch, outW, outH, 0, 0)
+	gl.Disable(gl.BLEND)
 }
 
 func setCommonUniforms(prog uint32, cw, ch, screenW, screenH, offsetX, offsetY float32) {

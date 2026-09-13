@@ -15,6 +15,10 @@ func TestEncodeMouseEvent(t *testing.T) {
 	if want := "\x1b[<68;1;1M"; got != want {
 		t.Fatalf("EncodeMouseEvent wheel+shift = %q, want %q", got, want)
 	}
+	got = string(EncodeMouseEvent(true, MouseButtonNone, MouseMotion, 4, 9, false, false, false))
+	if want := "\x1b[<35;5;10M"; got != want {
+		t.Fatalf("EncodeMouseEvent hover = %q, want %q", got, want)
+	}
 }
 
 func TestEncodeMouseEventLegacy(t *testing.T) {

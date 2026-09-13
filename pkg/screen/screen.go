@@ -55,6 +55,27 @@ type Screen struct {
 	// from a plain CSI sequence. See cmd/tubeless/input.go's encodeCursorKey.
 	ApplicationCursorKeys bool
 
+	// ModifyOtherKeys is xterm's "CSI > 4 ; Pm m" level (0 off, 2 = report
+	// all modified keys). tmux's extended-keys option sends 2 so the
+	// terminal disambiguates modifiers it would otherwise drop — e.g.
+	// Shift+Enter. Unlike the kitty protocol below, this is a single
+	// global DEC-style mode: it survives the alt-screen switch and clears
+	// only on RIS.
+	ModifyOtherKeys int
+
+	// kitty keyboard protocol state, independent per main/alternate screen
+	// (the spec requires separate push/pop stacks so an editor on the alt
+	// screen can't clobber the shell's mode). Selected via usingAlt — see
+	// KittyFlags.
+	kittyMain kittyKeyboard
+	kittyAlt  kittyKeyboard
+
+	// pendingResponses holds byte sequences the terminal must write back to
+	// the child PTY (e.g. the kitty protocol's "CSI ? u" query response).
+	// Set by the handler (see AppendResponse), drained by cmd/tubeless's
+	// ptyCoordinator (DrainResponses) right where it owns the PTY write.
+	pendingResponses [][]byte
+
 	// pendingClipboard records text an app asked to set the system
 	// clipboard to via OSC 52 (see handler.go's dispatchOSC52) since the
 	// last ClearPendingClipboard — e.g. tmux's copy-mode relaying a yank
@@ -64,6 +85,40 @@ type Screen struct {
 	// consumes this (via PendingClipboard, on a published clone) and
 	// forwards the text to the real system clipboard.
 	pendingClipboard []string
+}
+
+// kittyKeyboard is the kitty keyboard protocol state for one screen: the
+// current flag bitmask and the push/pop stack backing it. See the kitty
+// protocol spec for the flag meanings; the constants live in csi.go.
+type kittyKeyboard struct {
+	flags int
+	stack []int
+}
+
+// KittyFlags returns the kitty keyboard protocol flag bitmask active for
+// the current screen (main or alternate). Read by cmd/tubeless's input
+// handling to decide how to encode key events.
+func (s *Screen) KittyFlags() int {
+	return s.kitty().flags
+}
+
+func (s *Screen) kitty() *kittyKeyboard {
+	if s.usingAlt {
+		return &s.kittyAlt
+	}
+	return &s.kittyMain
+}
+
+// AppendResponse queues a byte sequence to write back to the child PTY.
+func (s *Screen) AppendResponse(b []byte) {
+	s.pendingResponses = append(s.pendingResponses, b)
+}
+
+// DrainResponses returns and clears every queued response, oldest first.
+func (s *Screen) DrainResponses() [][]byte {
+	r := s.pendingResponses
+	s.pendingResponses = nil
+	return r
 }
 
 // PendingClipboard returns the OSC 52 clipboard-set requests recorded
@@ -157,6 +212,10 @@ func (s *Screen) Clone() *Screen {
 		c.Grid[y] = append([]Cell(nil), row...)
 	}
 	c.Images = append([]PlacedImage(nil), s.Images...)
+	// The kitty stacks are small but append-backed: deep-copy so a
+	// published clone can never alias the live screen's slice backing.
+	c.kittyMain.stack = append([]int(nil), s.kittyMain.stack...)
+	c.kittyAlt.stack = append([]int(nil), s.kittyAlt.stack...)
 	// scrollback is copy-on-write (see its doc comment): the struct copy
 	// above already carries the pointer over, and appendScrollback never
 	// mutates a *scrollbackBuf a clone might be holding, only replaces

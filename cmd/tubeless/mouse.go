@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-gl/glfw/v3.4/glfw"
 
+	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/ptyio"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
@@ -49,7 +50,7 @@ type mouseState struct {
 // of local selection/scroll vs. VT reporting applies is decided per-event
 // from the latest published Screen's MouseMode: an app that wants mouse
 // events gets them instead of the terminal handling clicks/wheel itself.
-func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, sel *render.Selection) {
+func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection) {
 	ms := &mouseState{sel: sel}
 
 	win.SetScrollCallback(func(_ *glfw.Window, _, yoff float64) {
@@ -60,7 +61,8 @@ func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 				btn = screen.MouseWheelUp
 			}
 			shift, alt, ctrl := currentMods(win)
-			x, y := cellAt(win, cs)
+			x, y := cellAt(win, cs, cfgRef.Load().CRT.AspectRatio)
+			x, y = clampCell(scr, x, y)
 			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, btn, screen.MousePress, x, y, shift, alt, ctrl))
 			return
 		}
@@ -79,7 +81,8 @@ func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 			return
 		}
 		scr := shared.Load()
-		x, y := cellAt(win, cs)
+		x, y := cellAt(win, cs, cfgRef.Load().CRT.AspectRatio)
+		x, y = clampCell(scr, x, y)
 
 		if action == glfw.Press {
 			ms.reporting = scr.MouseMode != screen.MouseOff
@@ -121,15 +124,16 @@ func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 	})
 
 	win.SetCursorPosCallback(func(_ *glfw.Window, xpos, ypos float64) {
-		x, y := cellFromPixels(xpos, ypos, cs)
+		x, y := cellFromPixels(win, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio)
+		scr := shared.Load()
+		x, y = clampCell(scr, x, y)
 		if x == ms.lastX && y == ms.lastY {
 			return
 		}
 		ms.lastX, ms.lastY = x, y
 
-		scr := shared.Load()
 		switch {
-		case ms.reporting && scr.MouseMode == screen.MouseAny:
+		case scr.MouseMode == screen.MouseAny:
 			shift, alt, ctrl := currentMods(win)
 			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, screen.MouseButtonNone, screen.MouseMotion, x, y, shift, alt, ctrl))
 		case ms.reporting && scr.MouseMode == screen.MouseDrag:
@@ -165,29 +169,51 @@ func currentMods(win *render.Window) (shift, alt, ctrl bool) {
 // cellAt is cellFromPixels for the cursor's current position — used by
 // callbacks (scroll, button press/release) that don't already have a
 // fresh xpos/ypos the way the cursor-position callback does.
-func cellAt(win *render.Window, cs *cellSize) (x, y int) {
+func cellAt(win *render.Window, cs *cellSize, ar config.AspectRatio) (x, y int) {
 	xpos, ypos := win.GetCursorPos()
-	return cellFromPixels(xpos, ypos, cs)
+	return cellFromPixels(win, xpos, ypos, cs, ar)
 }
 
 // cellFromPixels converts a GLFW cursor position (screen/logical
-// coordinates) to a grid cell, clamped to the visible grid. cs.w/h are
-// physical-pixel cell sizes (see cellSize), so the logical position is
-// scaled by the content-scale factor first to land in the same space —
-// the same relationship pushResizeSize uses going the other direction.
-func cellFromPixels(xpos, ypos float64, cs *cellSize) (x, y int) {
+// coordinates) to a grid cell in the letterboxed content viewport. cs.w/h
+// are physical-pixel cell sizes (see cellSize), so the logical position is
+// scaled by the content-scale factor first to land in the same space — the
+// same relationship pushResizeSize uses going the other direction.
+func cellFromPixels(win *render.Window, xpos, ypos float64, cs *cellSize, ar config.AspectRatio) (x, y int) {
+	w, h := win.FramebufferPixelSize()
+	return cellFromFramebufferPixels(float32(xpos)*cs.dpiX, float32(ypos)*cs.dpiY, w, h, cs, ar)
+}
+
+func cellFromFramebufferPixels(px, py float32, w, h int, cs *cellSize, ar config.AspectRatio) (x, y int) {
 	if cs.w <= 0 || cs.h <= 0 {
 		return 0, 0
 	}
-	x = int(float32(xpos) * cs.dpiX / cs.w)
-	y = int(float32(ypos) * cs.dpiY / cs.h)
+	bx, by, bw, bh := render.LetterboxBox(ar, w, h)
+	px = clampFloat32(px-float32(bx), 0, float32(max(bw-1, 0)))
+	py = clampFloat32(py-float32(by), 0, float32(max(bh-1, 0)))
+	x = int(px / cs.w)
+	y = int(py / cs.h)
 	return max(0, x), max(0, y)
 }
 
+func clampCell(scr *screen.Screen, x, y int) (int, int) {
+	return clampInt(x, 0, max(scr.Cols-1, 0)), clampInt(y, 0, max(scr.Rows-1, 0))
+}
+
+func clampFloat32(v, lo, hi float32) float32 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 // copySelectionToClipboard extracts sel's text from the current grid and
-// sets it as the clipboard contents via GLFW (cross-platform: X11/Wayland
-// selection on Linux, NSPasteboard on macOS — no xclip/pbcopy shelling
-// out needed). A no-op for an empty selection (a click with no drag).
+// sets it as the clipboard contents via writeClipboard (GLFW on macOS/X11,
+// both Wayland and X11 on the Wayland build). A no-op for an empty
+// selection (a click with no drag).
 func copySelectionToClipboard(win *render.Window, shared *atomic.Pointer[screen.Screen], sel render.Selection) {
 	if !sel.Active {
 		return
@@ -216,7 +242,7 @@ func copySelectionToClipboard(win *render.Window, shared *atomic.Pointer[screen.
 			b.WriteByte('\n')
 		}
 	}
-	win.SetClipboardString(b.String())
+	writeClipboard(win, b.String())
 }
 
 func clampInt(v, lo, hi int) int {

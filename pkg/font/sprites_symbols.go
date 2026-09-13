@@ -6,12 +6,15 @@ import (
 )
 
 // Procedural fallbacks for common "symbol" codepoints (checks, crosses,
-// arrows) that the bundled FiraCode Nerd Font Propo doesn't actually ship —
-// these show up in shell prompts (robbyrussell's ➜ and ✗, git arrows) and TUI
-// decorations, and a missing glyph currently renders as an empty cell. Unlike
-// the box/block/powerline sprites, these are only used when the loaded font
-// has no glyph of its own: Build appends them to the rune list solely when
-// the font lacks the codepoint, so a font that does carry a real ➜ keeps it.
+// arrows, stars, warning sign, media controls) that the bundled FiraCode
+// Nerd Font Propo doesn't actually ship — these show up in shell prompts
+// (robbyrussell's ➜ and ✗, git arrows, ★/⚠ status icons) and TUI
+// decorations, and a missing glyph currently renders as an empty cell.
+// Unlike the box/block/powerline sprites, these are only drawn when neither
+// the loaded font nor the fallback font has a real glyph for the codepoint:
+// Build records which symbol runes are genuinely missing in
+// proceduralSymbols, and spriteGlyph routes only those to the geometry
+// below — a font that does carry a real ➜ or ✓ keeps it.
 //
 // Each shape is drawn in a unit [0,1] coordinate space that is mapped with a
 // single uniform scale into a centred icon box that fills most of the cell
@@ -35,6 +38,13 @@ var symbolRunes = []rune{
 	0x23FA, // ⏺ black circle for record (Claude Code's status bullet)
 	0x2B24, // ⬤ black large circle
 	0x26AB, // ⚫ medium black circle
+	0x26A0, // ⚠ warning sign (prompt status)
+	0x2605, // ★ black star
+	0x2606, // ☆ white star
+	0x2726, // ✦ black four-pointed star
+	0x2727, // ✧ white four-pointed star
+	0x23F8, // ⏸ pause (TUI media controls)
+	0x23F9, // ⏹ stop (TUI media controls)
 }
 
 func isSymbolSprite(r rune) bool {
@@ -92,6 +102,48 @@ func drawSymbolSprite(r rune, img *image.Alpha, gx, gy, cellW, cellH int) {
 			du, dv := u-0.5, v-0.5
 			return du*du+dv*dv <= 0.5*0.5
 		}
+	case 0x23F8: // ⏸ pause: two side-by-side bars
+		pred = func(x, y float64) bool {
+			u, v := toUnit(x, y)
+			return (u >= 0.25 && u <= 0.4 || u >= 0.6 && u <= 0.75) &&
+				v >= 0.22 && v <= 0.78
+		}
+	case 0x23F9: // ⏹ stop: one filled square
+		pred = func(x, y float64) bool {
+			u, v := toUnit(x, y)
+			return u >= 0.22 && u <= 0.78 && v >= 0.22 && v <= 0.78
+		}
+	case 0x26A0: // ⚠ filled triangle with the exclamation carved out
+		pred = func(x, y float64) bool {
+			u, v := toUnit(x, y)
+			if !inTri(u, v,
+				[2]float64{0.5, 0.05},
+				[2]float64{0.06, 0.9},
+				[2]float64{0.94, 0.9}) {
+				return false
+			}
+			if u >= 0.45 && u <= 0.55 && v >= 0.34 && v <= 0.6 {
+				return false // exclamation bar
+			}
+			du, dv := u-0.5, v-0.74
+			return !(du*du+dv*dv <= 0.055*0.055) // exclamation dot
+		}
+	case 0x2605: // ★ filled 5-point star
+		star := starVertices(0.5, 0.5, 0.5, 0.19, 5)
+		pred = func(x, y float64) bool {
+			u, v := toUnit(x, y)
+			return inPoly(u, v, star)
+		}
+	case 0x2606: // ☆ outline 5-point star
+		pred = unitStroke(toUnit, starSegments(0.5, 0.5, 0.5, 0.19, 5), halfU)
+	case 0x2726: // ✦ filled 4-point star
+		star := starVertices(0.5, 0.5, 0.5, 0.16, 4)
+		pred = func(x, y float64) bool {
+			u, v := toUnit(x, y)
+			return inPoly(u, v, star)
+		}
+	case 0x2727: // ✧ outline 4-point star
+		pred = unitStroke(toUnit, starSegments(0.5, 0.5, 0.5, 0.16, 4), halfU)
 	default:
 		return
 	}
@@ -121,4 +173,49 @@ func unitStroke(toUnit func(x, y float64) (u, v float64), segs []segment, halfU 
 		}
 		return false
 	}
+}
+
+// starVertices returns the 2n vertices of an n-pointed star (alternating
+// outer and inner radii, starting at the top) centred at (cx, cy) in unit
+// space. A classic 5-point star is n=5; a 4-point sparkle (✦✧) is n=4.
+func starVertices(cx, cy, rOuter, rInner float64, n int) [][2]float64 {
+	out := make([][2]float64, 0, 2*n)
+	for i := 0; i < 2*n; i++ {
+		ang := -math.Pi/2 + float64(i)*math.Pi/float64(n)
+		r := rOuter
+		if i%2 == 1 {
+			r = rInner
+		}
+		out = append(out, [2]float64{cx + r*math.Cos(ang), cy + r*math.Sin(ang)})
+	}
+	return out
+}
+
+// starSegments returns the closed outline segments of an n-pointed star (see
+// starVertices), for unitStroke to stroke as an outline (☆✧).
+func starSegments(cx, cy, rOuter, rInner float64, n int) []segment {
+	verts := starVertices(cx, cy, rOuter, rInner, n)
+	segs := make([]segment, 0, len(verts))
+	for i := range verts {
+		a, b := verts[i], verts[(i+1)%len(verts)]
+		segs = append(segs, seg(a[0], a[1], b[0], b[1]))
+	}
+	return segs
+}
+
+// inPoly reports whether (x, y) lies inside the closed polygon verts, by
+// even-odd ray casting. Used to fill the star shapes (★✦) drawn as
+// alternating outer/inner vertices.
+func inPoly(x, y float64, verts [][2]float64) bool {
+	inside := false
+	j := len(verts) - 1
+	for i := range verts {
+		xi, yi := verts[i][0], verts[i][1]
+		xj, yj := verts[j][0], verts[j][1]
+		if (yi > y) != (yj > y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi {
+			inside = !inside
+		}
+		j = i
+	}
+	return inside
 }

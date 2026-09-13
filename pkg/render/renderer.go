@@ -9,6 +9,17 @@ import (
 	"github.com/moozd/tubeless/pkg/screen"
 )
 
+// Loading is the state for the in-progress overlay: a modal with a title,
+// phase label and progress bar, drawn over a dimmed frame while a font or
+// atlas rebuild runs off the render thread (see Renderer.SetLoading).
+type Loading struct {
+	Active bool
+	Title  string
+	Phase  string
+	Done   int
+	Total  int
+}
+
 // Renderer owns the pipeline that turns the sharp cell grid into the
 // tubeless screen:
 //
@@ -36,6 +47,7 @@ type Renderer struct {
 	cursorPass  *CursorPass
 	insetPass   *InsetPass
 	persistPass *PersistPass
+	overlayPass *OverlayPass
 	shapeFBO    *FBO
 	blurFBO     *FBO
 	sceneFBO    *FBO
@@ -66,6 +78,10 @@ type Renderer struct {
 	scrollOffset float32
 
 	pendingImages []screen.PlacedImage
+
+	// loading is the current in-progress overlay state (see SetLoading);
+	// when Active, RenderEffects draws the modal over the frame.
+	loading Loading
 }
 
 // Cursor glide tuning: UpdateCursor's exponential-approach rate (per
@@ -115,6 +131,10 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("persist pass: %w", err)
 	}
+	overlayPass, err := NewOverlayPass()
+	if err != nil {
+		return nil, fmt.Errorf("overlay pass: %w", err)
+	}
 	return &Renderer{
 		cellPass:    cellPass,
 		imagePass:   imagePass,
@@ -123,6 +143,7 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 		cursorPass:  cursorPass,
 		insetPass:   insetPass,
 		persistPass: persistPass,
+		overlayPass: overlayPass,
 		shapeFBO:    newSRGBFBO(2, 2),
 		blurFBO:     newSRGBFBO(2, 2),
 		sceneFBO:    newSRGBFBO(2, 2),
@@ -297,4 +318,67 @@ func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config, dt float64) 
 		sceneTex = tex
 	}
 	r.insetPass.Draw(sceneTex, r.cursorFBO.tex, cfg, outW, outH, r.effectsTime)
+
+	if r.loading.Active {
+		r.drawOverlay(outW, outH, cfg)
+	}
+}
+
+// SetLoading replaces the overlay state the next RenderEffects draws. Active
+// shows the modal; Done/Total drive the progress bar (Total <= 0 shows an
+// indeterminate/empty bar).
+func (r *Renderer) SetLoading(l Loading) {
+	r.loading = l
+}
+
+// drawOverlay renders the loading modal over the just-composited frame: a dim
+// backdrop, a centered panel 40% of the window wide, left-aligned title +
+// phase text, and a pill progress bar with a percentage. Text samples the
+// current atlas (still live during a rebuild); the panel/bar are SDF shapes
+// (see OverlayPass).
+func (r *Renderer) drawOverlay(outW, outH int, cfg config.Config) {
+	cw, ch := r.cellW, r.cellH
+	if cw <= 0 || ch <= 0 {
+		return
+	}
+	l := r.loading
+
+	panelW := float32(outW) * 0.4
+	panelH := 5.6 * ch
+	px := (float32(outW) - panelW) / 2
+	py := (float32(outH) - panelH) / 2
+
+	frac := float32(0)
+	if l.Total > 0 {
+		frac = float32(l.Done) / float32(l.Total)
+		frac = max(0, min(1, frac))
+	}
+
+	low, high := cfg.Phosphor.Low, cfg.Phosphor.High
+	dim := float32(0.5)
+	panelColor := [4]float32{low[0] * 0.12, low[1] * 0.12, low[2] * 0.12, 0.97}
+	borderColor := [4]float32{low[0] * 0.5, low[1] * 0.5, low[2] * 0.5, 1}
+	track := [4]float32{low[0] * 0.4, low[1] * 0.4, low[2] * 0.4, 1}
+	fill := [4]float32{high[0], high[1], high[2], 1}
+	titleColor := high
+	phaseColor := [3]float32{high[0] * 0.7, high[1] * 0.7, high[2] * 0.7}
+	pctColor := [3]float32{high[0] * 0.85, high[1] * 0.85, high[2] * 0.85}
+
+	padX := cw
+	left := px + padX
+	barX := left
+	barY := py + 3.0*ch
+	barW := panelW - 2*padX
+	barH := 0.5 * ch
+	radius := float32(10)
+
+	r.overlayPass.Draw(outW, outH,
+		[4]float32{px, py, panelW, panelH}, radius, panelColor, borderColor, 1,
+		[4]float32{barX, barY, barW, barH}, barH/2, track, fill, frac, dim)
+
+	r.cellPass.DrawTextString(l.Title, left, py+0.5*ch, cw, ch, titleColor, true, float32(outW), float32(outH))
+	r.cellPass.DrawTextString(l.Phase, left, py+1.55*ch, cw, ch, phaseColor, false, float32(outW), float32(outH))
+
+	pct := fmt.Sprintf("%d%%", int(frac*100+0.5))
+	r.cellPass.DrawTextString(pct, left, py+4.0*ch, cw, ch, pctColor, false, float32(outW), float32(outH))
 }

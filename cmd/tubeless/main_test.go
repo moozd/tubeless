@@ -95,3 +95,31 @@ func TestBuildFacesForClampsOversizedScale(t *testing.T) {
 		t.Fatal("buildFacesFor returned no usable faces")
 	}
 }
+
+func TestCellFromFramebufferPixelsUsesLetterbox(t *testing.T) {
+	cs := &cellSize{w: 10, h: 10, dpiX: 1, dpiY: 1}
+	ar := config.AspectRatio{Width: 4, Height: 3}
+
+	x, y := cellFromFramebufferPixels(187, 30, 1000, 500, cs, ar)
+	if x != 2 || y != 3 {
+		t.Fatalf("cell = (%d,%d), want (2,3)", x, y)
+	}
+
+	x, y = cellFromFramebufferPixels(10, 30, 1000, 500, cs, ar)
+	if x != 0 || y != 3 {
+		t.Fatalf("left bar cell = (%d,%d), want (0,3)", x, y)
+	}
+
+	x, y = cellFromFramebufferPixels(990, 30, 1000, 500, cs, ar)
+	if x != 66 || y != 3 {
+		t.Fatalf("right bar cell = (%d,%d), want (66,3)", x, y)
+	}
+}
+
+func TestClampCell(t *testing.T) {
+	s := screen.New(80, 24)
+	x, y := clampCell(s, 99, -4)
+	if x != 79 || y != 0 {
+		t.Fatalf("clamped cell = (%d,%d), want (79,0)", x, y)
+	}
+}

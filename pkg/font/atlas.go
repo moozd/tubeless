@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"log"
 	"math"
 )
 
@@ -48,12 +49,21 @@ type Atlas struct {
 	Glyphs     map[rune]Glyph
 }
 
+// Progress reports build progress: phase names the current stage (e.g.
+// "Rasterizing bold"), done/total are the glyphs rasterized within it.
+// It is invoked on the caller's goroutine from Build/BuildFaces; nil
+// disables reporting (existing callers are unaffected).
+type Progress func(phase string, done, total int)
+
 // maxAtlasRunes bounds how many codepoints EnumerateRunes will return, so
-// an unusually broad font (e.g. one with real CJK coverage) can't blow the
-// atlas texture past typical GL_MAX_TEXTURE_SIZE limits or make startup
-// unreasonably slow. Comfortably covers a Latin coding font's own glyphs
-// plus a full Nerd Font icon patch (a few thousand codepoints).
-const maxAtlasRunes = 16384
+// an unusually broad font (e.g. one with real CJK coverage) can't make
+// startup unreasonably slow. Sized to cover any real font's full cmap —
+// a large CJK font plus a complete Nerd Font icon patch — well past the
+// bundled font's ~12,000. The atlas texture's own GL_MAX_TEXTURE_SIZE limit
+// is enforced separately by Build's maxTextureSize check (with a clear
+// error); this cap exists only to bound rasterization time, and crossing it
+// now logs a warning rather than silently dropping glyphs.
+const maxAtlasRunes = 65536
 
 // EnumerateRunes returns every codepoint fontBytes has a glyph for, via
 // the font's own charmap — see ftFace.enumerateRunes.
@@ -72,6 +82,7 @@ func EnumerateRunes(fontBytes []byte) ([]rune, error) {
 
 	runes := face.enumerateRunes()
 	if len(runes) > maxAtlasRunes {
+		log.Printf("font enumerates %d codepoints; truncating to %d — some glyphs will not render", len(runes), maxAtlasRunes)
 		runes = runes[:maxAtlasRunes]
 	}
 	return runes, nil
@@ -116,6 +127,13 @@ func EnumerateRunes(fontBytes []byte) ([]rune, error) {
 // seeing an error. maxTextureSize <= 0 disables the check (tests that
 // don't have a GL context to size against).
 func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale int, lineHeight float64, fallbackBytes []byte, maxTextureSize int) (*Atlas, error) {
+	return build(fontBytes, runes, pixelHeight, gamma, scale, lineHeight, fallbackBytes, maxTextureSize, nil)
+}
+
+// build is Build with progress reporting during rasterization. progress
+// receives (done, total) glyph counts as the raster loop advances; nil
+// disables it.
+func build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale int, lineHeight float64, fallbackBytes []byte, maxTextureSize int, progress func(done, total int)) (*Atlas, error) {
 	SetOvershoot(scale)
 	lib, err := newFTLibrary()
 	if err != nil {
@@ -153,20 +171,14 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 			have[r] = true
 		}
 	}
-	// Symbol fallbacks (checks, crosses, arrows) are added only when the font
-	// genuinely lacks the codepoint — a font that carries a real glyph for
-	// them keeps it (see sprites_symbols.go).
-	for _, r := range symbolRunes {
-		if !have[r] {
-			runes = append(runes, r)
-			have[r] = true
-		}
-	}
 
 	// Any codepoint fontBytes lacks but fallbackBytes has — icon ranges
 	// especially — is rasterized from fallbackBytes instead of left
 	// blank. fromFallback records which, so the raster loop below knows
-	// which face to actually pull the bitmap from.
+	// which face to actually pull the bitmap from. This runs before the
+	// symbol fallback pass so a symbol the fallback font ships (e.g. ✓ in
+	// the bundled Nerd Font) is kept as a real glyph rather than being
+	// preempted by a procedural one.
 	var fallbackFace *ftFace
 	fromFallback := make(map[rune]bool)
 	if fallbackBytes != nil {
@@ -184,6 +196,19 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 				have[r] = true
 				fromFallback[r] = true
 			}
+		}
+	}
+
+	// Symbol fallbacks (checks, crosses, arrows, stars, ...) are drawn
+	// procedurally only when neither the loaded font nor fallbackBytes
+	// ships a real glyph — proceduralSymbols records exactly which, so
+	// spriteGlyph can keep a font's real ✓/➜ (see sprites_symbols.go).
+	proceduralSymbols := make(map[rune]bool)
+	for _, r := range symbolRunes {
+		if !have[r] {
+			runes = append(runes, r)
+			have[r] = true
+			proceduralSymbols[r] = true
 		}
 	}
 
@@ -219,9 +244,12 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 	}
 
 	for i, r := range runes {
+		if progress != nil && (i&0xFF) == 0 {
+			progress(i, len(runes))
+		}
 		gx := (i%cols)*packedW + glyphPadding
 		gy := (i/cols)*packedH + glyphPadding
-		if !spriteGlyph(r, atlas.Image, gx, gy, cellW, cellH) {
+		if !spriteGlyph(r, atlas.Image, gx, gy, cellW, cellH, proceduralSymbols) {
 			src := face
 			if fromFallback[r] {
 				src = fallbackFace
@@ -229,6 +257,9 @@ func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 			blitGlyph(src, r, atlas.Image, gx, gy, cellW, cellH, ascender, gamma)
 		}
 		atlas.Glyphs[r] = Glyph{X: gx, Y: gy, W: cellW, H: cellH}
+	}
+	if progress != nil {
+		progress(len(runes), len(runes))
 	}
 	return atlas, nil
 }
@@ -276,7 +307,7 @@ type Faces struct {
 // missing, so the icon set available doesn't depend on which family
 // config.Font.Family names — see Build's fallbackBytes. maxTextureSize is
 // forwarded to every Build call — see Build's own doc comment.
-func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int, lineHeight float64, maxTextureSize int) (*Faces, error) {
+func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int, lineHeight float64, maxTextureSize int, progress Progress) (*Faces, error) {
 	build := func(name string, b, fallback []byte) (*Atlas, error) {
 		if b == nil {
 			return nil, nil
@@ -285,7 +316,11 @@ func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int, line
 		if err != nil {
 			return nil, fmt.Errorf("enumerate %s glyphs: %w", name, err)
 		}
-		atlas, err := Build(b, runes, pixelHeight, gamma, scale, lineHeight, fallback, maxTextureSize)
+		atlas, err := build(b, runes, pixelHeight, gamma, scale, lineHeight, fallback, maxTextureSize, func(done, total int) {
+			if progress != nil {
+				progress("Rasterizing "+name, done, total)
+			}
+		})
 		if err != nil {
 			return nil, fmt.Errorf("build %s atlas: %w", name, err)
 		}
