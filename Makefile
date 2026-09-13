@@ -1,6 +1,6 @@
-.PHONY: build build-x11 tubeless tubeless-config tektest test clean \
+.PHONY: build build-x11 tubeless tubeless-config tektest tubeless-icons test clean \
         install uninstall install-darwin uninstall-darwin help \
-        run-green run-amber run-config package-linux package-darwin
+        run-green run-amber run-config run-icons package-linux package-darwin
 
 BINARY_NAME=tubeless
 BIN_DIR=bin
@@ -34,12 +34,13 @@ help:
 	@echo "                        Linux; the 'wayland' build tag is a no-op on"
 	@echo "                        macOS/Windows, which always use their own"
 	@echo "                        native Cocoa/Win32 backend regardless),"
-	@echo "                        tubeless-config, and tektest"
+	@echo "                        tubeless-config, tektest, and tubeless-icons"
 	@echo "  make build-x11      - Build tubeless for X11 instead, for Linux"
 	@echo "                        desktops without a Wayland compositor"
 	@echo "  make run-green      - Build and run tubeless (green theme) with tektest"
 	@echo "  make run-amber      - Build and run tubeless (amber theme) with tektest"
 	@echo "  make run-config     - Run 'tubeless config' (the in-terminal settings UI)"
+	@echo "  make run-icons      - Build and run the glyph/icon coverage previewer"
 	@echo "  make test           - Run tests"
 	@echo "  make install        - Linux: build + install tubeless/tubeless-config,"
 	@echo "                        a .desktop entry, and an icon to \$$PREFIX"
@@ -64,7 +65,7 @@ help:
 	@echo "                        actual Mac of that architecture."
 	@echo "  make clean          - Remove build artifacts"
 
-build: tubeless tubeless-config tektest
+build: tubeless tubeless-config tektest tubeless-icons
 
 build-x11:
 	@mkdir -p $(BIN_DIR)
@@ -88,6 +89,13 @@ tektest:
 	go build -o $(BIN_DIR)/tektest ./cmd/tektest
 	@echo "Built $(BIN_DIR)/tektest"
 
+# tubeless-icons is the glyph/icon coverage previewer; run inside tubeless so
+# it renders through the real atlas (see cmd/tubeless-icons/main.go).
+tubeless-icons:
+	@mkdir -p $(BIN_DIR)
+	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/tubeless-icons ./cmd/tubeless-icons
+	@echo "Built $(BIN_DIR)/tubeless-icons"
+
 run-green: build
 	$(BIN_DIR)/$(BINARY_NAME) --theme=green --shell=$(BIN_DIR)/tektest
 
@@ -96,6 +104,9 @@ run-amber: build
 
 run-config: build
 	$(BIN_DIR)/$(BINARY_NAME) config
+
+run-icons: tubeless-icons
+	$(BIN_DIR)/$(BINARY_NAME) --shell=$(BIN_DIR)/tubeless-icons
 
 test:
 	go test -v ./...
