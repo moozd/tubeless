@@ -184,25 +184,31 @@ func attachInstanceAttrib(loc uint32, size int32, stride int32, offset int) {
 	gl.VertexAttribDivisor(loc, 1)
 }
 
-// RowShift nudges every cell in rows [Top,Bottom] (inclusive) by OffsetPx
-// physical pixels vertically, on top of their normal y*ch grid position.
-// It's how the "content just scrolled" glide (see
-// Renderer.ApplyDetectedRowShift) reads as a continuous slide instead of
-// an instant cut: the affected band renders a few pixels off its resting
-// position and eases back to zero over a few frames. The zero value is a
-// no-op (Bottom < Top matches no row).
+// RowShift nudges every cell in rows [Top,Bottom] (inclusive), within
+// columns [Left,Right] (inclusive), by OffsetPx physical pixels
+// vertically, on top of its normal y*ch grid position. It's how the
+// "content just scrolled" glide (see Renderer.ApplyDetectedRowShift)
+// reads as a continuous slide instead of an instant cut: the affected
+// band renders a few pixels off its resting position and eases back to
+// zero over a few frames. Left/Right confine the glide to one split
+// pane's columns when the detected shift didn't span the whole width
+// (see screen.RowShift) — a frozen neighboring pane sharing the same
+// physical rows must not slide along with it. The zero value is a no-op
+// (Bottom < Top matches no row).
 type RowShift struct {
 	Top, Bottom int
+	Left, Right int
 	OffsetPx    float32
 }
 
 // ColShift is RowShift's horizontal mirror: it nudges every cell in
-// columns [Left,Right] (inclusive) by OffsetPx physical pixels
-// horizontally, on top of its normal x*cw grid position. See
-// Renderer.ApplyDetectedColShift. The zero value is a no-op (Right <
-// Left matches no column).
+// columns [Left,Right] (inclusive), within rows [Top,Bottom] (inclusive),
+// by OffsetPx physical pixels horizontally, on top of its normal x*cw
+// grid position. See Renderer.ApplyDetectedColShift. The zero value is a
+// no-op (Right < Left matches no column).
 type ColShift struct {
 	Left, Right int
+	Top, Bottom int
 	OffsetPx    float32
 }
 
@@ -238,10 +244,10 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				fg, bg = bg, fg
 			}
 			px, py := float32(x)*cw, float32(y)*ch
-			if y >= rowShift.Top && y <= rowShift.Bottom {
+			if y >= rowShift.Top && y <= rowShift.Bottom && x >= rowShift.Left && x <= rowShift.Right {
 				py += rowShift.OffsetPx
 			}
-			if x >= colShift.Left && x <= colShift.Right {
+			if x >= colShift.Left && x <= colShift.Right && y >= colShift.Top && y <= colShift.Bottom {
 				px += colShift.OffsetPx
 			}
 			if cell.Attr.Underline != screen.UnderlineNone {

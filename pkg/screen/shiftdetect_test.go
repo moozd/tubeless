@@ -2,6 +2,7 @@ package screen
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -31,7 +32,7 @@ func TestDetectContentShiftCleanWholeScreenShift(t *testing.T) {
 	// end (3): row 4 is brand-new content the scroll revealed, with no
 	// counterpart in prev at all — it belongs in the same glide band as
 	// the matched rows above it, not left out to pop in unanimated.
-	want := RowShift{Top: 0, Bottom: 4, Delta: 1}
+	want := RowShift{Top: 0, Bottom: 4, Left: 0, Right: 9, Delta: 1}
 	if shift != want {
 		t.Fatalf("shift = %+v, want %+v", shift, want)
 	}
@@ -398,5 +399,134 @@ func TestDetectContentShiftRejectsColumnarLookalikes(t *testing.T) {
 
 	if shift, ok := DetectContentShift(prev, next, rows-1); ok {
 		t.Fatalf("false positive: detected shift %+v where nothing scrolled (only row 3 changed in place)", shift)
+	}
+}
+
+// TestDetectHorizontalContentShiftRejectsRepeatedRule guards against a
+// themed prompt's horizontal rule/separator (Starship, Powerlevel10k,
+// oh-my-posh, and tmux status bars all print one) causing a false
+// horizontal shift on ordinary typing. A run of the same repeated
+// character makes many COLUMNS' hashes genuinely, exactly identical —
+// not just similar — so any shift within that run trivially clears tier
+// 1 no matter how tight fuzzyColMaxDiff/confidenceColThreshold are; the
+// tier-1-ratio floor alone doesn't catch this since the false matches
+// really are tier 1, not tier 2's fuzzy fallback. Only the last row
+// changes here (one keystroke); nothing scrolled.
+func TestDetectHorizontalContentShiftRejectsRepeatedRule(t *testing.T) {
+	const cols, rows = 100, 24
+	prev := New(cols, rows)
+	fillRow(prev, 0, strings.Repeat("─", 90))
+	fillRow(prev, 1, "~/code/tubeless on  main [!?] via 🐹 v1.22")
+	fillRow(prev, 2, "$ ")
+
+	next := New(cols, rows)
+	for y := range rows {
+		copy(next.Grid[y], prev.Grid[y])
+	}
+	fillRow(next, 2, "$ l")
+
+	if shift, ok := DetectHorizontalContentShift(prev, next, cols-1); ok {
+		t.Fatalf("false positive: detected horizontal shift %+v from a single keystroke (ruler row present)", shift)
+	}
+}
+
+// TestDetectContentShiftFindsSplitPaneScroll is the permanent regression
+// for the actual bug: "no smooth scrolling inside an nvim pane" (live
+// PTY-driven nvim confirmed this exact shape during development — see
+// git history). A vertical split's divider column glues two otherwise
+// unrelated panes into the same physical rows, so a whole-row hash never
+// matches even when one pane cleanly scrolled — DetectContentShift must
+// fall back to columnBands and search the scrolled pane's own column
+// range independently.
+func TestDetectContentShiftFindsSplitPaneScroll(t *testing.T) {
+	const cols, rows = 40, 10
+	prev := New(cols, rows)
+	next := New(cols, rows)
+
+	// Distinct per-row text on the left pane too (short: must not cross
+	// the divider at col 18) — a template differing by one digit would
+	// fuzzy-match its own shifted self across candidates just as easily
+	// as the right pane's real content does, defeating the "frozen,
+	// unrelated" premise this test needs.
+	leftWords := []string{
+		"import fmt", "package main", "type T struct", "func main()",
+		"x := 1", "y := 2", "if x > y", "return x", "} else {",
+		"log.Fatal(e)", "for range xs", "ch <- v",
+	}
+	leftLine := func(y int) string { return leftWords[y%len(leftWords)] }
+	// Distinct per-row text, not a shared template differing by one
+	// digit — otherwise adjacent rows are nearly identical to EACH
+	// OTHER too, making a shift-by-1 candidate look almost as good as
+	// the real shift-by-2 (the same ambiguity TestDetectContentShift
+	// RejectsColumnarLookalikes guards elsewhere).
+	rightWords := []string{
+		"func handleRequest(ctx)", "var status = pending", "return nil, err",
+		"defer conn.Close()", "log.Printf(startup)", "if user == admin",
+		"for i, v := range xs", "switch cmd.Type", "case scrollUp:",
+		"go worker.Run(wg)", "chan struct{}{}", "mutex.Lock()",
+	}
+	rightLine := func(y int) string { return rightWords[y%len(rightWords)] }
+
+	for y := range rows {
+		fillRow(prev, y, leftLine(y))
+		prev.Grid[y][18].Rune = '│'
+		fillRow(next, y, leftLine(y)) // left pane: frozen, identical
+		next.Grid[y][18].Rune = '│'
+	}
+	for y := range rows {
+		copy(prev.Grid[y][19:], mustCells(rightLine(y), cols-19))
+	}
+	// Right pane scrolled up by 2: next[y] carries prev[y+2]'s content;
+	// the last 2 rows are freshly revealed, not stale prev content.
+	for y := range rows {
+		copy(next.Grid[y][19:], mustCells(rightLine(y+2), cols-19))
+	}
+
+	shift, ok := DetectContentShift(prev, next, rows-1)
+	if !ok {
+		t.Fatal("expected the split-pane scroll to be detected via the column-band fallback")
+	}
+	if shift.Delta != 2 {
+		t.Fatalf("Delta = %d, want 2", shift.Delta)
+	}
+	if shift.Left < 19 {
+		t.Fatalf("shift.Left = %d, leaked into the frozen left pane (divider at col 18)", shift.Left)
+	}
+}
+
+// mustCells renders text into a fresh []Cell of length n (space-padded),
+// for building a sub-slice of a row directly.
+func mustCells(text string, n int) []Cell {
+	cells := make([]Cell, n)
+	for i := range cells {
+		cells[i].Rune = ' '
+	}
+	for i, r := range []rune(text) {
+		if i >= n {
+			break
+		}
+		cells[i].Rune = r
+	}
+	return cells
+}
+
+// TestDetectContentShiftIgnoresStaticSplitDivider guards columnBands
+// itself: a vertical divider with nothing scrolling on either side must
+// not manufacture a shift out of nowhere.
+func TestDetectContentShiftIgnoresStaticSplitDivider(t *testing.T) {
+	const cols, rows = 40, 10
+	prev := New(cols, rows)
+	for y := range rows {
+		fillRow(prev, y, fmt.Sprintf("left %d", y))
+		prev.Grid[y][18].Rune = '│'
+		copy(prev.Grid[y][19:], mustCells(fmt.Sprintf("right %d", y), cols-19))
+	}
+	next := New(cols, rows)
+	for y := range rows {
+		copy(next.Grid[y], prev.Grid[y])
+	}
+
+	if shift, ok := DetectContentShift(prev, next, rows-1); ok {
+		t.Fatalf("false positive: detected shift %+v on a fully static split screen", shift)
 	}
 }

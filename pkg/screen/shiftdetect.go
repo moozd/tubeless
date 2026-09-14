@@ -1,21 +1,29 @@
 package screen
 
 // RowShift is one detected uniform vertical content shift between two
-// consecutive published Screens: rows [Top,Bottom] (inclusive) moved by
-// Delta rows — positive means content moved up (e.g. a scroll-up or
-// paging down through a buffer), negative means content moved down. See
-// DetectContentShift.
+// consecutive published Screens: rows [Top,Bottom] (inclusive), within
+// columns [Left,Right] (inclusive), moved by Delta rows — positive means
+// content moved up (e.g. a scroll-up or paging down through a buffer),
+// negative means content moved down. See DetectContentShift. Left/Right
+// span the full screen width (0, Cols-1) for an ordinary whole-screen
+// shift; a narrower range means the shift was confined to one column
+// band — a split window's pane — found by columnBands.
 type RowShift struct {
 	Top, Bottom int
+	Left, Right int
 	Delta       int
 }
 
 // ColShift is RowShift's horizontal mirror: columns [Left,Right]
-// (inclusive) moved by Delta columns — positive means content moved
-// left, negative means content moved right. See
-// DetectHorizontalContentShift.
+// (inclusive), within rows [Top,Bottom] (inclusive), moved by Delta
+// columns — positive means content moved left, negative means content
+// moved right. See DetectHorizontalContentShift. Top/Bottom span the
+// full screen height for an ordinary whole-screen shift; a narrower
+// range means the shift was confined to one row band — a horizontally
+// split window's pane — found by rowBands.
 type ColShift struct {
 	Left, Right int
+	Top, Bottom int
 	Delta       int
 }
 
@@ -62,6 +70,15 @@ const (
 	// content identity, not "close enough" tolerance.
 	minTier1Ratio = 0.5
 
+	// popularityCap bounds how many times a line's hash may recur across
+	// the axis before any comparison involving it is treated as
+	// uninformative — see its use (as isDegenerate) in detectShift. 3
+	// keeps a coincidental duplicate or two (two unrelated lines/columns
+	// that just happen to share content) from being excluded, while
+	// still catching an actual repeated run, which in practice is never
+	// just 2-3 wide.
+	popularityCap = 3
+
 	// shiftAuxSkip is how many leading columns (for a row hash) or
 	// leading rows (for a column hash) the auxiliary "skip" hash below
 	// ignores. It exists so candidate-shift SELECTION itself tolerates a
@@ -75,7 +92,51 @@ const (
 	// check (see fuzzyRowMaxDiff), so this constant only needs to be
 	// generous enough to usually cover a real gutter, not exact.
 	shiftAuxSkip = 8
+
+	// minShiftBandWidth/minShiftBandHeight floor how narrow/short a
+	// column/row band (see columnBands/rowBands) can be before it's
+	// still worth searching independently — a sliver a divider-detection
+	// false-positive carved off isn't wide/tall enough to carry
+	// meaningful evidence either way, so skip it rather than let it
+	// occasionally squeak past minShiftBandLines/minShiftBandColumns on
+	// its own.
+	minShiftBandWidth  = 10
+	minShiftBandHeight = 4
+
+	// dividerRowRatio is how much of a column's (or row's) height (width)
+	// must hold the same non-blank character, in the same position in
+	// both prev and next, to count as a persistent divider — see
+	// columnBands/rowBands. Not 1.0: a per-pane statusline row and the
+	// bottom command-line row are typically full-width and interrupt a
+	// vertical divider for exactly those rows, so requiring literal
+	// unanimity would mean the divider — and therefore the pane
+	// boundary — is never found at all.
+	dividerRowRatio = 0.7
 )
+
+// verticalDividerRunes/horizontalDividerRunes are the box-drawing
+// characters columnBands/rowBands accept as a plausible window-border
+// glyph — nvim's default vertical/horizontal split separator, tmux's
+// pane border, and their common stylistic variants — kept as separate
+// sets since a real vertical divider is always drawn with a vertical
+// line and a real horizontal one with a horizontal line; there's no
+// reason to let either mistake the other's glyph for a match.
+// Restricting to a known glyph set at all (rather than accepting ANY
+// constant, unchanged rune) matters: ordinary content regularly has
+// long constant runs too — a template's fixed boilerplate text, a block
+// of consistently-indented code, a column of repeated punctuation — and
+// treating every one of those as a plausible pane boundary fragmented
+// the screen into a mess of spurious single-column slivers instead of
+// finding the one real divider.
+var verticalDividerRunes = map[rune]bool{
+	'│': true, '┃': true, '|': true, '║': true,
+	'┆': true, '┊': true, '╎': true, '╏': true,
+}
+
+var horizontalDividerRunes = map[rune]bool{
+	'─': true, '━': true, '═': true,
+	'┄': true, '┈': true, '┅': true, '┉': true,
+}
 
 // DetectContentShift diffs prev and next's Grid content for a uniform
 // vertical shift, ignoring Cell.Attr entirely (see rowHash) so a pure
@@ -85,59 +146,185 @@ const (
 // Returns (RowShift{}, false) if prev/next differ in size or no shift
 // clears the confidence threshold — callers should render an ordinary
 // unanimated snap in that case, exactly like a plain repaint today.
+//
+// Tries the whole screen width first; if that finds nothing, falls back
+// to searching within each column band columnBands finds (a split
+// window's pane) independently — a pane's own scroll never explains the
+// physical rows it shares with a frozen neighboring pane, so a
+// whole-row comparison alone misses it entirely; see columnBands' doc.
+// Only the first band that clears the threshold is reported — two panes
+// scrolling independently in the same frame isn't (yet) handled, since
+// the renderer only tracks one glide band per axis at a time.
 func DetectContentShift(prev, next *Screen, maxShift int) (RowShift, bool) {
 	if !sameDims(prev, next) {
 		return RowShift{}, false
 	}
+	if shift, ok := detectContentShiftInBand(prev, next, maxShift, 0, prev.Cols-1); ok {
+		return shift, true
+	}
+	for _, band := range columnBands(prev, next) {
+		if band[1]-band[0]+1 < minShiftBandWidth {
+			continue
+		}
+		if shift, ok := detectContentShiftInBand(prev, next, maxShift, band[0], band[1]); ok {
+			return shift, true
+		}
+	}
+	return RowShift{}, false
+}
+
+// detectContentShiftInBand is DetectContentShift's engine, restricted to
+// columns [colLo,colHi] (inclusive) — DetectContentShift itself is just
+// this called once over the full width.
+func detectContentShiftInBand(prev, next *Screen, maxShift, colLo, colHi int) (RowShift, bool) {
 	n := prev.Rows
-	skip := min(shiftAuxSkip, prev.Cols/2)
+	width := colHi - colLo + 1
+	skip := colLo + min(shiftAuxSkip, width/2)
 	beforeHash := make([]uint64, n)
 	afterHash := make([]uint64, n)
 	auxBeforeHash := make([]uint64, n)
 	auxAfterHash := make([]uint64, n)
 	for y := range n {
-		beforeHash[y] = rowHash(prev.Grid[y])
-		afterHash[y] = rowHash(next.Grid[y])
-		auxBeforeHash[y] = rowHash(prev.Grid[y][skip:])
-		auxAfterHash[y] = rowHash(next.Grid[y][skip:])
+		beforeHash[y] = rowHash(prev.Grid[y][colLo : colHi+1])
+		afterHash[y] = rowHash(next.Grid[y][colLo : colHi+1])
+		auxBeforeHash[y] = rowHash(prev.Grid[y][skip : colHi+1])
+		auxAfterHash[y] = rowHash(next.Grid[y][skip : colHi+1])
 	}
 	fuzzy := func(afterIdx, beforeIdx int) int {
-		return rowMismatches(next.Grid[afterIdx], prev.Grid[beforeIdx])
+		return rowMismatches(next.Grid[afterIdx][colLo:colHi+1], prev.Grid[beforeIdx][colLo:colHi+1])
 	}
-	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, fuzzyRowMaxDiff, confidenceThreshold, minShiftBandLines, blankHash(prev.Cols), blankHash(prev.Cols-skip))
+	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, fuzzyRowMaxDiff, confidenceThreshold, minShiftBandLines, blankHash(width), blankHash(colHi+1-skip))
 	if !ok {
 		return RowShift{}, false
 	}
-	return RowShift{Top: lo, Bottom: hi, Delta: delta}, true
+	return RowShift{Top: lo, Bottom: hi, Left: colLo, Right: colHi, Delta: delta}, true
 }
 
 // DetectHorizontalContentShift is DetectContentShift's column-axis
 // mirror, for content that shifts left/right (horizontal pagination, a
-// scrolling status line) instead of up/down.
+// scrolling status line) instead of up/down. Tries the whole screen
+// height first, then falls back to each row band rowBands finds (a
+// horizontally split window's pane) — see DetectContentShift's doc for
+// why, mirrored onto rows instead of columns.
 func DetectHorizontalContentShift(prev, next *Screen, maxShift int) (ColShift, bool) {
 	if !sameDims(prev, next) {
 		return ColShift{}, false
 	}
+	if shift, ok := detectHorizontalContentShiftInBand(prev, next, maxShift, 0, prev.Rows-1); ok {
+		return shift, true
+	}
+	for _, band := range rowBands(prev, next) {
+		if band[1]-band[0]+1 < minShiftBandHeight {
+			continue
+		}
+		if shift, ok := detectHorizontalContentShiftInBand(prev, next, maxShift, band[0], band[1]); ok {
+			return shift, true
+		}
+	}
+	return ColShift{}, false
+}
+
+// detectHorizontalContentShiftInBand is DetectHorizontalContentShift's
+// engine, restricted to rows [rowLo,rowHi] (inclusive).
+func detectHorizontalContentShiftInBand(prev, next *Screen, maxShift, rowLo, rowHi int) (ColShift, bool) {
 	n := prev.Cols
-	skip := min(shiftAuxSkip, prev.Rows/2)
+	height := rowHi - rowLo + 1
+	skip := rowLo + min(shiftAuxSkip, height/2)
 	beforeHash := make([]uint64, n)
 	afterHash := make([]uint64, n)
 	auxBeforeHash := make([]uint64, n)
 	auxAfterHash := make([]uint64, n)
 	for x := range n {
-		beforeHash[x] = colHash(prev.Grid, x)
-		afterHash[x] = colHash(next.Grid, x)
-		auxBeforeHash[x] = colHash(prev.Grid[skip:], x)
-		auxAfterHash[x] = colHash(next.Grid[skip:], x)
+		beforeHash[x] = colHash(prev.Grid[rowLo:rowHi+1], x)
+		afterHash[x] = colHash(next.Grid[rowLo:rowHi+1], x)
+		auxBeforeHash[x] = colHash(prev.Grid[skip:rowHi+1], x)
+		auxAfterHash[x] = colHash(next.Grid[skip:rowHi+1], x)
 	}
 	fuzzy := func(afterIdx, beforeIdx int) int {
-		return colMismatches(next.Grid, prev.Grid, afterIdx, beforeIdx)
+		return colMismatches(next.Grid[rowLo:rowHi+1], prev.Grid[rowLo:rowHi+1], afterIdx, beforeIdx)
 	}
-	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, fuzzyColMaxDiff, confidenceColThreshold, minShiftBandColumns, blankHash(prev.Rows), blankHash(prev.Rows-skip))
+	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, fuzzyColMaxDiff, confidenceColThreshold, minShiftBandColumns, blankHash(height), blankHash(rowHi+1-skip))
 	if !ok {
 		return ColShift{}, false
 	}
-	return ColShift{Left: lo, Right: hi, Delta: delta}, true
+	return ColShift{Left: lo, Right: hi, Top: rowLo, Bottom: rowHi, Delta: delta}, true
+}
+
+// columnBands splits the screen width into the column ranges between
+// persistent vertical divider columns — nvim's default vertical-split
+// separator, a tmux pane border: a column drawing the same non-blank
+// character down (most of) the screen's height, in the SAME position in
+// both prev and next, since a real divider doesn't move. Doesn't require
+// literally every row to agree — a per-pane statusline row and the
+// bottom command-line row are typically full-width and interrupt the
+// divider, so dividerRowRatio only requires a strong majority.
+//
+// This only finds a divider by its rune; a divider drawn as a plain
+// colored blank column (no distinguishing character — rare, but some
+// themes do this) is indistinguishable from ordinary blank content and
+// won't be found, so a pane scroll behind one still won't animate. That
+// matches today's (no detection at all) behavior for that case, not a
+// regression.
+func columnBands(prev, next *Screen) [][2]int {
+	cols, rows := prev.Cols, prev.Rows
+	isDivider := func(c int) bool {
+		matches := 0
+		for y := range rows {
+			r := prev.Grid[y][c].Rune
+			if verticalDividerRunes[r] && next.Grid[y][c].Rune == r {
+				matches++
+			}
+		}
+		return float64(matches)/float64(rows) >= dividerRowRatio
+	}
+	var bands [][2]int
+	start := 0
+	for c := range cols {
+		if !isDivider(c) {
+			continue
+		}
+		if c > start {
+			bands = append(bands, [2]int{start, c - 1})
+		}
+		start = c + 1
+	}
+	if start < cols {
+		bands = append(bands, [2]int{start, cols - 1})
+	}
+	return bands
+}
+
+// rowBands is columnBands' transpose: the row ranges between persistent
+// horizontal divider rows (a horizontally split window's border). See
+// columnBands' doc for the matching rules and its known blank-divider
+// gap.
+func rowBands(prev, next *Screen) [][2]int {
+	cols, rows := prev.Cols, prev.Rows
+	isDivider := func(y int) bool {
+		matches := 0
+		for x := range cols {
+			r := prev.Grid[y][x].Rune
+			if horizontalDividerRunes[r] && next.Grid[y][x].Rune == r {
+				matches++
+			}
+		}
+		return float64(matches)/float64(cols) >= dividerRowRatio
+	}
+	var bands [][2]int
+	start := 0
+	for y := range rows {
+		if !isDivider(y) {
+			continue
+		}
+		if y > start {
+			bands = append(bands, [2]int{start, y - 1})
+		}
+		start = y + 1
+	}
+	if start < rows {
+		bands = append(bands, [2]int{start, rows - 1})
+	}
+	return bands
 }
 
 // sameDims reports whether prev and next are diffable at all: equal,
@@ -219,6 +406,29 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 		return 0, 0, 0, false
 	}
 
+	// popular counts how many times each full-line hash recurs across
+	// this axis, on each side independently. A repeated-character run —
+	// a themed prompt's horizontal rule, a tmux status bar's separator,
+	// a `yes`-style burst of identical rows — makes many lines' hashes
+	// genuinely, exactly IDENTICAL, not merely similar: any shift within
+	// that run trivially satisfies tier 1, no matter how tight
+	// maxDiff/confThreshold are, because the individual comparison isn't
+	// wrong — the content really is ambiguous about which occurrence
+	// corresponds to which. popularityCap-and-above hash values are
+	// therefore excluded from counting as evidence below (see
+	// isDegenerate), the same treatment already given to blank.
+	popular := func(hashes []uint64) map[uint64]int {
+		counts := make(map[uint64]int, n)
+		for _, h := range hashes {
+			counts[h]++
+		}
+		return counts
+	}
+	beforeCount, afterCount := popular(beforeHash), popular(afterHash)
+	isDegenerate := func(afterIdx, beforeIdx int) bool {
+		return beforeCount[beforeHash[beforeIdx]] > popularityCap || afterCount[afterHash[afterIdx]] > popularityCap
+	}
+
 	bestK, bestExact := 0, -1
 	bestLo, bestHi := 0, -1
 	for absK := 1; absK <= maxShift; absK++ {
@@ -230,6 +440,9 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 			exact := 0
 			for y := candLo; y <= candHi; y++ {
 				if afterHash[y] == blank && beforeHash[y+k] == blank {
+					continue
+				}
+				if isDegenerate(y, y+k) {
 					continue
 				}
 				auxMatch := auxAfterHash[y] == auxBeforeHash[y+k] &&
@@ -249,11 +462,12 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 
 	// Tier 2: classify every line in the winning band as matching
 	// (tier-1 exact or aux, or tier-2 fuzzy) or not. informative marks a
-	// line as carrying real evidence either way — false only for a
-	// blank-vs-blank pair, which counts toward neither a match nor a
-	// mismatch below (see detectShift's doc). tier1 marks a match as
-	// coming from an exact/aux hash rather than tier 2's fuzzy fallback —
-	// see the tier1Count check below for why this is tracked separately.
+	// line as carrying real evidence either way — false for a
+	// blank-vs-blank pair or a degenerate (isDegenerate) one, neither of
+	// which counts toward a match or a mismatch below (see detectShift's
+	// doc). tier1 marks a match as coming from an exact/aux hash rather
+	// than tier 2's fuzzy fallback — see the tier1Count check below for
+	// why this is tracked separately.
 	matching := make([]bool, bestHi-bestLo+1)
 	informative := make([]bool, bestHi-bestLo+1)
 	tier1 := make([]bool, bestHi-bestLo+1)
@@ -261,6 +475,10 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 		i := y - bestLo
 		if afterHash[y] == blank && beforeHash[y+bestK] == blank {
 			matching[i] = true // neutral for trimming — see the total/matchCount loop below for where blank pairs are actually excluded
+			continue
+		}
+		if isDegenerate(y, y+bestK) {
+			matching[i] = true // neutral for trimming, same as a blank pair — see isDegenerate's doc above
 			continue
 		}
 		informative[i] = true
