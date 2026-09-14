@@ -88,10 +88,12 @@ float distToOpaque(vec2 dir, float maxDist, out vec3 foundColor) {
 	return maxDist;
 }
 
-// dropShadow paints a soft shadow, tinted from the casting block's own
-// color, onto currently-empty background below/right of a block — the
-// classic offset-shadow "floating card" look, built only from blocks
-// already in the scene (see Surface.Shadow doc comment).
+// dropShadow paints a soft black shadow onto currently-empty background
+// below/right of a block — the classic offset-shadow "floating card" look,
+// built only from blocks already in the scene (see Surface.Shadow doc
+// comment). A real cast shadow is just an absence of light, not a tint of
+// the casting object's color, so this only ever darkens (rgb == 0) and
+// varies the block by alpha.
 vec4 dropShadow() {
 	vec3 colUp, colLeft;
 	float dUp = distToOpaque(vec2(0.0, -1.0), MAX_REACH, colUp);
@@ -102,9 +104,7 @@ vec4 dropShadow() {
 	if (a <= 0.001) {
 		return vec4(0.0);
 	}
-	vec3 castColor = aUp > aLeft ? colUp : colLeft;
-	vec3 shadowColor = castColor * 0.3;
-	return vec4(shadowColor * a, a);
+	return vec4(0.0, 0.0, 0.0, a);
 }
 
 // Fragment-space corner radius, top-lit gradient and drop shadow over a
