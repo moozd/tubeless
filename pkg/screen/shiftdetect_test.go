@@ -367,3 +367,36 @@ func TestDetectContentShiftLowConfidenceBoundary(t *testing.T) {
 		t.Fatalf("expected no shift below confidence threshold, got %+v", shift)
 	}
 }
+
+// TestDetectContentShiftRejectsColumnarLookalikes guards against tier 2
+// (the fixed-absolute-count fuzzy fallback) becoming, by itself, enough
+// evidence for a shift. Columnar/tabular terminal output — `ls -la`, ps,
+// git log --oneline, df — has consecutive UNRELATED rows sharing the
+// same fixed layout, differing only by a short token (a date, a name):
+// almost always within any reasonable fixed maxDiff regardless of how
+// long the lines are. Nothing here actually scrolled — only row 3 was
+// edited in place — so no shift, at any k, should ever be reported; a
+// prior version of detectShift let tier 2 alone report a whole-screen
+// false shift here since every row happened to clear fuzzyRowMaxDiff
+// against its neighbor purely from shared layout, with zero tier-1
+// (exact/aux) corroboration anywhere in the band.
+func TestDetectContentShiftRejectsColumnarLookalikes(t *testing.T) {
+	const cols, rows = 60, 8
+	prev := New(cols, rows)
+	next := New(cols, rows)
+	mkLine := func(day int, name string) string {
+		return fmt.Sprintf("drwxr-xr-x  2 mo mo 4096 Sep 14 10:%02d project-%s", day, name)
+	}
+	names := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"}
+	for y := range rows {
+		fillRow(prev, y, mkLine(20+y, names[y]))
+		fillRow(next, y, mkLine(20+y, names[y]))
+	}
+	// Simulate an in-place edit (e.g. a re-stat after touch) — not a
+	// scroll at all.
+	fillRow(next, 3, mkLine(59, names[3]))
+
+	if shift, ok := DetectContentShift(prev, next, rows-1); ok {
+		t.Fatalf("false positive: detected shift %+v where nothing scrolled (only row 3 changed in place)", shift)
+	}
+}

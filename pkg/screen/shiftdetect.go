@@ -51,6 +51,17 @@ const (
 	confidenceColThreshold = 0.94
 	minShiftBandColumns    = 20
 
+	// minTier1Ratio floors, on both axes, how much of a winning band's
+	// evidence must come from tier 1 (an exact or gutter-aux hash match)
+	// rather than tier 2's fuzzy fallback alone — see its check in
+	// detectShift for why an unfloored tier 2 false-fires on columnar
+	// output (ls -la, ps, git log --oneline) where unrelated rows
+	// sharing a fixed layout differ by only a handful of characters
+	// almost regardless of maxDiff. 0.5 keeps tier 2 a minority-case
+	// rescue: at least half the band's real evidence has to be genuine
+	// content identity, not "close enough" tolerance.
+	minTier1Ratio = 0.5
+
 	// shiftAuxSkip is how many leading columns (for a row hash) or
 	// leading rows (for a column hash) the auxiliary "skip" hash below
 	// ignores. It exists so candidate-shift SELECTION itself tolerates a
@@ -240,9 +251,12 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 	// (tier-1 exact or aux, or tier-2 fuzzy) or not. informative marks a
 	// line as carrying real evidence either way — false only for a
 	// blank-vs-blank pair, which counts toward neither a match nor a
-	// mismatch below (see detectShift's doc).
+	// mismatch below (see detectShift's doc). tier1 marks a match as
+	// coming from an exact/aux hash rather than tier 2's fuzzy fallback —
+	// see the tier1Count check below for why this is tracked separately.
 	matching := make([]bool, bestHi-bestLo+1)
 	informative := make([]bool, bestHi-bestLo+1)
+	tier1 := make([]bool, bestHi-bestLo+1)
 	for y := bestLo; y <= bestHi; y++ {
 		i := y - bestLo
 		if afterHash[y] == blank && beforeHash[y+bestK] == blank {
@@ -254,6 +268,7 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 			!(auxAfterHash[y] == auxBlank && auxBeforeHash[y+bestK] == auxBlank)
 		if afterHash[y] == beforeHash[y+bestK] || auxMatch {
 			matching[i] = true
+			tier1[i] = true
 			continue
 		}
 		matching[i] = fuzzyDiff(y, y+bestK) <= maxDiff
@@ -279,6 +294,7 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 	// agree (which is guaranteed, not evidence of anything).
 	total := 0
 	matchCount := 0
+	tier1Count := 0
 	for i := start; i <= end; i++ {
 		if !informative[i] {
 			continue
@@ -287,11 +303,30 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 		if matching[i] {
 			matchCount++
 		}
+		if tier1[i] {
+			tier1Count++
+		}
 	}
 	if total < minLines {
 		return 0, 0, 0, false
 	}
 	if float64(matchCount)/float64(total) < confThreshold {
+		return 0, 0, 0, false
+	}
+	// tier 2's fuzzy fallback exists to rescue a handful of lines a fixed
+	// leading gutter/header pushes past the aux hash's skip width within
+	// an otherwise genuinely-matching band — it was never meant to be the
+	// SOLE evidence for a shift. Columnar/tabular output (ls -la, ps,
+	// git log --oneline, df) is the adversarial case: consecutive
+	// UNRELATED rows sharing the same fixed layout typically differ by
+	// only a handful of characters (a date, a short name) regardless of
+	// how wide or long the lines are, which clears any fixed absolute
+	// maxDiff cap almost every time — so a band with no tier-1
+	// corroboration at all can rack up high "confidence" purely from
+	// coincidental structural similarity between rows that never moved.
+	// Requiring at least half the evidence to be tier-1 keeps tier 2 as
+	// the minority-case rescue it was designed to be.
+	if float64(tier1Count)/float64(total) < minTier1Ratio {
 		return 0, 0, 0, false
 	}
 
