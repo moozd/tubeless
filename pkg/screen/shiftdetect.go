@@ -79,6 +79,30 @@ const (
 	// just 2-3 wide.
 	popularityCap = 3
 
+	// unshiftedMaxDiff is unshiftedMatch's own fuzzy tolerance — a
+	// smaller, axis-independent constant, not fuzzyRowMaxDiff/
+	// fuzzyColMaxDiff. Those are tuned for tier 2's job: does a line
+	// that's already known to have shifted also tolerate a fixed-width
+	// gutter on top of that. unshiftedMatch asks a different question —
+	// is this line basically the SAME line, just perhaps a small counter
+	// ticking over (a status bar's cursor position, a percentage) — and
+	// needs a tighter bound, or a wholesale-different line (real new
+	// content) reads as "barely changed" too, defeating the check it's
+	// there for.
+	unshiftedMaxDiff = 4
+
+	// anchorlessLineFactor scales minLines (axis-specific: minShiftBandLines
+	// or minShiftBandColumns) up to the total a band must clear to be
+	// trusted WITHOUT touching a true axis edge — see its use
+	// (chromeAnchored) at the end of detectShift. minLines alone is
+	// tuned for the edge-touching case, where "a real scroll happened"
+	// is already established by the shape alone; a chrome-bounded band
+	// carries no such structural guarantee, so it needs to win on
+	// evidence volume instead — scaling by the axis's own minLines
+	// (rather than one shared constant) keeps the column axis's already
+	// much higher bar proportionally higher here too.
+	anchorlessLineFactor = 4
+
 	// shiftAuxSkip is how many leading columns (for a row hash) or
 	// leading rows (for a column hash) the auxiliary "skip" hash below
 	// ignores. It exists so candidate-shift SELECTION itself tolerates a
@@ -549,6 +573,30 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 	}
 
 	finalLo, finalHi := bestLo+start, bestLo+end
+	// unshiftedMatch reports whether line y's content in next basically
+	// matches its own content in prev AT THE SAME INDEX (k=0, not the
+	// candidate shift) — the signature of a fixed line that doesn't
+	// scroll at all (a status bar, a command line) rather than content
+	// the shift genuinely revealed. A real newly-revealed line has no
+	// meaningful relationship to whatever prev happened to show at that
+	// same row/column index, so this is false for it; a status bar
+	// showing the same layout with only a cursor-position counter
+	// ticking over is barely different from itself frame to frame, so
+	// this is true for it. See its use in the extension switch below.
+	unshiftedMatch := func(y int) bool {
+		if afterHash[y] == beforeHash[y] {
+			return true
+		}
+		if afterHash[y] == blank && beforeHash[y] == blank {
+			return true
+		}
+		auxMatch := auxAfterHash[y] == auxBeforeHash[y] &&
+			!(auxAfterHash[y] == auxBlank && auxBeforeHash[y] == auxBlank)
+		if auxMatch {
+			return true
+		}
+		return fuzzyDiff(y, y) <= unshiftedMaxDiff
+	}
 	// Extend the reported band out to cover brand-new lines the shift
 	// itself revealed at an edge — lines with no counterpart in the
 	// previous grid at all (never inside the overlap range to begin
@@ -562,42 +610,64 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 	// the new lines into the same band means they glide in with
 	// everything else instead.
 	//
-	// Known tradeoff: a genuinely static line sitting exactly within the
-	// last |shift| lines of this axis (e.g. a status bar pinned to the
-	// very bottom row) has no prev counterpart either, for the same
-	// reason the real new content doesn't — so it gets swept into the
-	// extended band and animates along with everything else, same as a
-	// false positive would. This is deliberately accepted: a status
-	// bar's own content usually repaints every frame regardless (clock,
-	// counters), which already reads as a snap rather than a glide in
-	// practice, and the common case (new content actually was revealed)
-	// is far more frequent than a single fixed line landing in that
-	// exact edge band.
+	// Stops extending at the first line that passes unshiftedMatch: a
+	// genuinely static line sitting exactly within the last |shift|
+	// lines of this axis (a status bar pinned to the very bottom row, a
+	// command line) has no prev counterpart under the shift either, for
+	// the same reason real new content doesn't, but its own content
+	// barely changes frame to frame — extending blindly to the axis edge
+	// here (an earlier version of this code did exactly that) swept
+	// status bars into the glide, visibly sliding and snapping back on
+	// every scroll. Checking unshiftedMatch first tells the two cases
+	// apart.
 	switch {
 	case bestK > 0 && end == len(matching)-1 && bestHi < n-1:
 		// Content moved up: new lines appear at the trailing (bottom)
-		// edge, past the natural overlap — extend down to the last line,
-		// but only if trimming didn't already cut something off this
-		// same edge (end reaching the overlap's own end confirms that).
-		finalHi = n - 1
+		// edge, past the natural overlap — extend down as long as each
+		// next line is genuinely new, but only if trimming didn't
+		// already cut something off this same edge (end reaching the
+		// overlap's own end confirms that).
+		for finalHi+1 <= n-1 && !unshiftedMatch(finalHi+1) {
+			finalHi++
+		}
 	case bestK < 0 && start == 0 && bestLo > 0:
 		// Content moved down: new lines appear at the leading (top)
-		// edge — extend up to the first line, same reasoning mirrored.
-		finalLo = 0
+		// edge — extend up the same way, mirrored.
+		for finalLo-1 >= 0 && !unshiftedMatch(finalLo-1) {
+			finalLo--
+		}
 	}
 
 	// A real scroll always originates from (and extends to) one edge of
-	// the screen — content enters from the top or bottom (or left/right
-	// on the column axis) and everything between that edge and wherever
-	// it stops moves together. A band that touches NEITHER edge is a
-	// "floating island": unrelated, unshifted content on both sides of
-	// it, which a genuine scroll never produces. That shape shows up as
-	// a coincidental match — e.g. two otherwise-static lines elsewhere
-	// on a full screen happening to resemble each other under some small
-	// k while the user types on a completely different line — and was
-	// observed as a spurious wobble in the middle of an otherwise-still
-	// screen. Reject it rather than animate a shift nothing real caused.
-	if finalLo > 0 && finalHi < n-1 {
+	// the axis — content enters from the top or bottom (or left/right on
+	// the column axis) and everything between that edge and wherever it
+	// stops moves together. A band touching NEITHER the true axis edge
+	// NOR a confirmed-fixed neighbor on both sides is a "floating
+	// island": unrelated, unshifted content on both sides of it, which a
+	// genuine scroll never produces — e.g. two otherwise-static lines
+	// elsewhere on a full screen happening to resemble each other under
+	// some small k while the user types on a completely different line.
+	//
+	// "Confirmed-fixed neighbor" (unshiftedMatch just outside the band on
+	// BOTH sides) is the axis-edge condition's stand-in for a window that
+	// has its own fixed chrome sandwiching the scrollable content on
+	// every side — a winbar above, a status bar and command line below —
+	// which never touches row 0 or n-1 at all despite being a completely
+	// genuine, unambiguous scroll (this is the common case for any nvim
+	// window, split or not, that sets a winbar). Requiring a much larger
+	// total here than the bare minLines floor matters: unshiftedMatch is
+	// true for almost any UNCHANGED neighboring line, edge or not (most
+	// of an ordinary terminal doesn't change between two frames), so on
+	// its own it would just as happily "anchor" — and let through — the
+	// genuine floating-island false positive too. A real chrome-bounded
+	// scroll carries far more evidence than a coincidental 1-2 line
+	// match ever does, so minAnchorlessLines is the real gate here, not
+	// the neighbor check by itself.
+	edgeAnchored := finalLo == 0 || finalHi == n-1
+	chromeAnchored := !edgeAnchored && total >= minLines*anchorlessLineFactor &&
+		(finalLo == 0 || unshiftedMatch(finalLo-1)) &&
+		(finalHi == n-1 || unshiftedMatch(finalHi+1))
+	if !edgeAnchored && !chromeAnchored {
 		return 0, 0, 0, false
 	}
 	return finalLo, finalHi, bestK, true

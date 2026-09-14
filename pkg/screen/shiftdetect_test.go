@@ -530,3 +530,102 @@ func TestDetectContentShiftIgnoresStaticSplitDivider(t *testing.T) {
 		t.Fatalf("false positive: detected shift %+v on a fully static split screen", shift)
 	}
 }
+
+// TestDetectContentShiftDoesNotExtendIntoStatusBar is the permanent
+// regression for a real bug: a status bar pinned to the second-to-last
+// row (nvim's default layout — buffer, statusline, command line) was
+// getting swept into the "extend to new trailing content" band whenever
+// the scroll delta was larger than a line or two, because the status
+// bar's own row also has no counterpart under the shift (same as
+// genuinely revealed content does) — it visibly slid and snapped back
+// on every scroll. A status bar's content barely changes frame to frame
+// (only a line/col counter ticks over), which is exactly what
+// unshiftedMatch uses to tell it apart from real new content.
+func TestDetectContentShiftDoesNotExtendIntoStatusBar(t *testing.T) {
+	const cols, rows = 60, 20
+	bufWords := []string{
+		"func main() {", "\tvar x int", "\tfor i := range 10 {",
+		"\t\tx += i", "\t}", "\tfmt.Println(x)", "}", "",
+		"type T struct{}", "func (t T) Do() {}", "var global = 1",
+		"const K = 2", "package util", "import \"fmt\"",
+		"// a comment line", "func helper() int { return 1 }",
+		"if err != nil {", "\treturn err", "}", "// end of file",
+	}
+	statusBar := func(line int) string { return fmt.Sprintf("main.go [+]%*s%d,1  %d%%", 30, "", line, line) }
+
+	prev := New(cols, rows)
+	next := New(cols, rows)
+	for y := 0; y < rows-1; y++ {
+		fillRow(prev, y, bufWords[y%len(bufWords)])
+		fillRow(next, y, bufWords[y%len(bufWords)])
+	}
+	fillRow(prev, rows-1, statusBar(10))
+	fillRow(next, rows-1, statusBar(28)) // cursor moved: only the counter changed
+
+	// Buffer scrolled up by 8; the status bar (row 19) must NOT be
+	// dragged into the band even though it also lacks a prev counterpart
+	// at the shifted index.
+	for y := 0; y < rows-1-8; y++ {
+		fillRow(next, y, bufWords[(y+8)%len(bufWords)])
+	}
+
+	shift, ok := DetectContentShift(prev, next, rows-1)
+	if !ok {
+		t.Fatal("expected the buffer scroll to be detected")
+	}
+	if shift.Bottom >= rows-1 {
+		t.Fatalf("Bottom = %d, swallowed the status bar row %d", shift.Bottom, rows-1)
+	}
+}
+
+// TestDetectContentShiftFindsChromeSandwichedScroll is the permanent
+// regression for the real bug this session found live: a window with
+// its own winbar (top) AND status bar + command line (bottom) — a
+// completely ordinary nvim layout with 'winbar' set — never touches row
+// 0 or row n-1 at all, no matter how real and uniform the buffer's own
+// scroll is. The pre-existing "floating island" edge-anchor rejection
+// (meant to catch a coincidental mid-screen match) doesn't know the
+// difference and rejected this too until chromeAnchored was added.
+func TestDetectContentShiftFindsChromeSandwichedScroll(t *testing.T) {
+	const cols, rows = 60, 24
+	bufWords := []string{
+		"func handleRequest(ctx)", "\tuser := auth.From(ctx)", "\tif user == nil {",
+		"\t\treturn errUnauth", "\t}", "\tdata := store.Get(id)", "\treturn data, nil",
+		"}", "", "func main() {", "\tmux := http.NewServeMux()",
+		"\tmux.Handle(\"/api\", h)", "\tlog.Fatal(srv.ListenAndServe())", "}",
+		"type Server struct {", "\tmux *http.ServeMux", "\taddr string", "}",
+		"func New() *Server {", "\treturn &Server{}", "}", "// trailing comment",
+		"var _ = 1", "const X = 2", "package main",
+	}
+	winbar := func(line int) string { return fmt.Sprintf("main.go %d:1", line) }
+	statusBar := func(pct int) string { return fmt.Sprintf("main.go [+]%*s%d%%", 30, "", pct) }
+
+	prev := New(cols, rows)
+	next := New(cols, rows)
+	// Row 0: winbar (barely changes — just the cursor line indicator).
+	fillRow(prev, 0, winbar(10))
+	fillRow(next, 0, winbar(28))
+	// Rows 1..rows-3: the buffer, scrolled up by 8.
+	for y := 1; y < rows-2; y++ {
+		fillRow(prev, y, bufWords[y%len(bufWords)])
+		fillRow(next, y, bufWords[(y+8)%len(bufWords)])
+	}
+	// Row rows-2: status bar (barely changes). Row rows-1: command line
+	// (empty in both — untouched).
+	fillRow(prev, rows-2, statusBar(10))
+	fillRow(next, rows-2, statusBar(45))
+
+	shift, ok := DetectContentShift(prev, next, rows-1)
+	if !ok {
+		t.Fatal("expected the chrome-sandwiched buffer scroll to be detected")
+	}
+	if shift.Top != 1 {
+		t.Fatalf("Top = %d, want 1 (winbar at row 0 excluded)", shift.Top)
+	}
+	if shift.Bottom >= rows-2 {
+		t.Fatalf("Bottom = %d, swallowed the status bar row %d", shift.Bottom, rows-2)
+	}
+	if shift.Delta != 8 {
+		t.Fatalf("Delta = %d, want 8", shift.Delta)
+	}
+}
