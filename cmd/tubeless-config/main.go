@@ -962,6 +962,11 @@ func (u *ui) buildFontsThemeList() []panelRow {
 		applyStep: func(c *config.Config, d int) bool { return false },
 	})
 
+	section("layout")
+	add(newSlider("padding.size", "padding", "empty margin kept around the terminal grid on every side", "px", 0, 1, 0, 200,
+		func(c *config.Config) float64 { return float64(c.Padding.Size) },
+		func(c *config.Config, v float64) { c.Padding.Size = float32(v) }))
+
 	section("theme")
 	add(&setting{
 		key: "theme", label: "theme",

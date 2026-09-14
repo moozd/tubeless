@@ -42,6 +42,7 @@ type Config struct {
 	TrueColor     bool       `toml:"true_color"`
 	Font          Font       `toml:"font"`
 	Atlas         Atlas      `toml:"atlas"`
+	Padding       Padding    `toml:"padding"`
 	Phosphor      Phosphor   `toml:"phosphor"`
 	Colors        Colors     `toml:"colors"`
 	Surface       Surface    `toml:"surface"`
@@ -79,6 +80,15 @@ type Font struct {
 type Atlas struct {
 	Scale int     `toml:"scale"`
 	Gamma float64 `toml:"gamma"`
+}
+
+// Padding is the empty margin, in framebuffer pixels, kept between the
+// window (or letterboxed content box, when an aspect ratio is set) and
+// the terminal grid on every side. Sits outside both the Theme and Preset
+// axes, like Font/Atlas — always user-set directly, never reseeded.
+// Zero (the default) fills the box exactly as before this existed.
+type Padding struct {
+	Size float32 `toml:"size"`
 }
 
 // Phosphor is the two ends of the single-hue phosphor ramp. Cell

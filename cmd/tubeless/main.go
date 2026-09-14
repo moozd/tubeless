@@ -585,7 +585,8 @@ func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
 // call time.
 func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config]) {
 	win.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
-		pushResizeSize(resizeCh, cs, width, height, cfgRef.Load().CRT.AspectRatio)
+		c := cfgRef.Load()
+		pushResizeSize(resizeCh, cs, width, height, c.CRT.AspectRatio, c.Padding.Size)
 	})
 }
 
@@ -595,7 +596,8 @@ func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRe
 // cs itself changes rather than waiting for an unrelated resize event.
 func pushResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config]) {
 	w, h := win.FramebufferPixelSize()
-	pushResizeSize(resizeCh, cs, w, h, cfgRef.Load().CRT.AspectRatio)
+	c := cfgRef.Load()
+	pushResizeSize(resizeCh, cs, w, h, c.CRT.AspectRatio, c.Padding.Size)
 }
 
 // pushResizeSize computes cols/rows against the letterboxed content box
@@ -606,12 +608,18 @@ func pushResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRe
 // keeps the letterbox from stretching: runLoop renders the scene at
 // exactly this box's pixel size (matching what this produces) and
 // InsetPass.Draw composites it into that same box at 1:1, no resampling.
+// padding shrinks the box cols/rows are fit against (both sides, each
+// axis) before it's ever computed — the grid's own centering within the
+// full box (see cellpass.go's DrawRects) then turns that shrink into an
+// equal margin on every edge, no separate padding-aware draw path needed.
 // The send itself is non-blocking and drops a stale pending resize in
 // favor of the newest one, so a burst of resize events during a drag
 // never backs up.
-func pushResizeSize(resizeCh chan resizeReq, cs *cellSize, w, h int, ar config.AspectRatio) {
+func pushResizeSize(resizeCh chan resizeReq, cs *cellSize, w, h int, ar config.AspectRatio, padding float32) {
 	_, _, bw, bh := render.LetterboxBox(ar, w, h)
-	req := resizeReq{cols: max(1, int(float32(bw)/cs.w)), rows: max(1, int(float32(bh)/cs.h))}
+	availW := max(0, float32(bw)-2*padding)
+	availH := max(0, float32(bh)-2*padding)
+	req := resizeReq{cols: max(1, int(availW/cs.w)), rows: max(1, int(availH/cs.h))}
 	select {
 	case resizeCh <- req:
 	default:
@@ -967,17 +975,19 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		if watch.changed(now) {
 			next := resolve()
 			fontChanged := next.Font != cfg.Font || next.Atlas != cfg.Atlas
-			// A pure aspect-ratio edit (no font/atlas change) still needs
-			// cols/rows recomputed against the new letterboxed content box
-			// (see pushResizeSize) — just not a full renderer/atlas rebuild.
+			// A pure aspect-ratio or padding edit (no font/atlas change)
+			// still needs cols/rows recomputed against the new letterboxed
+			// content box (see pushResizeSize) — just not a full
+			// renderer/atlas rebuild.
 			arChanged := next.CRT.AspectRatio != cfg.CRT.AspectRatio
+			paddingChanged := next.Padding != cfg.Padding
 			cfg = next
 			storeCfgRef(cfgRef, cfg)
 			switch {
 			case fontChanged:
 				g := load.begin(fontTitle(cfg.Font.Family))
 				requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: reqDpiX, dy: reqDpiY})
-			case arChanged:
+			case arChanged, paddingChanged:
 				pushResize(win, resizeCh, cs, cfgRef)
 			}
 			reload = true
