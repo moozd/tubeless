@@ -71,17 +71,21 @@ func applyLinux(archivePath, installDir string) (string, error) {
 }
 
 // bundleRootFor walks Contents/MacOS/tubeless back up to the .app
-// itself. Only meaningful on darwin (called from apply/restart_darwin.go
-// there), but pure path-string logic — no reason to hide it behind a
-// build tag too.
-func bundleRootFor(execPath string) string {
+// itself, reporting false when execPath isn't inside a bundle at all.
+// The caller must respect that false: treating a bare binary's own path
+// as a bundle root (what this used to return) makes applyDarwin unpack a
+// whole Tubeless.app directory over the binary and restart hand `open
+// -a` something that isn't an app. Only meaningful on darwin (called
+// from apply/restart_darwin.go there), but pure path-string logic — no
+// reason to hide it behind a build tag too.
+func bundleRootFor(execPath string) (string, bool) {
 	dir := filepath.Dir(execPath) // .../Tubeless.app/Contents/MacOS
 	dir = filepath.Dir(dir)       // .../Tubeless.app/Contents
 	dir = filepath.Dir(dir)       // .../Tubeless.app
 	if !strings.HasSuffix(dir, ".app") {
-		return execPath
+		return "", false
 	}
-	return dir
+	return dir, true
 }
 
 // applyDarwin extracts archivePath (the darwin-<arch>.zip asset, a

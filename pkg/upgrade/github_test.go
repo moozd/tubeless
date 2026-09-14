@@ -4,12 +4,16 @@ import "testing"
 
 func TestSelectAsset(t *testing.T) {
 	want := "tubeless-v1.2.3" + assetSuffix()
+	// Decoys must be assets no platform's suffix can match — a
+	// hardcoded "...-darwin-arm64.zip" here is the wanted asset when the
+	// tests themselves run on darwin/arm64, so selectAsset rightly
+	// returned it and the test failed on exactly the platform it was
+	// meant to cover.
 	rel := Release{Tag: "v1.2.3", Assets: []Asset{
-		{Name: "tubeless-v1.2.3-darwin-arm64.zip", URL: "u1"},
-		{Name: "tubeless-v1.2.3-darwin-amd64.zip", URL: "u2"},
-		{Name: "tubeless_v1.2.3_amd64.deb", URL: "u3"},
+		{Name: "tubeless_v1.2.3_amd64.deb", URL: "u1"},
+		{Name: "tubeless-v1.2.3-linux-amd64.rpm", URL: "u2"},
+		{Name: "tubeless-v1.2.3-checksums.txt", URL: "u3"},
 		{Name: want, URL: "u4"},
-		{Name: "tubeless-v1.2.3-linux-arm64.tar.gz", URL: "u5"},
 	}}
 	got, err := selectAsset(rel)
 	if err != nil {

@@ -38,9 +38,9 @@ func Run(currentVersion string, out io.Writer) error {
 	}
 	defer os.Remove(archivePath)
 
-	exePath, err := os.Executable()
+	exePath, err := runningExecutable()
 	if err != nil {
-		return fmt.Errorf("locate running executable: %w", err)
+		return err
 	}
 	fmt.Fprintln(out, "Installing...")
 	newExec, err := apply(archivePath, exePath)
@@ -52,12 +52,36 @@ func Run(currentVersion string, out io.Writer) error {
 	return restart(newExec)
 }
 
+// runningExecutable is os.Executable with symlinks resolved. The
+// resolution is the whole point: the standard macOS install puts the
+// real binary inside ~/Applications/Tubeless.app and only symlinks it
+// into ~/.local/bin (see install.sh), and os.Executable reports the path
+// the process was launched with — so running `tubeless upgrade` off PATH
+// yields the symlink, not the binary. Left unresolved, bundleRootFor
+// never sees a .app, and the upgrade unpacks a bundle over the symlink
+// in ~/.local/bin instead of over the installed app.
+func runningExecutable() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate running executable: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(exePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", exePath, err)
+	}
+	return resolved, nil
+}
+
 // apply installs archivePath over the current install, dispatching on OS
 // since a Linux install is a flat bin/ directory and a macOS one is an
 // app bundle (see applyLinux/applyDarwin).
 func apply(archivePath, exePath string) (string, error) {
 	if runtime.GOOS == "darwin" {
-		return applyDarwin(archivePath, bundleRootFor(exePath))
+		bundleRoot, ok := bundleRootFor(exePath)
+		if !ok {
+			return "", fmt.Errorf("%s is not inside a Tubeless.app bundle — reinstall with install.sh before upgrading", exePath)
+		}
+		return applyDarwin(archivePath, bundleRoot)
 	}
 	return applyLinux(archivePath, filepath.Dir(exePath))
 }

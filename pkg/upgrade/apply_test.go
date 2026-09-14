@@ -42,10 +42,16 @@ func TestStripBundlePrefix(t *testing.T) {
 }
 
 func TestBundleRootFor(t *testing.T) {
-	got := bundleRootFor("/Users/mo/Applications/Tubeless.app/Contents/MacOS/tubeless")
+	got, ok := bundleRootFor("/Users/mo/Applications/Tubeless.app/Contents/MacOS/tubeless")
 	want := "/Users/mo/Applications/Tubeless.app"
-	if got != want {
-		t.Fatalf("bundleRootFor = %q, want %q", got, want)
+	if !ok || got != want {
+		t.Fatalf("bundleRootFor = %q, %v, want %q, true", got, ok, want)
+	}
+}
+
+func TestBundleRootForOutsideBundle(t *testing.T) {
+	if got, ok := bundleRootFor("/home/mo/.local/bin/tubeless"); ok {
+		t.Fatalf("bundleRootFor outside a bundle = %q, true; want \"\", false", got)
 	}
 }
 
