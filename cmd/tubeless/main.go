@@ -225,6 +225,16 @@ func main() {
 		dpiY: dpiY,
 	}
 	wireResize(win, resizeCh, cs, &cfgRef)
+	// GLFW's framebuffer-size callback only fires on a later, real resize
+	// — never for the window's initial creation — so without this, cols
+	// and rows stay at their fixed startup guess (which the actual
+	// framebuffer rarely matches exactly: DPI rounding, the dpiX rebuild
+	// above changing the real cell pixel size, or the window manager
+	// snapping the requested size) until the user manually resizes and
+	// wireResize's callback finally reconciles them. Pushing one resize
+	// now, against the window's real framebuffer size and the
+	// already-corrected cs, does that reconciliation immediately instead.
+	pushResize(win, resizeCh, cs, &cfgRef)
 
 	sel := &render.Selection{}
 	fontZoom := make(chan int, 16)
