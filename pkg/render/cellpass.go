@@ -219,10 +219,14 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				cp.underlineScratch = appendUnderlineInstance(cp.underlineScratch, px, py, ulColor, float32(cell.Attr.Underline))
 			}
 			if bg != empty {
-				cp.bgScratch = appendRectInstance(cp.bgScratch, px, py, 0, 0, 1, 1, bg, [4]float32{})
+				e := bgRectEdges(grid, scr.Cols, scr.Rows, cfg, x, y, bg)
+				rx, ry, rw, rh := expandRect(0, 0, 1, 1, cw, ch, e)
+				cp.bgScratch = appendRectInstance(cp.bgScratch, px, py, rx, ry, rw, rh, bg, [4]float32{})
 			}
 			if x0, y0, x1, y1, ok := font.BlockRect(cell.Rune); ok {
-				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, x0, y0, x1-x0, y1-y0, fg, [4]float32{})
+				e := blockRectEdges(grid, scr.Cols, scr.Rows, cfg, x, y, fg, x0, y0, x1, y1)
+				rx, ry, rw, rh := expandRect(x0, y0, x1-x0, y1-y0, cw, ch, e)
+				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, rx, ry, rw, rh, fg, [4]float32{})
 				continue
 			}
 			if cell.Rune == ' ' {
@@ -270,6 +274,38 @@ func glyphUV(atlas *font.Atlas, g font.Glyph) (u0, v0, us, vs float32) {
 
 func appendRectInstance(dst []float32, px, py, rx, ry, rw, rh float32, color [3]float32, radii [4]float32) []float32 {
 	return append(dst, px, py, rx, ry, rw, rh, color[0], color[1], color[2], radii[0], radii[1], radii[2], radii[3])
+}
+
+// rectOverlapPx is how far a rect's own geometry overshoots into a
+// same-fill neighbor on a continuing edge, in physical pixels.
+// cell_rect.frag antialiases every rect instance independently with a
+// ~0.75px SDF fringe; two instances that are merely flush at a shared edge
+// (not overlapping) each fade out just short of it and leave a faint seam
+// even though nothing should be visible there. Overlapping by more than
+// that fringe guarantees full coverage regardless of sub-pixel rounding in
+// the cell grid's layout.
+const rectOverlapPx = 2.0
+
+// expandRect grows a rect (given as cell-fraction offset/size, i.e. what
+// aRectOffset/aRectSize become) by rectOverlapPx on whichever edges e
+// marks as continuing into a neighbor.
+func expandRect(rx, ry, rw, rh, cw, ch float32, e edgeCont) (float32, float32, float32, float32) {
+	epsX, epsY := rectOverlapPx/cw, rectOverlapPx/ch
+	if e.Left {
+		rx -= epsX
+		rw += epsX
+	}
+	if e.Right {
+		rw += epsX
+	}
+	if e.Up {
+		ry -= epsY
+		rh += epsY
+	}
+	if e.Down {
+		rh += epsY
+	}
+	return rx, ry, rw, rh
 }
 
 func appendGlyphInstance(dst []float32, px, py, u0, v0, us, vs float32, fg, bg [3]float32, style, shear float32) []float32 {

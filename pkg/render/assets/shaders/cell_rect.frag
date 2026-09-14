@@ -9,14 +9,13 @@ out vec4 fragColor;
 
 // Signed distance to an axis-aligned box with a different corner radius per
 // corner (Inigo Quilez's formulation). The literal terminal scene currently
-// sends zero radii; any rounded-surface look belongs in a later image-space
-// filter, not in cell-neighbor interpretation here.
+// sends zero radii — corners always come out square here — but the SDF
+// still antialiases the straight edges via the same smoothstep, which a
+// flat hard-fill shortcut would lose; cellpass.go's expandRect overlaps
+// same-fill neighbors so that AA fringe doesn't leave a seam between them.
+// Any rounded-surface look belongs in a later image-space filter, not in
+// cell-neighbor interpretation here.
 void main() {
-	if (max(max(vRadius.x, vRadius.y), max(vRadius.z, vRadius.w)) <= 0.0) {
-		fragColor = vec4(vColor, 1.0);
-		return;
-	}
-
 	vec2 p = vLocal;
 	vec2 r2 = (p.x > 0.0) ? vRadius.yz : vRadius.xw; // (TR,BR) or (TL,BL)
 	float r = (p.y > 0.0) ? r2.y : r2.x;              // bottom or top of that side

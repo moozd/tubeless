@@ -7,29 +7,40 @@ uniform sampler2D uScene;
 uniform vec2 uTexel;
 uniform float uRadius;
 
-// isEdge treats a neighbor as a boundary either where the surface goes
-// transparent or where it continues with a different flat color — two
-// adjacent same-color fills read as one continuous island (no rounding at
-// their shared seam), but a color change is a genuine outer edge of the
-// fill under the probe, same as the old per-cell neighbor-color check this
-// pass replaced.
-bool isEdge(vec3 baseColor, vec2 uv) {
+// edgeSignal is a continuous 0..1 "how much this sample stops being the
+// base fill" value: 0 for the same opaque color as base, 1 for fully
+// transparent or a clearly different color. cell_rect.frag antialiases
+// both straight edges and cell-to-cell seams with real fractional alpha
+// (see its own doc comment), so this varies smoothly across the true edge
+// instead of stepping — edgeDist below interpolates against that sub-pixel
+// ramp instead of snapping the corner to whole-texel rings, which is what
+// read as pixelated at small radii.
+float edgeSignal(vec3 base, vec2 uv) {
 	vec4 s = texture(uScene, uv);
-	if (s.a <= 0.01) {
-		return true;
-	}
-	return distance(s.rgb, baseColor) > 0.004;
+	vec3 rgb = s.a > 0.001 ? s.rgb / s.a : vec3(0.0);
+	float colorDiff = clamp(distance(rgb, base) / 0.15, 0.0, 1.0);
+	return max(1.0 - s.a, colorDiff);
 }
 
-float edgeDist(vec3 baseColor, vec2 dir, float radius) {
-	for (int i = 1; i <= 16; i++) {
+const float EDGE_T = 0.5;
+
+// Sub-pixel distance to the nearest edge along dir, up to radius texels.
+// Walks whole texels to bracket the crossing, then linearly interpolates
+// within that texel using the actual signal values on either side — exact
+// for the linear ramp bilinear-filtered antialiased source pixels give.
+float edgeDist(vec3 base, vec2 dir, float radius) {
+	float prev = 0.0;
+	for (int i = 1; i <= 17; i++) {
 		float f = float(i);
-		if (f > radius) {
+		float cur = edgeSignal(base, vUV + dir * uTexel * f);
+		if (cur >= EDGE_T) {
+			float t = clamp((EDGE_T - prev) / max(cur - prev, 1e-4), 0.0, 1.0);
+			return min(f - 1.0 + t, radius);
+		}
+		if (f >= radius) {
 			break;
 		}
-		if (isEdge(baseColor, vUV + dir * uTexel * f)) {
-			return f - 0.5;
-		}
+		prev = cur;
 	}
 	return radius;
 }
@@ -55,11 +66,12 @@ void main() {
 		return;
 	}
 
+	vec3 base = src.rgb / src.a;
 	float radius = min(uRadius, 16.0);
-	float left = edgeDist(src.rgb, vec2(-1.0, 0.0), radius);
-	float right = edgeDist(src.rgb, vec2(1.0, 0.0), radius);
-	float up = edgeDist(src.rgb, vec2(0.0, -1.0), radius);
-	float down = edgeDist(src.rgb, vec2(0.0, 1.0), radius);
+	float left = edgeDist(base, vec2(-1.0, 0.0), radius);
+	float right = edgeDist(base, vec2(1.0, 0.0), radius);
+	float up = edgeDist(base, vec2(0.0, -1.0), radius);
+	float down = edgeDist(base, vec2(0.0, 1.0), radius);
 
 	float keep = 1.0;
 	keep = min(keep, cornerKeep(left, up, radius));

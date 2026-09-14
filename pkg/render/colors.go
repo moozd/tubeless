@@ -2,6 +2,7 @@ package render
 
 import (
 	"github.com/moozd/tubeless/pkg/config"
+	"github.com/moozd/tubeless/pkg/font"
 	"github.com/moozd/tubeless/pkg/screen"
 )
 
@@ -238,4 +239,73 @@ func ambientBG(cfg config.Config) [3]float32 {
 		return cfg.Colors.DefaultBg
 	}
 	return [3]float32{0, 0, 0}
+}
+
+// edgeCont bundles which of a filled rect's 4 edges continue into a
+// same-color neighbor. cellpass.go overlaps the rect's own geometry
+// slightly on those edges — cell_rect.frag antialiases every rect
+// independently, and two instances that are merely flush (not overlapping)
+// at a shared edge each fade out just short of it, leaving a faint seam
+// even though nothing should be visible there.
+type edgeCont struct {
+	Up, Right, Down, Left bool
+}
+
+// sameSurfaceColor is bgRectEdges/blockRectEdges' color-match test: exact
+// equality (to float32 precision) rather than a perceptual threshold,
+// since a "continuing" edge means the same fill, not a merely similar one.
+func sameSurfaceColor(a, b [3]float32) bool {
+	const eps = 1.0 / 1024.0
+	return abs32(a[0]-b[0]) <= eps && abs32(a[1]-b[1]) <= eps && abs32(a[2]-b[2]) <= eps
+}
+
+// bgRectEdges reports which edges of a background fill at (x,y) continue
+// into a same-color neighbor cell. grid/cols/rows are the currently-visible
+// window (see screen.Screen.VisibleWindow), not necessarily the screen's
+// live tail.
+func bgRectEdges(grid [][]screen.Cell, cols, rows int, cfg config.Config, x, y int, bg [3]float32) edgeCont {
+	same := func(dx, dy int) bool {
+		nx, ny := x+dx, y+dy
+		if nx < 0 || nx >= cols || ny < 0 || ny >= rows {
+			return false
+		}
+		_, nbg := cellColors(grid[ny][nx].Attr, cfg)
+		return sameSurfaceColor(nbg, bg)
+	}
+	return edgeCont{Up: same(0, -1), Right: same(1, 0), Down: same(0, 1), Left: same(-1, 0)}
+}
+
+// blockRectEdges is bgRectEdges' counterpart for a single-rect block glyph
+// (font.BlockRect). An edge only continues when the neighbor is also a
+// block glyph of the same color whose own sub-rect fully spans this one's
+// edge — e.g. a full block beside a left-half block still joins on their
+// shared filled edge, but the bottom edge of ▀ (the upper-half block) never
+// joins, since nothing can continue across a boundary internal to the cell.
+func blockRectEdges(grid [][]screen.Cell, cols, rows int, cfg config.Config, x, y int, fg [3]float32, x0, y0, x1, y1 float32) edgeCont {
+	joins := func(dx, dy int) bool {
+		nx, ny := x+dx, y+dy
+		if nx < 0 || nx >= cols || ny < 0 || ny >= rows {
+			return false
+		}
+		n := grid[ny][nx]
+		nx0, ny0, nx1, ny1, ok := font.BlockRect(n.Rune)
+		if !ok {
+			return false
+		}
+		nfg, _ := cellColors(n.Attr, cfg)
+		if !sameSurfaceColor(nfg, fg) {
+			return false
+		}
+		switch {
+		case dx < 0:
+			return x0 == 0 && nx1 == 1 && ny0 <= y0 && y1 <= ny1
+		case dx > 0:
+			return x1 == 1 && nx0 == 0 && ny0 <= y0 && y1 <= ny1
+		case dy < 0:
+			return y0 == 0 && ny1 == 1 && nx0 <= x0 && x1 <= nx1
+		default:
+			return y1 == 1 && ny0 == 0 && nx0 <= x0 && x1 <= nx1
+		}
+	}
+	return edgeCont{Up: joins(0, -1), Right: joins(1, 0), Down: joins(0, 1), Left: joins(-1, 0)}
 }
