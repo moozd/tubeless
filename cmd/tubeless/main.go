@@ -865,6 +865,15 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	// very first iteration, regardless of whatever focus state the
 	// window happened to open in.
 	lastFocused := !*focused
+	// reqDpiX/reqDpiY remember the scale the newest font build was
+	// *requested* for. cs.dpiX/dpiY only catch up once that build lands and
+	// installs, so comparing the monitor's scale against cs below would
+	// re-begin a build every single frame for the whole duration of the
+	// rebuild — and every begin bumps load.gen, so the in-flight result
+	// always came back stale, got dropped, cs never updated, and the
+	// loading overlay never cleared after a drag to a differently-scaled
+	// display.
+	reqDpiX, reqDpiY := cs.dpiX, cs.dpiY
 
 	for !win.ShouldClose() && !closeRequested.Load() {
 		if win.GetAttrib(glfw.Iconified) == glfw.True {
@@ -930,7 +939,8 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		// alone left open. The comparison is two float reads plus a
 		// monitor-bounds scan — free next to everything else this loop
 		// already does per frame.
-		if x, y := win.CurrentMonitorContentScale(); x != cs.dpiX || y != cs.dpiY {
+		if x, y := win.CurrentMonitorContentScale(); x != reqDpiX || y != reqDpiY {
+			reqDpiX, reqDpiY = x, y
 			g := load.begin("Display scale change")
 			requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: x, dy: y})
 		}
@@ -939,7 +949,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			cfg.Font.Size = clampFontSize(cfg.Font.Size + 2*d)
 			storeCfgRef(cfgRef, cfg)
 			g := load.begin(fmt.Sprintf("Font size %dpx", cfg.Font.Size))
-			requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: cs.dpiX, dy: cs.dpiY})
+			requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: reqDpiX, dy: reqDpiY})
 			reload = true
 		}
 
@@ -956,7 +966,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			switch {
 			case fontChanged:
 				g := load.begin(fontTitle(cfg.Font.Family))
-				requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: cs.dpiX, dy: cs.dpiY})
+				requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: reqDpiX, dy: reqDpiY})
 			case arChanged:
 				pushResize(win, resizeCh, cs, cfgRef)
 			}
