@@ -691,7 +691,7 @@ func applyEffectsPresetCfg(c *config.Config, name string) {
 	e := config.EffectsPreset(name)
 	c.Preset = name
 	c.Surface, c.Blur, c.Cursor = e.Surface, e.Blur, e.Cursor
-	c.Face, c.Contrast, c.CRT = e.Face, e.Contrast, e.CRT
+	c.Face, c.Contrast, c.Scrolling, c.CRT = e.Face, e.Contrast, e.Scrolling, e.CRT
 	if theme, ok := config.MonitorTheme(name); ok {
 		applyThemeCfg(c, theme)
 	}
@@ -840,6 +840,16 @@ func (u *ui) buildPresetsList() []panelRow {
 	add(asEffect(newSlider("contrast.min_delta", "min contrast", "minimum fg/bg gap on the mono ramp", "", 2, 0.01, 0, 1,
 		func(c *config.Config) float64 { return float64(c.Contrast.MinDelta) },
 		func(c *config.Config, v float64) { c.Contrast.MinDelta = float32(v) })))
+
+	section("scrolling")
+	add(asEffect(newToggle("scrolling.smooth_content_shift", "smooth content shift",
+		"glide detected scroll shifts instead of snapping; a heuristic diff, disable if it wobbles on some app's output",
+		func(c *config.Config) bool { return c.Scrolling.SmoothContentShift },
+		func(c *config.Config, v bool) { c.Scrolling.SmoothContentShift = v })))
+	add(asEffect(newToggle("scrolling.smooth_horizontal_content_shift", "smooth horizontal shift",
+		"same, but for left/right shifts; off by default, needs wide real content to stay reliable",
+		func(c *config.Config) bool { return c.Scrolling.SmoothHorizontalContentShift },
+		func(c *config.Config, v bool) { c.Scrolling.SmoothHorizontalContentShift = v })))
 
 	// Every CRT effect below is off by default (0) in the modern
 	// preset and independently configurable — see pkg/config/crt.go's

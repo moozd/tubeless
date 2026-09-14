@@ -7,12 +7,13 @@ package config
 // edited by hand, so this package only ever hands back a preset's
 // *starting* values.
 type Effects struct {
-	Surface  Surface
-	Blur     Blur
-	Cursor   Cursor
-	Face     Face
-	Contrast Contrast
-	CRT      CRT
+	Surface   Surface
+	Blur      Blur
+	Cursor    Cursor
+	Face      Face
+	Contrast  Contrast
+	Scrolling Scrolling
+	CRT       CRT
 }
 
 // EffectsPresetNames lists every registered effects preset, in the order
@@ -76,7 +77,9 @@ func MonitorTheme(presetName string) (theme string, ok bool) {
 
 // modernEffects is the default look: every CRT emulation effect off,
 // the same hand-tuned chrome baseline every TrueColor theme originally
-// shipped with.
+// shipped with. Both smooth-scroll heuristics default off — see
+// Scrolling's own doc comment on why they're an escape-hatch feature,
+// not an always-on default.
 func modernEffects() Effects {
 	return Effects{
 		Surface:  Surface{Radius: 1.7},
