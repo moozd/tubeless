@@ -629,3 +629,47 @@ func TestDetectContentShiftFindsChromeSandwichedScroll(t *testing.T) {
 		t.Fatalf("Delta = %d, want 8", shift.Delta)
 	}
 }
+
+// TestDetectContentShiftSurvivesRulerDigitReflow is the permanent
+// regression for the live "arrow-key scroll drags the status bar"
+// report: a per-window ruler/statusline (nvim's default, one per split
+// pane at laststatus=2) whose position indicator changes shape between
+// frames — "39,0-1  0%" to "40,1  1%" here, captured verbatim from a
+// real nvim session — differs by 6 raw characters, MORE than the
+// unrelated-content case in TestDetectContentShiftExtendsBandToNewTrailingContent
+// (7 mismatches) is allowed to differ by under the old fixed-count
+// check, which made a single mismatch threshold unable to tell them
+// apart. What actually separates them: the ruler keeps its entire
+// surrounding layout (filename, padding) byte-identical and only
+// changes one small span in the middle, while genuinely new content
+// shares no meaningful prefix or suffix with whatever was there before.
+func TestDetectContentShiftSurvivesRulerDigitReflow(t *testing.T) {
+	const cols, rows = 69, 10
+	bufWords := []string{
+		"func handleRequest(ctx)", "\tuser := auth.From(ctx)", "\tif user == nil {",
+		"\t\treturn errUnauth", "\t}", "\treturn data, nil", "}", "",
+		"func main() {", "package main",
+	}
+	ruler := "personal/tubeless/cmd/tubeless/main.go             39,0-1          0%"
+	rulerNext := "personal/tubeless/cmd/tubeless/main.go             40,1            1%"
+
+	prev := New(cols, rows)
+	next := New(cols, rows)
+	for y := 0; y < rows-1; y++ {
+		fillRow(prev, y, bufWords[y%len(bufWords)])
+		fillRow(next, y, bufWords[(y+1)%len(bufWords)]) // scrolled up by 1
+	}
+	fillRow(prev, rows-1, ruler)
+	fillRow(next, rows-1, rulerNext)
+
+	shift, ok := DetectContentShift(prev, next, rows-1)
+	if !ok {
+		t.Fatal("expected the buffer scroll to be detected despite the ruler's digit reflow")
+	}
+	if shift.Bottom >= rows-1 {
+		t.Fatalf("Bottom = %d, swallowed the ruler row %d", shift.Bottom, rows-1)
+	}
+	if shift.Delta != 1 {
+		t.Fatalf("Delta = %d, want 1", shift.Delta)
+	}
+}

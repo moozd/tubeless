@@ -79,17 +79,17 @@ const (
 	// just 2-3 wide.
 	popularityCap = 3
 
-	// unshiftedMaxDiff is unshiftedMatch's own fuzzy tolerance — a
-	// smaller, axis-independent constant, not fuzzyRowMaxDiff/
-	// fuzzyColMaxDiff. Those are tuned for tier 2's job: does a line
-	// that's already known to have shifted also tolerate a fixed-width
-	// gutter on top of that. unshiftedMatch asks a different question —
-	// is this line basically the SAME line, just perhaps a small counter
-	// ticking over (a status bar's cursor position, a percentage) — and
-	// needs a tighter bound, or a wholesale-different line (real new
-	// content) reads as "barely changed" too, defeating the check it's
-	// there for.
-	unshiftedMaxDiff = 4
+	// unshiftedMaxChangedSpan caps unshiftedMatch's affixGap check — see
+	// its use there. Not fuzzyRowMaxDiff/fuzzyColMaxDiff: those are tuned
+	// for tier 2's job (does an already-known-shifted line also tolerate
+	// a fixed-width gutter), a different question from "is this
+	// basically the SAME line, just a counter ticking over somewhere in
+	// it." 20 comfortably covers a realistic position/percentage
+	// indicator changing shape (e.g. "39,0-1  0%" -> "40,1  1%") while
+	// callers additionally cap it at half the line's own width (see
+	// detectContentShiftInBand/detectHorizontalContentShiftInBand), so a
+	// narrow band can't have its entire width trivially pass this check.
+	unshiftedMaxChangedSpan = 20
 
 	// anchorlessLineFactor scales minLines (axis-specific: minShiftBandLines
 	// or minShiftBandColumns) up to the total a band must clear to be
@@ -217,7 +217,10 @@ func detectContentShiftInBand(prev, next *Screen, maxShift, colLo, colHi int) (R
 	fuzzy := func(afterIdx, beforeIdx int) int {
 		return rowMismatches(next.Grid[afterIdx][colLo:colHi+1], prev.Grid[beforeIdx][colLo:colHi+1])
 	}
-	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, fuzzyRowMaxDiff, confidenceThreshold, minShiftBandLines, blankHash(width), blankHash(colHi+1-skip))
+	affixGap := func(afterIdx, beforeIdx int) int {
+		return cellAffixGap(next.Grid[afterIdx][colLo:colHi+1], prev.Grid[beforeIdx][colLo:colHi+1])
+	}
+	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, affixGap, fuzzyRowMaxDiff, min(unshiftedMaxChangedSpan, width/2), confidenceThreshold, minShiftBandLines, blankHash(width), blankHash(colHi+1-skip))
 	if !ok {
 		return RowShift{}, false
 	}
@@ -267,7 +270,10 @@ func detectHorizontalContentShiftInBand(prev, next *Screen, maxShift, rowLo, row
 	fuzzy := func(afterIdx, beforeIdx int) int {
 		return colMismatches(next.Grid[rowLo:rowHi+1], prev.Grid[rowLo:rowHi+1], afterIdx, beforeIdx)
 	}
-	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, fuzzyColMaxDiff, confidenceColThreshold, minShiftBandColumns, blankHash(height), blankHash(rowHi+1-skip))
+	affixGap := func(afterIdx, beforeIdx int) int {
+		return colAffixGap(next.Grid[rowLo:rowHi+1], prev.Grid[rowLo:rowHi+1], afterIdx, beforeIdx)
+	}
+	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, affixGap, fuzzyColMaxDiff, min(unshiftedMaxChangedSpan, height/2), confidenceColThreshold, minShiftBandColumns, blankHash(height), blankHash(rowHi+1-skip))
 	if !ok {
 		return ColShift{}, false
 	}
@@ -422,7 +428,7 @@ func sameDims(prev, next *Screen) bool {
 // tier 1/2's "full or aux" check fire everywhere — auxBlank lets that
 // specific match be recognized as equally uninformative and rejected,
 // without discarding a real full-hash match on the same line.
-func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfterHash []uint64, fuzzyDiff func(afterIdx, beforeIdx int) int, maxDiff int, confThreshold float64, minLines int, blank, auxBlank uint64) (lo, hi, delta int, ok bool) {
+func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfterHash []uint64, fuzzyDiff func(afterIdx, beforeIdx int) int, affixGap func(afterIdx, beforeIdx int) int, maxDiff int, maxChangedSpan int, confThreshold float64, minLines int, blank, auxBlank uint64) (lo, hi, delta int, ok bool) {
 	if maxShift <= 0 || maxShift >= n {
 		maxShift = n - 1
 	}
@@ -583,6 +589,22 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 	// showing the same layout with only a cursor-position counter
 	// ticking over is barely different from itself frame to frame, so
 	// this is true for it. See its use in the extension switch below.
+	//
+	// The final fallback checks affixGap — the width of content BETWEEN
+	// the longest common prefix and longest common suffix — rather than
+	// a raw mismatch count (an earlier version of this check did exactly
+	// that, and a real status bar's position/percentage indicator turned
+	// out to routinely change by MORE characters than a piece of
+	// genuinely new, unrelated content sometimes does: "39,0-1  0%" ->
+	// "40,1  1%" is 6 raw mismatches, while a real "this row is now
+	// something else entirely" case in this file's own tests is only 7
+	// — no fixed count cleanly separates them). A real status bar keeps
+	// its surrounding layout (filename, padding) byte-identical and only
+	// changes a narrow span somewhere in the middle or at one edge;
+	// genuinely unrelated content typically shares no meaningful prefix
+	// OR suffix with whatever used to be at that row/column at all. That
+	// structural difference — not the raw size of the change — is what
+	// actually distinguishes them.
 	unshiftedMatch := func(y int) bool {
 		if afterHash[y] == beforeHash[y] {
 			return true
@@ -595,7 +617,7 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 		if auxMatch {
 			return true
 		}
-		return fuzzyDiff(y, y) <= unshiftedMaxDiff
+		return affixGap(y, y) <= maxChangedSpan
 	}
 	// Extend the reported band out to cover brand-new lines the shift
 	// itself revealed at an edge — lines with no counterpart in the
@@ -768,4 +790,50 @@ func colMismatches(gridA, gridB [][]Cell, colA, colB int) int {
 		}
 	}
 	return diff
+}
+
+// cellAffixGap is unshiftedMatch's structural check: the width of
+// content between a's and b's longest common (rune) prefix and longest
+// common suffix. A real fixed line (a status bar, a ruler) keeps its
+// surrounding layout byte-identical and only changes a narrow span
+// somewhere — this is small for that case regardless of how many raw
+// characters that span happens to contain. Genuinely unrelated content
+// (real new content a scroll revealed) typically shares no meaningful
+// prefix OR suffix with whatever used to occupy that position, so this
+// comes out close to the full length. A length mismatch (shouldn't
+// happen — both share the screen's Cols) returns the full length, never
+// a coincidental pass.
+func cellAffixGap(a, b []Cell) int {
+	n := len(a)
+	if n == 0 || len(b) != n {
+		return n
+	}
+	prefix := 0
+	for prefix < n && a[prefix].Rune == b[prefix].Rune {
+		prefix++
+	}
+	suffix := 0
+	for suffix < n-prefix && a[n-1-suffix].Rune == b[n-1-suffix].Rune {
+		suffix++
+	}
+	return n - prefix - suffix
+}
+
+// colAffixGap is cellAffixGap's transpose: the same longest-common-
+// prefix/suffix gap, computed down column colA of gridA against column
+// colB of gridB instead of along a row.
+func colAffixGap(gridA, gridB [][]Cell, colA, colB int) int {
+	n := len(gridA)
+	if n == 0 || len(gridB) != n {
+		return n
+	}
+	prefix := 0
+	for prefix < n && gridA[prefix][colA].Rune == gridB[prefix][colB].Rune {
+		prefix++
+	}
+	suffix := 0
+	for suffix < n-prefix && gridA[n-1-suffix][colA].Rune == gridB[n-1-suffix][colB].Rune {
+		suffix++
+	}
+	return n - prefix - suffix
 }
