@@ -1079,13 +1079,15 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			// (not the old brute-force heuristic), cheap enough to run
 			// unconditionally here. Both axes are checked independently,
 			// so a region shifting vertically and a different region
-			// shifting horizontally in the same frame both animate.
-			// Each axis is gated on its own config flag, live-reloadable
-			// from config.toml/the config TUI — an escape hatch since
-			// this is a heuristic diff, not a guaranteed-exact signal.
-			// The column axis defaults off: it needs far more real
-			// content width than the row axis to tell a genuine
-			// horizontal scroll apart from coincidence.
+			// shifting horizontally in the same frame both animate — but
+			// gated on a single config flag: both detectors reject the
+			// same class of adversarial false positive (columnar
+			// lookalikes, a repeated-rule/separator run — see
+			// shiftdetect.go's minTier1Ratio/popularityCap), so there's
+			// no longer a meaningfully weaker axis to gate separately.
+			// Live-reloadable from config.toml/the config TUI — an escape
+			// hatch since this is a heuristic diff, not a
+			// guaranteed-exact signal.
 			//
 			// scrollLine == 0 additionally requires the viewport to be at
 			// the live tail. DetectContentShift/DetectHorizontalContentShift
@@ -1106,8 +1108,6 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 				if shift, ok := screen.DetectContentShift(lastScr, scr, contentShiftMaxRows); ok {
 					r.ApplyDetectedRowShift(shift, cs.h)
 				}
-			}
-			if cfg.Scrolling.SmoothHorizontalContentShift {
 				if shift, ok := screen.DetectHorizontalContentShift(lastScr, scr, contentShiftMaxCols); ok {
 					r.ApplyDetectedColShift(shift, cs.w)
 				}

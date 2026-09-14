@@ -58,23 +58,18 @@ type Config struct {
 // Scrolling controls scroll-related behavior beyond the raw scrollback
 // buffer size (see Scrollback).
 type Scrolling struct {
-	// SmoothContentShift enables the vertical content-shift glide:
-	// detected uniform row shifts (see pkg/screen's DetectContentShift)
-	// ease in like Neovide instead of snapping. It's a heuristic diff
-	// against the previous frame, not a guaranteed-exact signal — this
-	// is the escape hatch for a misdetected shift wobbling on some
-	// particular app's output.
+	// SmoothContentShift gates both axes of the content-shift glide:
+	// detected uniform row shifts (pkg/screen's DetectContentShift) and
+	// column shifts (DetectHorizontalContentShift) ease in like Neovide
+	// instead of snapping. One flag rather than two per-axis switches —
+	// both detectors reject the same class of adversarial false
+	// positives (columnar lookalikes, a repeated-rule/separator run;
+	// see shiftdetect.go's minTier1Ratio/popularityCap), so there's no
+	// longer a meaningfully weaker axis to gate separately. Still a
+	// heuristic diff against the previous frame, not a guaranteed-exact
+	// signal — this is the escape hatch for a misdetected shift wobbling
+	// on some particular app's output.
 	SmoothContentShift bool `toml:"smooth_content_shift"`
-
-	// SmoothHorizontalContentShift is SmoothContentShift's column-axis
-	// counterpart (see DetectHorizontalContentShift). Off by default:
-	// terminal text has far less per-column uniqueness than per-row
-	// uniqueness to key off of, so this axis needs substantially more
-	// real content width to tell a genuine horizontal scroll apart from
-	// coincidence than the row axis does — sparse/mostly-blank screens
-	// (an ordinary shell prompt) are more prone to a false-positive
-	// wobble here even with stricter thresholds than the row axis uses.
-	SmoothHorizontalContentShift bool `toml:"smooth_horizontal_content_shift"`
 }
 
 // Scrollback controls how much scrolled-off history is retained above the

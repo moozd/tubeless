@@ -11,13 +11,14 @@
 // read clearly.
 //
 // The screen is two tabs (Tab/Shift+Tab, or Shift+Tab's ESC[Z, to switch):
-// PRESETS holds every non-color, non-font visual effect (see
-// pkg/config's Effects), cycled through a list of period-accurate 80s
-// monitors alongside the "modern" default (CRT emulation off); FONTS &
-// THEME holds the font and every color setting (see pkg/config's ThemeColors),
-// including a per-channel custom-color editor, with a live swatch/sample
-// preview at the bottom. Editing any setting on either tab by hand flips
-// that tab's own preset/theme name to "custom" — see adjust().
+// GENERAL holds the font, layout (padding), scrolling behavior, and
+// every color setting (see pkg/config's ThemeColors), including a
+// per-channel custom-color editor, with a live swatch/sample preview at
+// the bottom; VISUAL EFFECTS holds every non-color, non-font visual
+// effect (see pkg/config's Effects), cycled through a list of
+// period-accurate 80s monitors alongside the "modern" default (CRT
+// emulation off). Editing any setting on either tab by hand flips that
+// tab's own preset/theme name to "custom" — see adjust().
 //
 // Edits only take effect in memory as you navigate — nothing is written to
 // ~/.config/tubeless/config.toml until you press 's'. The running tubeless
@@ -49,8 +50,8 @@ type ui struct {
 	cols int
 	rows int
 
-	// tab is which of the two top-level tabs is active (0 = presets, 1 =
-	// fonts & theme) — see listFor/switchTab. Each tab keeps its own
+	// tab is which of the two top-level tabs is active (0 = general, 1 =
+	// visual effects) — see listFor/switchTab. Each tab keeps its own
 	// navigation position in selByTab so switching away and back doesn't
 	// lose your place.
 	tab         int
@@ -341,8 +342,8 @@ func (u *ui) feed(b byte) (quit bool) {
 }
 
 // listFor returns the row list for a tab index — the single source both
-// buildLists and switchTab read from, so they can't drift. Fonts &
-// theme is tab 0 (the first thing you see on open); presets is tab 1.
+// buildLists and switchTab read from, so they can't drift. General is
+// tab 0 (the first thing you see on open); visual effects is tab 1.
 func (u *ui) listFor(tab int) []panelRow {
 	if tab == 1 {
 		return u.listPresets
@@ -780,7 +781,7 @@ func toggleStr(on bool) string {
 	return "○ off"
 }
 
-// buildPresetsList is the PRESETS tab: a cycle through every registered
+// buildPresetsList is the VISUAL EFFECTS tab: a cycle through every registered
 // effects preset (see pkg/config's EffectsPresetNames), followed by
 // every individual effect it seeds — editing any of them by hand flips
 // Preset to "custom" (see adjust()).
@@ -841,16 +842,6 @@ func (u *ui) buildPresetsList() []panelRow {
 		func(c *config.Config) float64 { return float64(c.Contrast.MinDelta) },
 		func(c *config.Config, v float64) { c.Contrast.MinDelta = float32(v) })))
 
-	section("scrolling")
-	add(asEffect(newToggle("scrolling.smooth_content_shift", "smooth content shift",
-		"glide detected scroll shifts instead of snapping; a heuristic diff, disable if it wobbles on some app's output",
-		func(c *config.Config) bool { return c.Scrolling.SmoothContentShift },
-		func(c *config.Config, v bool) { c.Scrolling.SmoothContentShift = v })))
-	add(asEffect(newToggle("scrolling.smooth_horizontal_content_shift", "smooth horizontal shift",
-		"same, but for left/right shifts; off by default, needs wide real content to stay reliable",
-		func(c *config.Config) bool { return c.Scrolling.SmoothHorizontalContentShift },
-		func(c *config.Config, v bool) { c.Scrolling.SmoothHorizontalContentShift = v })))
-
 	// Every CRT effect below is off by default (0) in the modern
 	// preset and independently configurable — see pkg/config/crt.go's
 	// doc comment for why these are plain floats rather than a separate
@@ -910,11 +901,12 @@ func (u *ui) buildPresetsList() []panelRow {
 	return list
 }
 
-// buildFontsThemeList is the FONTS & THEME tab: font shaping settings,
-// a cycle through every registered color theme, and a per-channel
-// custom-color editor (text/background/accent/glow) — editing any color
-// channel by hand flips Theme to "custom" (see adjust()). See
-// drawColorPreview for the live swatch/sample preview this feeds.
+// buildFontsThemeList is the GENERAL tab: font shaping settings, layout
+// (padding), scrolling behavior, a cycle through every registered color
+// theme, and a per-channel custom-color editor (text/background/accent/
+// glow) — editing any color channel by hand flips Theme to "custom"
+// (see adjust()). See drawColorPreview for the live swatch/sample
+// preview this feeds.
 func (u *ui) buildFontsThemeList() []panelRow {
 	var list []panelRow
 	section := func(name string) { list = append(list, panelRow{kind: rowSection, section: name}) }
@@ -976,6 +968,12 @@ func (u *ui) buildFontsThemeList() []panelRow {
 	add(newSlider("padding.size", "padding", "empty margin kept around the terminal grid on every side", "px", 0, 1, 0, 200,
 		func(c *config.Config) float64 { return float64(c.Padding.Size) },
 		func(c *config.Config, v float64) { c.Padding.Size = float32(v) }))
+
+	section("scrolling")
+	add(asEffect(newToggle("scrolling.smooth_content_shift", "smooth scroll",
+		"glide detected scroll shifts (vertical and horizontal) instead of snapping; a heuristic diff, disable if it wobbles on some app's output",
+		func(c *config.Config) bool { return c.Scrolling.SmoothContentShift },
+		func(c *config.Config, v bool) { c.Scrolling.SmoothContentShift = v })))
 
 	section("theme")
 	add(&setting{
@@ -1065,9 +1063,9 @@ func (u *ui) accent() [3]float32 { return u.cfg.Phosphor.High }
 // own title.
 func tabTitle(tab int) string {
 	if tab == 1 {
-		return "presets"
+		return "visual effects"
 	}
-	return "fonts & theme"
+	return "general"
 }
 
 func (u *ui) redraw() {
@@ -1098,7 +1096,7 @@ func (u *ui) redraw() {
 	u.drawTabs(b, 2, accent)
 
 	// One bordered pane (the settings list) plus two unboxed strips below
-	// it (detail, and — fonts & theme only — a color/sample preview) is
+	// it (detail, and — general only — a color/sample preview) is
 	// the whole layout: far fewer borders on screen at once than a
 	// separate box per pane.
 	detailH := 3
@@ -1453,7 +1451,7 @@ func hex3(c [3]float32) string {
 	return fmt.Sprintf("#%02X%02X%02X", srgbByte(c[0]), srgbByte(c[1]), srgbByte(c[2]))
 }
 
-// drawColorPreview is the fonts & theme tab's "little preview at the
+// drawColorPreview is the general tab's "little preview at the
 // bottom" — unboxed, Claude Code-simple: a compact swatch table of the
 // theme's own colors (or, for a monochrome theme, its phosphor ramp)
 // followed by one line of sample prompt text rendered in those actual
