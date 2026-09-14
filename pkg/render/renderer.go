@@ -24,13 +24,13 @@ type Loading struct {
 // tubeless screen:
 //
 //	(dirty) sceneFBO cleared to opaque black (the empty-terminal base)
-//	rect layer (bg fills + solid block glyphs, true rounding) -> shapeFBO (sRGB, transparent)
-//	line-art layer (box-drawing/powerline)                     -> shapeFBO (reused after)
-//	  each -> BlurPass (gaussian bloom)      -> blurFBO
-//	       -> CopyPass.DrawOver (alpha-composite over the base) -> sceneFBO
-//	-> sixel images (sharp)                              -> sceneFBO
-//	-> underline decorations (sharp)                     -> sceneFBO
-//	-> text glyphs (sharp, on top)                        -> sceneFBO
+//	-> bg fills + block glyphs (literal cells)            -> effectFBO
+//	-> box-drawing/powerline glyphs (literal glyphs)       -> effectFBO
+//	-> fragment-space surface radius                      -> surfaceFBO
+//	-> optional bloom over surfaceFBO                      -> sceneFBO
+//	-> sixel images                                       -> sceneFBO
+//	-> underline decorations                              -> sceneFBO
+//	-> text glyphs                                        -> sceneFBO
 //
 //	(every frame) cursor glow                             -> cursorFBO
 //	-> InsetPass (cursor soft-add + bg tint + tube falloff) -> default framebuffer
@@ -43,12 +43,14 @@ type Renderer struct {
 	cellPass    *CellPass
 	imagePass   *ImagePass
 	blurPass    *BlurPass
+	surfacePass *SurfacePass
 	copyPass    *CopyPass
 	cursorPass  *CursorPass
 	insetPass   *InsetPass
 	persistPass *PersistPass
 	overlayPass *OverlayPass
-	shapeFBO    *FBO
+	effectFBO   *FBO
+	surfaceFBO  *FBO
 	blurFBO     *FBO
 	sceneFBO    *FBO
 	cursorFBO   *FBO
@@ -115,6 +117,10 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("blur pass: %w", err)
 	}
+	surfacePass, err := NewSurfacePass()
+	if err != nil {
+		return nil, fmt.Errorf("surface pass: %w", err)
+	}
 	copyPass, err := NewCopyPass()
 	if err != nil {
 		return nil, fmt.Errorf("copy pass: %w", err)
@@ -139,12 +145,14 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 		cellPass:    cellPass,
 		imagePass:   imagePass,
 		blurPass:    blurPass,
+		surfacePass: surfacePass,
 		copyPass:    copyPass,
 		cursorPass:  cursorPass,
 		insetPass:   insetPass,
 		persistPass: persistPass,
 		overlayPass: overlayPass,
-		shapeFBO:    newSRGBFBO(2, 2),
+		effectFBO:   newSRGBFBO(2, 2),
+		surfaceFBO:  newSRGBFBO(2, 2),
 		blurFBO:     newSRGBFBO(2, 2),
 		sceneFBO:    newSRGBFBO(2, 2),
 		cursorFBO:   newSRGBFBO(2, 2),
@@ -163,16 +171,12 @@ func (r *Renderer) PrepareFrame(scr *screen.Screen, cfg config.Config, cellW, ce
 	r.cellW, r.cellH = cellW, cellH
 }
 
-// RenderScene redraws the scene into the scene FBO: an opaque black base,
-// then the rect layer (backgrounds + solid block glyphs) and the line-art
-// layer (box-drawing/powerline) each drawn transparent, blurred/bloomed,
-// and alpha-composited on top in turn — same treatment, so both get a
-// soft glow around their true edges without it touching their crisp
-// interior — then sharp images and text. These are pure functions of the
-// current screen, so they only need to run when the screen/resize
-// changed — idle frames reuse the last scene. cellW/cellH are the
-// physical-pixel size of one cell (atlas cell size times the display's
-// DPI scale).
+// RenderScene redraws the terminal's literal image into the scene FBO:
+// backgrounds, block glyphs, line art, images, underlines and text are
+// drawn exactly as the screen model describes them. Surface radius and bloom
+// use a second literal source containing only solid/border buckets, then
+// composite that filtered image under images/underlines/text. No pass infers
+// surfaces from neighboring cells or reinterprets escape-sequence output.
 func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.Config) {
 	scene := r.sceneFBO
 	scene.Resize(outW, outH)
@@ -181,34 +185,26 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 		r.cellPass.DrawAmbientBG(scene, outW, outH, cfg.Colors.DefaultBg)
 	}
 
-	shape := r.shapeFBO
-	shape.Resize(outW, outH)
+	effect := r.effectFBO
+	effect.Resize(outW, outH)
+	effect.Clear()
+	r.cellPass.DrawRects(effect, cellW, cellH)
+	r.cellPass.DrawLineArt(effect, cellW, cellH)
 
-	r.cellPass.DrawRects(shape, cellW, cellH)
-	r.compositeGlow(shape, scene, outW, outH, cfg)
+	surfaceTex := effect.tex
+	if cfg.Surface.Radius > 0.01 {
+		r.surfacePass.Draw(effect, r.surfaceFBO, cfg.Surface.Radius)
+		surfaceTex = r.surfaceFBO.tex
+	}
+	r.copyPass.DrawOver(surfaceTex, scene, outW, outH)
 
-	r.cellPass.DrawLineArt(shape, cellW, cellH)
-	r.compositeGlow(shape, scene, outW, outH, cfg)
-
+	if cfg.Blur.Strength > 0.001 && cfg.Blur.Radius > 0.01 {
+		r.blurPass.DrawTex(surfaceTex, r.blurFBO, cfg.Blur.Radius, cfg.Blur.Strength, outW, outH)
+		r.copyPass.DrawOver(r.blurFBO.tex, scene, outW, outH)
+	}
 	r.imagePass.Draw(r.sceneFBO, r.pendingImages, cellW, cellH)
 	r.cellPass.DrawUnderline(r.sceneFBO, cellW, cellH)
 	r.cellPass.DrawText(r.sceneFBO, cellW, cellH)
-}
-
-// compositeGlow blurs/blooms src (a transparent layer the caller just drew
-// into r.shapeFBO) and alpha-composites the result over dst. Shared by the
-// rect and line-art layers in RenderScene, which both draw a crisp,
-// premultiplied-alpha shape onto a transparent base and want the same
-// soft-glow-around-the-edge treatment — the interior stays exactly as
-// drawn (see shapeblur.frag's soft-add) since only the drop in coverage at
-// the true edge lets the blurred glow show through.
-func (r *Renderer) compositeGlow(src, dst *FBO, outW, outH int, cfg config.Config) {
-	if cfg.Blur.Strength > 0.001 && cfg.Blur.Radius > 0.01 {
-		r.blurPass.Draw(src, r.blurFBO, cfg.Blur.Radius, cfg.Blur.Strength)
-		r.copyPass.DrawOver(r.blurFBO.tex, dst, outW, outH)
-	} else {
-		r.copyPass.DrawOver(src.tex, dst, outW, outH)
-	}
 }
 
 // UpdateCursor advances the cursor animation toward the current cell
@@ -314,7 +310,7 @@ func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config, dt float64) 
 	sceneTex := r.sceneFBO.tex
 	if decaySeconds := cfg.CRT.PhosphorDecay.DecaySeconds; decaySeconds > 0 {
 		var tex uint32
-		r.persistIdx, tex = r.persistPass.Step(r.sceneFBO, &r.persistFBO, r.persistIdx, decaySeconds, dt, outW, outH)
+		r.persistIdx, tex = r.persistPass.StepTex(sceneTex, &r.persistFBO, r.persistIdx, decaySeconds, dt, outW, outH)
 		sceneTex = tex
 	}
 	r.insetPass.Draw(sceneTex, r.cursorFBO.tex, cfg, outW, outH, r.effectsTime)

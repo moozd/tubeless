@@ -82,8 +82,8 @@ func (f *FBO) Clear() {
 	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
 }
 
-// ClearOpaque fills the FBO with opaque black — the "empty terminal" base
-// the scene's rect/line-art layers then composite glowing content over.
+// ClearOpaque fills the FBO with opaque black — the literal empty-terminal
+// base the scene draws cells and glyphs onto.
 func (f *FBO) ClearOpaque() {
 	gl.BindFramebuffer(gl.FRAMEBUFFER, f.fbo)
 	gl.ClearColor(0, 0, 0, 1)

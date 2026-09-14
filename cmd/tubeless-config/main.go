@@ -690,7 +690,7 @@ func cycleName(names []string, current string, d int) string {
 func applyEffectsPresetCfg(c *config.Config, name string) {
 	e := config.EffectsPreset(name)
 	c.Preset = name
-	c.Blur, c.Rounding, c.Cursor = e.Blur, e.Rounding, e.Cursor
+	c.Surface, c.Blur, c.Cursor = e.Surface, e.Blur, e.Cursor
 	c.Face, c.Contrast, c.CRT = e.Face, e.Contrast, e.CRT
 	if theme, ok := config.MonitorTheme(name); ok {
 		applyThemeCfg(c, theme)
@@ -801,18 +801,18 @@ func (u *ui) buildPresetsList() []panelRow {
 		},
 	})
 
-	section("blur — boxes & borders")
-	add(asEffect(newSlider("blur.radius", "radius", "gaussian spread in px on blocks & box glyphs", "px", 1, 0.1, 0, 8,
+	section("surface — blocks & borders")
+	add(asEffect(newSlider("surface.radius", "corner radius", "fragment-space radius for block/border pixels; text stays literal", "px", 1, 0.1, 0, 8,
+		func(c *config.Config) float64 { return float64(c.Surface.Radius) },
+		func(c *config.Config, v float64) { c.Surface.Radius = float32(v) })))
+
+	section("bloom — blocks & borders")
+	add(asEffect(newSlider("blur.radius", "glow radius", "gaussian spread in px on block/border pixels; text stays sharp", "px", 1, 0.1, 0, 8,
 		func(c *config.Config) float64 { return float64(c.Blur.Radius) },
 		func(c *config.Config, v float64) { c.Blur.Radius = float32(v) })))
-	add(asEffect(newSlider("blur.strength", "strength", "how strongly the blur replaces the sharp shapes", "", 2, 0.01, 0, 1,
+	add(asEffect(newSlider("blur.strength", "glow strength", "strength of the post-process glow under images/underlines/text", "", 2, 0.01, 0, 1,
 		func(c *config.Config) float64 { return float64(c.Blur.Strength) },
 		func(c *config.Config, v float64) { c.Blur.Strength = float32(v) })))
-
-	section("rounding — solid blocks & backgrounds")
-	add(asEffect(newSlider("rounding.radius", "corner radius", "true geometric corner radius on background fills & solid block glyphs (█▀▄▌▐ etc.)", "px", 1, 0.1, 0, 8,
-		func(c *config.Config) float64 { return float64(c.Rounding.Radius) },
-		func(c *config.Config, v float64) { c.Rounding.Radius = float32(v) })))
 
 	section("face — tube")
 	add(asEffect(newSlider("face.bg_tint", "bg tint", "brightness of the unlit screen", "", 3, 0.005, 0, 0.5,
@@ -1030,9 +1030,8 @@ const (
 
 // The UI is plain terminal content: box-drawing borders, block meters,
 // reverse-video selection rows and background-colored regions. The host
-// paints all of it through the same pipeline as the shell, so borders and
-// blocks come from its blurred shape layer while text stays sharp — the
-// config screen doubles as a live test bench for those effects.
+// paints all of it through the same pipeline as the shell; visual effects
+// are post-process filters over the completed terminal image.
 
 // accent is the one color that ties every pane together: the theme's own
 // CRT-chrome accent (Phosphor.High — see pkg/config's doc comment on

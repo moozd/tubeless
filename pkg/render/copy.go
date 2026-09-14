@@ -6,11 +6,9 @@ import (
 	"github.com/go-gl/gl/v3.3-core/gl"
 )
 
-// CopyPass copies a texture into a framebuffer 1:1 (see copy.frag). The
-// renderer uses it to seed the scene FBO with the blurred shape layer
-// before drawing images and text on top. Sampling an sRGB texture decodes
-// to linear and writing to an sRGB target re-encodes, so the round-trip is
-// lossless.
+// CopyPass copies a texture into a framebuffer 1:1 (see copy.frag).
+// Sampling an sRGB texture decodes to linear and writing to an sRGB target
+// re-encodes, so the round-trip is lossless.
 type CopyPass struct {
 	prog uint32
 	vao  uint32
@@ -38,13 +36,8 @@ func (c *CopyPass) Draw(srcTex uint32, dst *FBO, w, h int) {
 }
 
 // DrawOver alpha-blends srcTex onto dst's existing content, instead of
-// Draw's plain overwrite — used to composite the blurred line-art layer
-// (transparent except where a glyph drew) over an already-painted rect
-// base rather than replacing it. srcTex holds premultiplied alpha (it
-// passed through cell_glyph.frag and shapeblur.frag, both premultiplied —
-// see cellpass.go), so the blend uses GL_ONE for the source factor rather
-// than GL_SRC_ALPHA, which would double-apply the source's own alpha
-// scaling and dim the glow's fade-out exactly where it should be visible.
+// Draw's plain overwrite. srcTex holds premultiplied alpha, so the blend
+// uses GL_ONE for the source factor rather than GL_SRC_ALPHA.
 func (c *CopyPass) DrawOver(srcTex uint32, dst *FBO, w, h int) {
 	dst.Resize(w, h)
 	dst.Bind()

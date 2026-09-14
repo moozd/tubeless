@@ -32,13 +32,19 @@ func NewPersistPass() (*PersistPass, error) {
 // falls back to the raw scene texture otherwise, so a disabled decay costs
 // nothing beyond the two idle float FBOs.
 func (p *PersistPass) Step(scene *FBO, accum *[2]*FBO, readIdx int, decaySeconds float32, dt float64, outW, outH int) (writeIdx int, tex uint32) {
+	return p.StepTex(scene.tex, accum, readIdx, decaySeconds, dt, outW, outH)
+}
+
+// StepTex is Step for callers that already selected a post-processed scene
+// texture. The accumulator only needs texture identity, not FBO ownership.
+func (p *PersistPass) StepTex(sceneTex uint32, accum *[2]*FBO, readIdx int, decaySeconds float32, dt float64, outW, outH int) (writeIdx int, tex uint32) {
 	writeIdx = 1 - readIdx
 	dst := accum[writeIdx]
 	dst.Resize(outW, outH)
 	dst.Bind()
 	gl.UseProgram(p.prog)
 	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, scene.tex)
+	gl.BindTexture(gl.TEXTURE_2D, sceneTex)
 	gl.ActiveTexture(gl.TEXTURE1)
 	gl.BindTexture(gl.TEXTURE_2D, accum[readIdx].tex)
 	u := func(name string) int32 { return gl.GetUniformLocation(p.prog, gl.Str(name+"\x00")) }

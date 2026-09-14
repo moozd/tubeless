@@ -26,12 +26,10 @@ const (
 	styleCount
 )
 
-// CellPass renders the terminal grid into offscreen FBOs, split into three
-// layers: a "rect" layer (background color fills and single-rect block
-// glyphs like █▀▄▌▐, drawn procedurally with true rounded corners — see
-// cell_rect.frag), a "line-art" layer (box-drawing and powerline glyphs,
-// which get a gaussian bloom instead — see shapeblur.frag), and a "text"
-// layer (everything else) that stays sharp on top of both.
+// CellPass renders the terminal grid into offscreen FBOs, split into draw
+// buckets so terminal-native ordering stays intact: background fills and
+// single-rect block glyphs first, box-drawing/powerline glyphs next, text
+// last. Cosmetic effects run later over the completed image.
 type CellPass struct {
 	faces            *font.Faces
 	atlasTex         [styleCount]uint32
@@ -52,8 +50,6 @@ type CellPass struct {
 	bgScratch        []float32
 	blockScratch     []float32
 	underlineScratch []float32
-	fgCache          [][3]float32
-	bgCache          [][3]float32
 	cols, rows       int
 }
 
@@ -95,20 +91,6 @@ func NewCellPass(faces *font.Faces) (*CellPass, error) {
 	cp.rectVAO, cp.rectInstVBO = newInstancedVAO(cp.quadVBO, rectInstanceFloats, 4)
 	cp.underlineVAO, cp.underlineInstVBO = newUnderlineVAO(cp.quadVBO)
 	return cp, nil
-}
-
-// ensureColorCache sizes fgCache/bgCache for a cols*rows grid, reusing the
-// backing array across frames (same reuse pattern as the scratch buffers
-// above) rather than reallocating every call.
-func (cp *CellPass) ensureColorCache(cols, rows int) {
-	n := cols * rows
-	if cap(cp.fgCache) < n {
-		cp.fgCache = make([][3]float32, n)
-		cp.bgCache = make([][3]float32, n)
-		return
-	}
-	cp.fgCache = cp.fgCache[:n]
-	cp.bgCache = cp.bgCache[:n]
 }
 
 func newQuadVBO() uint32 {
@@ -205,11 +187,11 @@ func attachInstanceAttrib(loc uint32, size int32, stride int32, offset int) {
 // BuildInstances reads scr (an immutable published snapshot — see
 // cmd/tubeless) into GPU-upload-ready instance buffers. Split from Draw so
 // the GPU work (issued by Draw) never needs to touch scr at all. Content is
-// routed by kind: background fills and single-rect block glyphs go to the
-// rect layer (font.BlockRect), other box-drawing/powerline glyphs go to the
-// line-art layer (font.IsShapeRune), everything else is text. The cursor is
-// not baked here — it is an animated overlay drawn every frame (see
-// CursorPass). scrollOffset (0 = live tail) selects which window of
+// routed by kind only to preserve draw order: background fills and
+// single-rect block glyphs go first (font.BlockRect), other
+// box-drawing/powerline glyphs next (font.IsShapeRune), everything else is
+// text. The cursor is not baked here — it is an animated overlay drawn
+// every frame (see CursorPass). scrollOffset (0 = live tail) selects which window of
 // scr.VisibleWindow is drawn, for scrollback viewing. sel highlights the
 // current mouse selection, if any, by swapping fg/bg for cells inside it
 // (see Selection.Contains) — the same reverse-video convention the
@@ -223,20 +205,11 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 	cp.cols, cp.rows = scr.Cols, scr.Rows
 	empty := ambientBG(cfg)
 	grid := scr.VisibleWindow(scrollOffset)
-	cp.ensureColorCache(scr.Cols, scr.Rows)
 
 	for y := 0; y < scr.Rows; y++ {
 		for x := 0; x < scr.Cols; x++ {
 			cell := grid[y][x]
 			fg, bg := cellColors(cell.Attr, cfg)
-			// Cache this cell's own (unselected) color before applying the
-			// selection swap below, so bgRectEdges/blockRectEdges's
-			// neighbor lookups (see neighborColors) see exactly what a
-			// fresh cellColors call on this cell would have — selection
-			// highlighting was never part of that comparison, and caching
-			// must not change that.
-			i := y*scr.Cols + x
-			cp.fgCache[i], cp.bgCache[i] = fg, bg
 			if sel.Contains(x, y) {
 				fg, bg = bg, fg
 			}
@@ -246,17 +219,10 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				cp.underlineScratch = appendUnderlineInstance(cp.underlineScratch, px, py, ulColor, float32(cell.Attr.Underline))
 			}
 			if bg != empty {
-				e := bgRectEdges(grid, scr.Cols, scr.Rows, cp.fgCache, cp.bgCache, cfg, x, y, bg)
-				if isStructuralRune(cell.Rune) {
-					e.Radii = [4]float32{}
-				}
-				rx, ry, rw, rh := expandRect(0, 0, 1, 1, cw, ch, e)
-				cp.bgScratch = appendRectInstance(cp.bgScratch, px, py, rx, ry, rw, rh, bg, e.Radii)
+				cp.bgScratch = appendRectInstance(cp.bgScratch, px, py, 0, 0, 1, 1, bg, [4]float32{})
 			}
 			if x0, y0, x1, y1, ok := font.BlockRect(cell.Rune); ok {
-				e := blockRectEdges(grid, scr.Cols, scr.Rows, cp.fgCache, cp.bgCache, cfg, x, y, cell.Rune, fg, x0, y0, x1, y1)
-				rx, ry, rw, rh := expandRect(x0, y0, x1-x0, y1-y0, cw, ch, e)
-				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, rx, ry, rw, rh, fg, e.Radii)
+				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, x0, y0, x1-x0, y1-y0, fg, [4]float32{})
 				continue
 			}
 			if cell.Rune == ' ' {
@@ -295,11 +261,6 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 	}
 }
 
-func isStructuralRune(r rune) bool {
-	_, _, _, _, ok := font.BlockRect(r)
-	return ok || font.IsShapeRune(r)
-}
-
 // glyphUV converts a Glyph's pixel rect within atlas into normalized
 // texture coordinates.
 func glyphUV(atlas *font.Atlas, g font.Glyph) (u0, v0, us, vs float32) {
@@ -309,38 +270,6 @@ func glyphUV(atlas *font.Atlas, g font.Glyph) (u0, v0, us, vs float32) {
 
 func appendRectInstance(dst []float32, px, py, rx, ry, rw, rh float32, color [3]float32, radii [4]float32) []float32 {
 	return append(dst, px, py, rx, ry, rw, rh, color[0], color[1], color[2], radii[0], radii[1], radii[2], radii[3])
-}
-
-// rectOverlapPx is how far a rect's own geometry overshoots into a
-// same-fill neighbor on a squared (radius-0) edge, in physical pixels.
-// Each rect instance is anti-aliased independently by cell_rect.frag's own
-// SDF; two instances that are merely flush at a shared edge can each fade
-// out just short of it and leave a faint seam even though the corner
-// there is correctly squared (radius 0). Overlapping by more than the
-// SDF's ~1.5px AA fringe guarantees full coverage there regardless of
-// sub-pixel rounding in the cell grid's layout.
-const rectOverlapPx = 2.0
-
-// expandRect grows a rect (given as cell-fraction offset/size, i.e. what
-// aRectOffset/aRectSize become) by rectOverlapPx on whichever edges e
-// marks as continuing into a neighbor.
-func expandRect(rx, ry, rw, rh, cw, ch float32, e rectEdges) (float32, float32, float32, float32) {
-	epsX, epsY := rectOverlapPx/cw, rectOverlapPx/ch
-	if e.ContLeft {
-		rx -= epsX
-		rw += epsX
-	}
-	if e.ContRight {
-		rw += epsX
-	}
-	if e.ContUp {
-		ry -= epsY
-		rh += epsY
-	}
-	if e.ContDown {
-		rh += epsY
-	}
-	return rx, ry, rw, rh
 }
 
 func appendGlyphInstance(dst []float32, px, py, u0, v0, us, vs float32, fg, bg [3]float32, style, shear float32) []float32 {
@@ -422,17 +351,11 @@ func (cp *CellPass) DrawAmbientBG(fbo *FBO, outW, outH int, color [3]float32) {
 	fbo.Unbind()
 }
 
-// DrawRects clears fbo to transparent and renders background color fills,
-// then solid block glyphs on top — both drawn procedurally with true
-// rounded corners (see cell_rect.frag). Never blurred itself, but (like
-// DrawLineArt) meant to be blurred/bloomed and alpha-composited over the
-// scene by the caller (see Renderer.RenderScene's compositeGlow), which
-// leaves the crisp interior untouched (premultiplied alpha stays 1 there)
-// and only adds a soft glow around the true outer edge.
+// DrawRects renders background color fills, then solid block glyphs on top,
+// directly onto the literal scene. No clear and no neighbor-aware geometry:
+// cosmetic effects run later as post-processing over the finished image.
 func (cp *CellPass) DrawRects(fbo *FBO, cw, ch float32) {
 	fbo.Bind()
-	gl.ClearColor(0, 0, 0, 0)
-	gl.Clear(gl.COLOR_BUFFER_BIT)
 	gl.Enable(gl.BLEND)
 	// Premultiplied alpha (see cell_rect.frag/cell_glyph.frag) — GL_ONE for
 	// the source factor is correct over both transparent and opaque
@@ -459,14 +382,11 @@ func (cp *CellPass) DrawRects(fbo *FBO, cw, ch float32) {
 	fbo.Unbind()
 }
 
-// DrawLineArt clears fbo to transparent and renders box-drawing/powerline
-// glyphs into it — the only content the blur/bloom pass consumes (see
-// Renderer.RenderScene, which composites the result over DrawRects's
-// output rather than replacing it).
+// DrawLineArt renders box-drawing/powerline glyphs directly onto the literal
+// scene. The blur/bloom pass sees the completed scene later, not this glyph
+// subset as a semantic layer.
 func (cp *CellPass) DrawLineArt(fbo *FBO, cw, ch float32) {
 	fbo.Bind()
-	gl.ClearColor(0, 0, 0, 0)
-	gl.Clear(gl.COLOR_BUFFER_BIT)
 	gl.Enable(gl.BLEND)
 	// Premultiplied alpha (see cell_rect.frag/cell_glyph.frag) — GL_ONE for
 	// the source factor is correct over both transparent and opaque

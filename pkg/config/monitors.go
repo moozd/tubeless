@@ -7,8 +7,8 @@ package config
 // edited by hand, so this package only ever hands back a preset's
 // *starting* values.
 type Effects struct {
+	Surface  Surface
 	Blur     Blur
-	Rounding Rounding
 	Cursor   Cursor
 	Face     Face
 	Contrast Contrast
@@ -79,8 +79,8 @@ func MonitorTheme(presetName string) (theme string, ok bool) {
 // shipped with.
 func modernEffects() Effects {
 	return Effects{
+		Surface:  Surface{Radius: 1.7},
 		Blur:     Blur{Radius: 2.0, Strength: 0.5},
-		Rounding: Rounding{Radius: 2.0},
 		Cursor:   Cursor{Glow: 1.5, PulsePeriod: 0.9},
 		Face:     Face{BgTint: 0.04, InsetShadow: 0.3},
 		Contrast: Contrast{MinDelta: 0.35},

@@ -7,15 +7,13 @@ import (
 	"github.com/go-gl/gl/v3.3-core/gl"
 )
 
-// BlurPass is the separable gaussian bloom that softens the shape layer's
-// line art (box-drawing + powerline glyphs — solid blocks and backgrounds
-// are rounded geometrically instead, see cell_bg.frag). It runs two
-// fullscreen passes — horizontal into an internal scratch FBO, vertical
-// into the destination — so the kernel cost is ~2xN taps per pixel instead
-// of NxN. See assets/shaders/shapeblur.frag.
+// BlurPass is the separable gaussian bloom over a literal, non-text effect
+// source. It runs two fullscreen passes — horizontal into an internal
+// scratch FBO, vertical into the destination — so the kernel cost is ~2xN
+// taps per pixel instead of NxN. See assets/shaders/shapeblur.frag.
 //
-// It only ever runs when the scene changes (Renderer.RenderScene); the
-// output is a pure function of the current shape layer.
+// The output is a pure image-space filter; it does not know about cells,
+// runs, neighbors or escape sequences.
 type BlurPass struct {
 	prog uint32
 	vao  uint32
@@ -35,6 +33,10 @@ func NewBlurPass() (*BlurPass, error) {
 // original (0 = passthrough). The intermediate horizontal pass lands in
 // b.tmp; the soft-add happens on the vertical pass against src itself.
 func (b *BlurPass) Draw(src, dst *FBO, radius, strength float32) {
+	b.DrawTex(src.tex, dst, radius, strength, src.W, src.H)
+}
+
+func (b *BlurPass) DrawTex(srcTex uint32, dst *FBO, radius, strength float32, w, h int) {
 	if strength <= 0.001 || radius <= 0.01 {
 		return
 	}
@@ -47,9 +49,9 @@ func (b *BlurPass) Draw(src, dst *FBO, radius, strength float32) {
 		samples = 16
 	}
 
-	b.tmp.Resize(src.W, src.H)
-	b.run(src, src.tex, b.tmp, radius, float32(samples), 1.0, 0.0, strength, false)
-	b.run(b.tmp, src.tex, dst, radius, float32(samples), 0.0, 1.0, strength, true)
+	b.tmp.Resize(w, h)
+	b.run(srcTex, srcTex, b.tmp, radius, float32(samples), 1.0, 0.0, strength, false, w, h)
+	b.run(b.tmp.tex, srcTex, dst, radius, float32(samples), 0.0, 1.0, strength, true, w, h)
 }
 
 // run executes one separable direction: samples tex into dst. orig is the
@@ -60,13 +62,12 @@ func (b *BlurPass) Draw(src, dst *FBO, radius, strength float32) {
 // pass ends up blurring an already-glow-boosted image and re-applying the
 // glow on top of that, compounding into a much stronger (and wrongly
 // shaped) effect than the configured strength.
-func (b *BlurPass) run(tex *FBO, origTex uint32, dst *FBO, radius, samples, dirX, dirY, strength float32, final bool) {
-	w, h := tex.W, tex.H
+func (b *BlurPass) run(tex, origTex uint32, dst *FBO, radius, samples, dirX, dirY, strength float32, final bool, w, h int) {
 	dst.Resize(w, h)
 	dst.Bind()
 	gl.UseProgram(b.prog)
 	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, tex.tex)
+	gl.BindTexture(gl.TEXTURE_2D, tex)
 	gl.ActiveTexture(gl.TEXTURE1)
 	gl.BindTexture(gl.TEXTURE_2D, origTex)
 	u := func(name string) int32 { return gl.GetUniformLocation(b.prog, gl.Str(name+"\x00")) }

@@ -26,7 +26,7 @@ import (
 // own doc comment on how editing flips a name to "custom"):
 //
 //   - Theme governs color: TrueColor, Colors, Phosphor.
-//   - Preset governs every other visual effect: Blur, Rounding, Cursor,
+//   - Preset governs every other visual effect: Surface, Blur, Cursor,
 //     Face, Contrast, CRT. Font/Atlas sit outside both axes — always
 //     user-set directly, never reseeded by either.
 type Config struct {
@@ -44,8 +44,8 @@ type Config struct {
 	Atlas         Atlas      `toml:"atlas"`
 	Phosphor      Phosphor   `toml:"phosphor"`
 	Colors        Colors     `toml:"colors"`
+	Surface       Surface    `toml:"surface"`
 	Blur          Blur       `toml:"blur"`
-	Rounding      Rounding   `toml:"rounding"`
 	Cursor        Cursor     `toml:"cursor"`
 	Face          Face       `toml:"face"`
 	Contrast      Contrast   `toml:"contrast"`
@@ -107,24 +107,19 @@ type Colors struct {
 	Palette   [16][3]float32 `toml:"palette"`
 }
 
-// Blur controls the shape layer's line-art bloom: box-drawing and
-// powerline glyphs are soft-added with a gaussian glow that rounds their
-// corners and edges. Solid blocks and backgrounds are rounded
-// geometrically instead (always on, not configurable here); text stays on
-// a separate sharp layer.
+// Surface controls fragment-space treatment of literal block/border pixels.
+// It is a post-process filter over a non-text source: escape-sequence output
+// is first drawn literally, then this rounded surface is composited under
+// images/underlines/text.
+type Surface struct {
+	Radius float32 `toml:"radius"` // corner radius in pixels
+}
+
+// Blur controls image-space bloom over the rounded block/border surface.
+// It is composited under images/underlines/text, so text stays sharp.
 type Blur struct {
 	Radius   float32 `toml:"radius"`   // gaussian spread in pixels
 	Strength float32 `toml:"strength"` // 0..1 mix of the blurred result
-}
-
-// Rounding controls the true geometric corner radius applied to
-// background fills and single-rect block glyphs (█▀▄▌▐ etc. — see
-// cell_rect.frag and font.BlockRect). A corner only rounds where it's a
-// genuine outer edge; a run of the same fill across adjacent cells stays
-// square at the internal seams. Box-drawing/powerline lines use Blur's
-// bloom instead, not this.
-type Rounding struct {
-	Radius float32 `toml:"radius"` // corner radius, in pixels
 }
 
 // Cursor is the animated block cursor's shape and breathing pulse.
@@ -492,7 +487,7 @@ func applyEffectsPreset(cfg *Config, name string) {
 		return
 	}
 	e := EffectsPreset(name)
-	cfg.Blur, cfg.Rounding, cfg.Cursor = e.Blur, e.Rounding, e.Cursor
+	cfg.Surface, cfg.Blur, cfg.Cursor = e.Surface, e.Blur, e.Cursor
 	cfg.Face, cfg.Contrast, cfg.CRT = e.Face, e.Contrast, e.CRT
 }
 
