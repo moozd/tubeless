@@ -53,6 +53,18 @@ float cornerKeep(float a, float b, float radius) {
 	return 1.0 - smoothstep(radius - 0.75, radius + 0.75, d);
 }
 
+// left+right (and up+down) sum to the shape's true local width (height)
+// at this pixel regardless of where within the span the pixel sits, since
+// each is an exact distance to its own edge. Box-drawing borders are only
+// a stroke-width thin, far under most configured radii, so clamping the
+// radius to that local thickness (mirroring cell_rect.frag's min(r,
+// halfSize) clamp for filled rects) keeps a thin stroke's corner glyph
+// intact instead of the fixed radius carving into it as if it belonged to
+// a big filled panel.
+float localRadius(float left, float right, float up, float down, float radius) {
+	return min(radius, min(left + right, up + down) * 0.5);
+}
+
 // Fragment-space corner radius over a literal non-text surface image. The
 // renderer feeds this pass only block/background/border pixels, never text,
 // and this shader only samples neighboring pixels from that image. It does
@@ -72,12 +84,13 @@ void main() {
 	float right = edgeDist(base, vec2(1.0, 0.0), radius);
 	float up = edgeDist(base, vec2(0.0, -1.0), radius);
 	float down = edgeDist(base, vec2(0.0, 1.0), radius);
+	float r = localRadius(left, right, up, down, radius);
 
 	float keep = 1.0;
-	keep = min(keep, cornerKeep(left, up, radius));
-	keep = min(keep, cornerKeep(right, up, radius));
-	keep = min(keep, cornerKeep(right, down, radius));
-	keep = min(keep, cornerKeep(left, down, radius));
+	keep = min(keep, cornerKeep(left, up, r));
+	keep = min(keep, cornerKeep(right, up, r));
+	keep = min(keep, cornerKeep(right, down, r));
+	keep = min(keep, cornerKeep(left, down, r));
 
 	fragColor = vec4(src.rgb * keep, src.a * keep);
 }
