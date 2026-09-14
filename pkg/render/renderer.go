@@ -97,8 +97,11 @@ type Renderer struct {
 }
 
 // Cursor glide tuning: UpdateCursor's exponential-approach rate (per
-// second), and the jump distance (in cells) beyond which the cursor
-// snaps instead of gliding.
+// second). There is no distance-based snap — every move, from a single
+// typed character to a full jump across the buffer (:, gg, G, a search
+// result, a click), glides through the same easing; a bigger distance
+// covered in the same real-time step just reads as a higher instantaneous
+// speed, which is exactly what the ball/tail morph below reacts to.
 const (
 	// The value from before the elastic front/back trail existed (see
 	// git history) — 70, inherited from that trail's "front" role
@@ -109,9 +112,6 @@ const (
 	// visibly lagging behind, while keeping a single deliberate move (an
 	// arrow press, a click) a visible glide instead of a snap.
 	cursorGlideSpeed = 40.0
-	// A scrollback jump or window resize shouldn't animate the cursor
-	// "flying" across unrelated content in between.
-	cursorSnapDist = 4.0
 
 	// Ball+tail morph tuning. UpdateCursor smooths the glide's own
 	// frame-to-frame speed (cells/sec) with cursorSpeedSmooth, then maps
@@ -121,9 +121,18 @@ const (
 	// into a ball, slowing back into the plain block) rather than a cut.
 	// cursorTailMaxCells caps how far the tail can stretch behind the
 	// ball at full speed.
+	//
+	// Low/High sit well above ordinary typing and held-key repeat: at a
+	// steady 60fps, one frame's glide covers roughly distance*29 cells/sec
+	// (cursorGlideSpeed's k, divided by dt) — so advancing one cell per
+	// retarget (typing, arrow-key repeat, even a fast ~50cps key-repeat
+	// rate) tops out well under 45 and never morphs, while a real jump of
+	// several cells or more in one frame clears it easily and heads
+	// straight for the ball. Typing stays visually consistent; jumps get
+	// the effect.
 	cursorSpeedSmooth    = 20.0
-	cursorMorphSpeedLow  = 8.0
-	cursorMorphSpeedHigh = 30.0
+	cursorMorphSpeedLow  = 45.0
+	cursorMorphSpeedHigh = 150.0
 	cursorMorphEase      = 9.0
 	cursorTailMaxCells   = 2.2
 )
@@ -233,16 +242,19 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 
 // UpdateCursor advances the cursor animation toward the current cell
 // (x, y). Called every frame from the render loop. The position eases
-// toward the real target so small moves (typing, arrow keys) glide while
-// staying visually attached to the actual text even under rapid retargets
-// (held backspace/arrow-key repeat). A jump bigger than a few cells —
-// Home/End, or the terminal scrolling wholesale — snaps instead of flying
-// diagonally across the screen, and also resets the speed/morph state:
-// a teleport isn't organic motion for the ball/tail effect to react to.
-// Alongside the position, this also tracks the glide's own frame-to-frame
-// speed and eases cursorMorph toward the ball/tail shape it drives (see
-// CursorPass.Draw / cursor.frag) — an animation layered entirely on top
-// of the existing glide, using no state the glide didn't already have.
+// exponentially toward the real target, whatever the distance — typing,
+// arrow keys, and a full jump across the buffer (:, gg, G, a search
+// result, a click) all glide through the same easing rather than some of
+// them teleporting. Exponential easing converges to "close enough" in
+// roughly the same wall-clock time regardless of distance (it closes a
+// fixed percentage of the remaining gap per unit time, not a fixed
+// distance), so a big jump still settles quickly — it just does so while
+// visibly flying across the intervening cells, by design (see
+// cursorMorphSpeedLow/High below). Alongside the position, this also
+// tracks the glide's own frame-to-frame speed and eases cursorMorph
+// toward the ball/tail shape it drives (see CursorPass.Draw /
+// cursor.frag) — an animation layered entirely on top of the existing
+// glide, using no state the glide didn't already have.
 func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 	tx, ty := float32(x), float32(y)
 	r.cursorVisible = visible
@@ -255,11 +267,6 @@ func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 	}
 	dc := tx - r.cursorCol
 	dr := ty - r.cursorRow
-	if dc*dc+dr*dr > cursorSnapDist*cursorSnapDist {
-		r.cursorCol, r.cursorRow = tx, ty
-		r.cursorSpeed, r.cursorMorph = 0, 0
-		return
-	}
 	k := 1.0 - float32(math.Exp(-cursorGlideSpeed*dt))
 	moveCol, moveRow := dc*k, dr*k
 	r.cursorCol += moveCol
@@ -268,10 +275,10 @@ func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 	if dt <= 0 {
 		return
 	}
-	speed := float32(math.Hypot(float64(moveCol), float64(moveRow))) / float32(dt)
+	dist := float32(math.Hypot(float64(moveCol), float64(moveRow)))
 	ks := 1.0 - float32(math.Exp(-cursorSpeedSmooth*dt))
-	r.cursorSpeed += (speed - r.cursorSpeed) * ks
-	if dist := float32(math.Hypot(float64(moveCol), float64(moveRow))); dist > 1e-4 {
+	r.cursorSpeed += (dist/float32(dt) - r.cursorSpeed) * ks
+	if dist > 1e-4 {
 		r.cursorDirX, r.cursorDirY = moveCol/dist, moveRow/dist
 	}
 
