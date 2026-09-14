@@ -6,6 +6,8 @@ out vec4 fragColor;
 uniform sampler2D uScene;
 uniform vec2 uTexel;
 uniform float uRadius;
+uniform float uGradient; // 0..1 top-lit/bottom-shaded sheen strength
+uniform float uShadow;   // 0..1 drop shadow strength, cast down-right
 
 // edgeSignal is a continuous 0..1 "how much this sample stops being the
 // base fill" value: 0 for the same opaque color as base, 1 for fully
@@ -23,6 +25,7 @@ float edgeSignal(vec3 base, vec2 uv) {
 }
 
 const float EDGE_T = 0.5;
+const float MAX_REACH = 16.0;
 
 // Sub-pixel distance to the nearest edge along dir, up to radius texels.
 // Walks whole texels to bracket the crossing, then linearly interpolates
@@ -65,32 +68,92 @@ float localRadius(float left, float right, float up, float down, float radius) {
 	return min(radius, min(left + right, up + down) * 0.5);
 }
 
-// Fragment-space corner radius over a literal non-text surface image. The
-// renderer feeds this pass only block/background/border pixels, never text,
-// and this shader only samples neighboring pixels from that image. It does
-// not know terminal cells or escape sequences; it clips convex mask corners
-// by measuring, on the four cardinal axes, how close the nearest transparent
-// or differently-colored pixel is.
+// distToOpaque marches from a transparent point toward dir looking for the
+// first opaque (real surface) pixel within maxDist texels — used to find
+// the block casting a shadow onto empty background. foundColor is only
+// meaningful when the return value is < maxDist.
+float distToOpaque(vec2 dir, float maxDist, out vec3 foundColor) {
+	foundColor = vec3(0.0);
+	for (int i = 1; i <= 17; i++) {
+		float f = float(i);
+		if (f > maxDist) {
+			break;
+		}
+		vec4 s = texture(uScene, vUV + dir * uTexel * f);
+		if (s.a > 0.5) {
+			foundColor = s.rgb / s.a;
+			return f;
+		}
+	}
+	return maxDist;
+}
+
+// dropShadow paints a soft shadow, tinted from the casting block's own
+// color, onto currently-empty background below/right of a block — the
+// classic offset-shadow "floating card" look, built only from blocks
+// already in the scene (see Surface.Shadow doc comment).
+vec4 dropShadow() {
+	vec3 colUp, colLeft;
+	float dUp = distToOpaque(vec2(0.0, -1.0), MAX_REACH, colUp);
+	float dLeft = distToOpaque(vec2(-1.0, 0.0), MAX_REACH, colLeft);
+	float aUp = 1.0 - smoothstep(0.0, MAX_REACH, dUp);
+	float aLeft = 1.0 - smoothstep(0.0, MAX_REACH, dLeft);
+	float a = max(aUp, aLeft) * uShadow;
+	if (a <= 0.001) {
+		return vec4(0.0);
+	}
+	vec3 castColor = aUp > aLeft ? colUp : colLeft;
+	vec3 shadowColor = castColor * 0.3;
+	return vec4(shadowColor * a, a);
+}
+
+// Fragment-space corner radius, top-lit gradient and drop shadow over a
+// literal non-text surface image. The renderer feeds this pass only
+// block/background/border pixels, never text, and this shader only
+// samples neighboring pixels from that image — it does not know terminal
+// cells or escape sequences. Radius clips convex mask corners by
+// measuring, on the four cardinal axes, how close the nearest transparent
+// or differently-colored pixel is; gradient/shadow reuse that same
+// measurement to fake a raised, lit block using only the block's own
+// color, never an invented palette.
 void main() {
 	vec4 src = texture(uScene, vUV);
-	if (src.a <= 0.001 || uRadius <= 0.01) {
+
+	if (src.a <= 0.001) {
+		fragColor = uShadow > 0.001 ? dropShadow() : src;
+		return;
+	}
+	if (uRadius <= 0.01 && uGradient <= 0.001) {
 		fragColor = src;
 		return;
 	}
 
 	vec3 base = src.rgb / src.a;
-	float radius = min(uRadius, 16.0);
-	float left = edgeDist(base, vec2(-1.0, 0.0), radius);
-	float right = edgeDist(base, vec2(1.0, 0.0), radius);
-	float up = edgeDist(base, vec2(0.0, -1.0), radius);
-	float down = edgeDist(base, vec2(0.0, 1.0), radius);
-	float r = localRadius(left, right, up, down, radius);
+	float radius = min(uRadius, MAX_REACH);
+	float reach = max(radius, uGradient > 0.001 ? MAX_REACH : 0.0);
+	float left = edgeDist(base, vec2(-1.0, 0.0), reach);
+	float right = edgeDist(base, vec2(1.0, 0.0), reach);
+	float up = edgeDist(base, vec2(0.0, -1.0), reach);
+	float down = edgeDist(base, vec2(0.0, 1.0), reach);
 
 	float keep = 1.0;
-	keep = min(keep, cornerKeep(left, up, r));
-	keep = min(keep, cornerKeep(right, up, r));
-	keep = min(keep, cornerKeep(right, down, r));
-	keep = min(keep, cornerKeep(left, down, r));
+	if (radius > 0.01) {
+		float r = localRadius(left, right, up, down, radius);
+		keep = min(keep, cornerKeep(left, up, r));
+		keep = min(keep, cornerKeep(right, up, r));
+		keep = min(keep, cornerKeep(right, down, r));
+		keep = min(keep, cornerKeep(left, down, r));
+	}
 
-	fragColor = vec4(src.rgb * keep, src.a * keep);
+	vec3 rgb = base;
+	if (uGradient > 0.001) {
+		// t: 0 at the block's top edge, 1 at its bottom edge — lightens
+		// toward the top, darkens toward the bottom, like a single soft
+		// light from above.
+		float t = up / max(up + down, 1e-4);
+		float shade = mix(0.3, -0.3, t) * uGradient;
+		rgb = max(base * (1.0 + shade), 0.0);
+	}
+
+	fragColor = vec4(rgb * src.a * keep, src.a * keep);
 }

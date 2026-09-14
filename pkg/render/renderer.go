@@ -192,8 +192,8 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	r.cellPass.DrawLineArt(effect, cellW, cellH)
 
 	surfaceTex := effect.tex
-	if cfg.Surface.Radius > 0.01 {
-		r.surfacePass.Draw(effect, r.surfaceFBO, cfg.Surface.Radius)
+	if cfg.Surface.Radius > 0.01 || cfg.Surface.Gradient > 0.001 || cfg.Surface.Shadow > 0.001 {
+		r.surfacePass.Draw(effect, r.surfaceFBO, cfg.Surface.Radius, cfg.Surface.Gradient, cfg.Surface.Shadow)
 		surfaceTex = r.surfaceFBO.tex
 	}
 	r.copyPass.DrawOver(surfaceTex, scene, outW, outH)
