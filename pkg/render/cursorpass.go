@@ -28,13 +28,15 @@ func NewCursorPass() (*CursorPass, error) {
 // Draw renders the cursor at col/row — in grid coordinates, i.e. before
 // the centering offset — into dst, which covers the whole window.
 // col/row come from Renderer.UpdateCursor's eased glide, so the position
-// moves smoothly between cells, but the drawn size is always exactly one
-// cell — it never stretches or resizes. offsetX/Y are the cell grid's
+// moves smoothly between cells; the head shape stays within that one
+// cell's footprint, but morph (0 = block, 1 = full ball+tail) can stream a
+// tapering tail out past it along tailDirX/Y (a screen-space unit vector),
+// tailLen pixels long — see cursor.frag. offsetX/Y are the cell grid's
 // centering offset in pixels (same convention as CellPass.Draw).
 // cellW/cellH are the physical pixel size of one cell, cfg supplies the
 // cursor color and edge softness, and bright is the breathing-phase
 // intensity (0 = hidden).
-func (c *CursorPass) Draw(dst *FBO, col, row, offsetX, offsetY, cellW, cellH float32, outW, outH int, bright float32, cfg config.Config) {
+func (c *CursorPass) Draw(dst *FBO, col, row, offsetX, offsetY, cellW, cellH float32, outW, outH int, bright, morph, tailDirX, tailDirY, tailLen float32, cfg config.Config) {
 	pos := [2]float32{offsetX + col*cellW, offsetY + row*cellH}
 	size := [2]float32{cellW, cellH}
 
@@ -48,6 +50,9 @@ func (c *CursorPass) Draw(dst *FBO, col, row, offsetX, offsetY, cellW, cellH flo
 	gl.Uniform1f(u("uBright"), bright)
 	gl.Uniform1f(u("uGlow"), cfg.Cursor.Glow)
 	gl.Uniform3fv(u("uAccent"), 1, &cfg.Phosphor.High[0])
+	gl.Uniform1f(u("uMorph"), morph)
+	gl.Uniform2f(u("uTailDir"), tailDirX, tailDirY)
+	gl.Uniform1f(u("uTailLen"), tailLen)
 	gl.BindVertexArray(c.vao)
 	gl.DrawArrays(gl.TRIANGLES, 0, 6)
 	gl.BindVertexArray(0)

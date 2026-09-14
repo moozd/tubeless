@@ -67,13 +67,23 @@ type Renderer struct {
 	cellW, cellH float32
 
 	// Cursor animation state (see UpdateCursor). Position is in grid cell
-	// units; phase drives the breathing pulse. Always drawn as exactly
-	// one cell (see CursorPass.Draw) — only the position glides between
-	// cells, the size never stretches or resizes.
+	// units; phase drives the breathing pulse. The head is always drawn
+	// within one cell's footprint (see CursorPass.Draw) — only its shape,
+	// not its footprint, reacts to speed.
 	cursorCol, cursorRow float32
 	cursorInit           bool
 	cursorVisible        bool
 	cursorPhase          float64
+
+	// Speed-reactive ball+tail state (see UpdateCursor). cursorSpeed is
+	// the eased glide's own smoothed speed, in cells/sec; cursorDirX/Y is
+	// the unit direction (grid-cell units) it was last moving in, held
+	// steady while stopped so a settled tail doesn't snap direction;
+	// cursorMorph is the eased 0..1 block-to-ball blend that cursorSpeed
+	// drives via cursorMorphSpeedLow..High.
+	cursorSpeed            float32
+	cursorDirX, cursorDirY float32
+	cursorMorph            float32
 
 	// scrollOffset is the animated (eased) scrollback view position, in
 	// lines back from the live tail — see UpdateScroll.
@@ -102,6 +112,20 @@ const (
 	// A scrollback jump or window resize shouldn't animate the cursor
 	// "flying" across unrelated content in between.
 	cursorSnapDist = 4.0
+
+	// Ball+tail morph tuning. UpdateCursor smooths the glide's own
+	// frame-to-frame speed (cells/sec) with cursorSpeedSmooth, then maps
+	// it through cursorMorphSpeedLow..High into a 0..1 "how ball-like"
+	// target that cursorMorph eases toward at cursorMorphEase — so the
+	// shape change itself reads as a morph in both directions (speeding
+	// into a ball, slowing back into the plain block) rather than a cut.
+	// cursorTailMaxCells caps how far the tail can stretch behind the
+	// ball at full speed.
+	cursorSpeedSmooth    = 20.0
+	cursorMorphSpeedLow  = 8.0
+	cursorMorphSpeedHigh = 30.0
+	cursorMorphEase      = 9.0
+	cursorTailMaxCells   = 2.2
 )
 
 func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
@@ -208,14 +232,17 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 }
 
 // UpdateCursor advances the cursor animation toward the current cell
-// (x, y). Called every frame from the render loop. front eases toward the
-// real target so small moves (typing, arrow keys) glide while staying
-// visually attached to the actual text even under rapid retargets (held
-// backspace/arrow-key repeat); back eases toward front rather than the
-// raw target, trailing behind it to draw the elastic stretch (see
-// CursorPass.Draw). A jump bigger than a few cells — Home/End, or the
-// terminal scrolling wholesale — snaps both together to avoid a long
-// diagonal flight across the screen.
+// (x, y). Called every frame from the render loop. The position eases
+// toward the real target so small moves (typing, arrow keys) glide while
+// staying visually attached to the actual text even under rapid retargets
+// (held backspace/arrow-key repeat). A jump bigger than a few cells —
+// Home/End, or the terminal scrolling wholesale — snaps instead of flying
+// diagonally across the screen, and also resets the speed/morph state:
+// a teleport isn't organic motion for the ball/tail effect to react to.
+// Alongside the position, this also tracks the glide's own frame-to-frame
+// speed and eases cursorMorph toward the ball/tail shape it drives (see
+// CursorPass.Draw / cursor.frag) — an animation layered entirely on top
+// of the existing glide, using no state the glide didn't already have.
 func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 	tx, ty := float32(x), float32(y)
 	r.cursorVisible = visible
@@ -230,11 +257,36 @@ func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 	dr := ty - r.cursorRow
 	if dc*dc+dr*dr > cursorSnapDist*cursorSnapDist {
 		r.cursorCol, r.cursorRow = tx, ty
+		r.cursorSpeed, r.cursorMorph = 0, 0
 		return
 	}
 	k := 1.0 - float32(math.Exp(-cursorGlideSpeed*dt))
-	r.cursorCol += (tx - r.cursorCol) * k
-	r.cursorRow += (ty - r.cursorRow) * k
+	moveCol, moveRow := dc*k, dr*k
+	r.cursorCol += moveCol
+	r.cursorRow += moveRow
+
+	if dt <= 0 {
+		return
+	}
+	speed := float32(math.Hypot(float64(moveCol), float64(moveRow))) / float32(dt)
+	ks := 1.0 - float32(math.Exp(-cursorSpeedSmooth*dt))
+	r.cursorSpeed += (speed - r.cursorSpeed) * ks
+	if dist := float32(math.Hypot(float64(moveCol), float64(moveRow))); dist > 1e-4 {
+		r.cursorDirX, r.cursorDirY = moveCol/dist, moveRow/dist
+	}
+
+	target := smoothstep32(cursorMorphSpeedLow, cursorMorphSpeedHigh, r.cursorSpeed)
+	km := 1.0 - float32(math.Exp(-cursorMorphEase*dt))
+	r.cursorMorph += (target - r.cursorMorph) * km
+}
+
+// smoothstep32 mirrors GLSL's smoothstep: a hermite curve that maps x into
+// 0..1 across edge0..edge1 with zero slope at both ends, so the speed-to-
+// morph mapping eases in and out instead of ramping linearly.
+func smoothstep32(edge0, edge1, x float32) float32 {
+	t := (x - edge0) / (edge1 - edge0)
+	t = float32(math.Max(0, math.Min(1, float64(t))))
+	return t * t * (3 - 2*t)
 }
 
 // scrollEaseSpeed is UpdateScroll's exponential-approach rate (per
@@ -305,7 +357,19 @@ func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config, dt float64) 
 	if !r.cursorVisible {
 		bright = 0
 	}
-	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, outW, outH, bright, cfg)
+
+	// The tail direction is tracked in grid-cell units (see UpdateCursor)
+	// but cells aren't necessarily square, so it's rescaled into screen
+	// pixels here before handing it to the shader — otherwise a diagonal
+	// glide's tail would point off at the wrong angle whenever cellW and
+	// cellH differ.
+	tailPxX, tailPxY := -r.cursorDirX*r.cellW, -r.cursorDirY*r.cellH
+	if tailPxLen := float32(math.Hypot(float64(tailPxX), float64(tailPxY))); tailPxLen > 1e-4 {
+		tailPxX, tailPxY = tailPxX/tailPxLen, tailPxY/tailPxLen
+	}
+	tailLenPx := r.cursorMorph * cursorTailMaxCells * (r.cellW + r.cellH) * 0.5
+
+	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, outW, outH, bright, r.cursorMorph, tailPxX, tailPxY, tailLenPx, cfg)
 
 	sceneTex := r.sceneFBO.tex
 	if decaySeconds := cfg.CRT.PhosphorDecay.DecaySeconds; decaySeconds > 0 {
