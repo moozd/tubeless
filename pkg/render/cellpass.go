@@ -365,17 +365,8 @@ func appendUnderlineInstance(dst []float32, px, py float32, color [3]float32, st
 	return append(dst, px, py, color[0], color[1], color[2], style)
 }
 
-// DrawAmbientBG paints the grid's own rect (cols*cw x rows*ch, centered the
-// same way DrawRects centers real cell content) with a single flat-color
-// fill — TrueColor themes' "empty terminal" backdrop (see colors.go's
-// ambientBG). Deliberately NOT a full-screen fill: anything outside that
-// rect is Padding.Size's margin (or, with no padding configured, the
-// window size's own leftover sub-cell remainder), and leaving it as
-// ClearOpaque's plain black rather than painting over it with the same
-// color as the grid is what makes that margin read as a distinct bezel
-// around the terminal instead of vanishing into "more terminal
-// background" — see cmd/tubeless/main.go's pushResizeSize doc comment for
-// how padding shrinks cols/rows in the first place.
+// DrawAmbientBG paints fbo with a single flat-color full-screen rect —
+// TrueColor themes' "empty terminal" backdrop (see colors.go's ambientBG).
 // Drawn through the normal cell_rect shader pipeline rather than
 // gl.ClearColor: a clear bypasses GL_FRAMEBUFFER_SRGB's linear-to-sRGB
 // encode (glClear always writes the given value as-is), so a non-zero
@@ -385,15 +376,13 @@ func appendUnderlineInstance(dst []float32, px, py float32, color [3]float32, st
 // every other color in the pipeline. (Plain black, which monochrome
 // themes clear straight to, doesn't have this problem: 0 round-trips
 // through either encoding unchanged.)
-func (cp *CellPass) DrawAmbientBG(fbo *FBO, outW, outH int, cw, ch float32, color [3]float32) {
+func (cp *CellPass) DrawAmbientBG(fbo *FBO, outW, outH int, color [3]float32) {
 	fbo.Bind()
 	gl.Disable(gl.BLEND)
 	gl.UseProgram(cp.progRect)
-	screenW, screenH := float32(outW), float32(outH)
-	offsetX := (screenW - float32(cp.cols)*cw) / 2
-	offsetY := (screenH - float32(cp.rows)*ch) / 2
-	setCommonUniforms(cp.progRect, cw, ch, screenW, screenH, offsetX, offsetY)
-	inst := appendRectInstance(nil, 0, 0, 0, 0, float32(cp.cols), float32(cp.rows), color, [4]float32{})
+	w, h := float32(outW), float32(outH)
+	setCommonUniforms(cp.progRect, w, h, w, h, 0, 0)
+	inst := appendRectInstance(nil, 0, 0, 0, 0, 1, 1, color, [4]float32{})
 	uploadAndDrawInstances(cp.rectVAO, cp.rectInstVBO, inst, rectInstanceFloats)
 	fbo.Unbind()
 }

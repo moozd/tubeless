@@ -215,7 +215,7 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	scene.Resize(outW, outH)
 	scene.ClearOpaque()
 	if cfg.TrueColor {
-		r.cellPass.DrawAmbientBG(scene, outW, outH, cellW, cellH, cfg.Colors.DefaultBg)
+		r.cellPass.DrawAmbientBG(scene, outW, outH, cfg.Colors.DefaultBg)
 	}
 
 	effect := r.effectFBO
