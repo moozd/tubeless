@@ -135,7 +135,24 @@ const (
 	// vertical divider for exactly those rows, so requiring literal
 	// unanimity would mean the divider — and therefore the pane
 	// boundary — is never found at all.
-	dividerRowRatio = 0.7
+	//
+	// High rather than a bare majority: a file-tree sidebar (neo-tree,
+	// nvim-tree) draws its OWN decorative indent guides using this same
+	// glyph to mark nested-folder depth, and whether a given row shows
+	// one depends entirely on which files happen to be scrolled into
+	// view — a genuinely different signal from a real, permanent window
+	// border, but one a lenient ratio can't reliably tell apart from it.
+	// Observed live: an indent-guide column hovered at ~0.675 (27 of 40
+	// rows) and repeatedly crossed a 0.7 threshold in either direction
+	// as the tree scrolled and different rows' nesting depth changed,
+	// making columnBands report a different, wrong pane boundary almost
+	// every frame — which reads as the glide resetting/flickering on
+	// every scroll, since the renderer treats a changed column band as
+	// an unrelated new glide. A real window border — always present,
+	// only interrupted by that window's own statusline/cmdline rows —
+	// comfortably clears even a strict ratio, so raising this doesn't
+	// cost real divider detection anything.
+	dividerRowRatio = 0.9
 )
 
 // verticalDividerRunes/horizontalDividerRunes are the box-drawing

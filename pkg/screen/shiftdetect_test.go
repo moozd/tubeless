@@ -673,3 +673,44 @@ func TestDetectContentShiftSurvivesRulerDigitReflow(t *testing.T) {
 		t.Fatalf("Delta = %d, want 1", shift.Delta)
 	}
 }
+
+// TestColumnBandsIgnoresPartialTreeIndentGuide is the permanent
+// regression for a real bug: a file-tree sidebar (neo-tree, nvim-tree)
+// draws its own decorative indent guides using the same glyph as a real
+// window border, but only on rows whose file happens to be nested —
+// which row that is changes as the tree scrolls. At a lenient ratio,
+// this column crossed the divider threshold in either direction almost
+// every frame, so columnBands reported a different (wrong) pane
+// boundary on nearly every scroll — read live as the glide resetting on
+// every keystroke. A real window border is interrupted only by that
+// window's own chrome rows, not by roughly a third of ordinary content
+// rows, so a strict ratio must still find it while rejecting the guide.
+func TestColumnBandsIgnoresPartialTreeIndentGuide(t *testing.T) {
+	const cols, rows = 44, 20
+	prev := New(cols, rows)
+	next := New(cols, rows)
+	for y := range rows {
+		fillRow(prev, y, fmt.Sprintf("  file-%02d", y))
+		fillRow(next, y, fmt.Sprintf("  file-%02d", y))
+		// A real window border: every row, both frames.
+		prev.Grid[y][39].Rune = '│'
+		next.Grid[y][39].Rune = '│'
+		// A decorative indent guide: only on 15 of 20 rows (75%) —
+		// below dividerRowRatio but was above the old, looser one.
+		if y%4 != 0 {
+			prev.Grid[y][3].Rune = '│'
+			next.Grid[y][3].Rune = '│'
+		}
+	}
+
+	bands := columnBands(prev, next)
+	want := [][2]int{{0, 38}, {40, 43}}
+	if len(bands) != len(want) {
+		t.Fatalf("bands = %+v, want %+v (indent guide at col 3 must not split the band)", bands, want)
+	}
+	for i := range want {
+		if bands[i] != want[i] {
+			t.Fatalf("bands = %+v, want %+v", bands, want)
+		}
+	}
+}
