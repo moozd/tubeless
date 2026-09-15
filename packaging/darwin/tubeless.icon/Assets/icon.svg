@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!--
+    Placeholder app icon: a phosphor-green terminal prompt on a dark
+    rounded-square tube face, echoing the CRT look without committing to
+    any one theme's specific palette. Swap this file for real artwork
+    whenever one is designed — nothing else needs to change, both the
+    Linux .desktop install and the macOS .icns conversion (see
+    packaging/darwin) read this single source.
+  -->
+  <rect x="8" y="8" width="240" height="240" rx="40" fill="#191724"/>
+  <rect x="8" y="8" width="240" height="240" rx="40" fill="none" stroke="#2a2740" stroke-width="2"/>
+  <text x="40" y="158" font-family="monospace" font-size="88" font-weight="bold" fill="#9ccfd8">&gt;</text>
+  <rect x="128" y="118" width="60" height="16" fill="#c4a7e7"/>
+</svg>
