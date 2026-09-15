@@ -107,6 +107,23 @@ func (h *Handler) reset() {
 
 func (h *Handler) OSCDispatch(data []byte) {
 	h.dispatchOSC52(data)
+	h.dispatchOSCTitle(data)
+}
+
+// dispatchOSCTitle handles "0;<title>" (icon name + window title) and
+// "2;<title>" (window title only) by recording <title> as Screen.Title —
+// see its own doc comment for how cmd/tubeless uses it. OSC 1 (icon name
+// only, no title) is deliberately not handled: tubeless has no window
+// icon to update.
+func (h *Handler) dispatchOSCTitle(data []byte) {
+	parts := bytes.SplitN(data, []byte(";"), 2)
+	if len(parts) != 2 {
+		return
+	}
+	switch string(parts[0]) {
+	case "0", "2":
+		h.Title = string(parts[1])
+	}
 }
 
 // dispatchOSC52 handles "52;<selector>;<base64>" — an app asking the

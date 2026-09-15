@@ -48,6 +48,14 @@ type Screen struct {
 	MouseSGR       bool
 	BracketedPaste bool
 
+	// Title is the window title the running app last set via OSC 0/2 (a
+	// shell's own prompt hook, tmux mirroring its pane/session title,
+	// ssh, ...) — see handler.go's dispatchOSCTitle. Empty means nothing
+	// has; cmd/tubeless's render loop falls back to the plain "tubeless"
+	// app name in that case rather than showing a fixed, never-changing
+	// string.
+	Title string
+
 	// ApplicationCursorKeys is DECCKM (CSI ?1h/l): while set, the arrow
 	// keys and Home/End should be sent as SS3 (ESC O <letter>) instead of
 	// CSI (ESC [ <letter>) when unmodified — vim, less, and most other

@@ -176,7 +176,7 @@ func main() {
 
 	winW := cols * (faces.Regular.CellWidth / effectiveScale) * windowScale
 	winH := rows * (faces.Regular.CellHeight / effectiveScale) * windowScale
-	win, err := render.NewWindow(fmt.Sprintf("tubeless (%s)", cfg.Theme), winW, winH)
+	win, err := render.NewWindow(windowTitle(""), winW, winH)
 	if err != nil {
 		fatal("open window: %v", err)
 	}
@@ -655,6 +655,19 @@ func pushResizeSize(resizeCh chan resizeReq, cs *cellSize, w, h int, ar config.A
 	}
 }
 
+// windowTitle is the OS window title to show: appTitle (Screen.Title, an
+// app's own OSC 0/2 request — a shell prompt hook, tmux mirroring its
+// pane/session title, ssh, ...) verbatim if one has been set, otherwise
+// the plain app name. Never a theme-suffixed string — every window
+// looked identical in an OS window switcher regardless of what was
+// actually running in it.
+func windowTitle(appTitle string) string {
+	if appTitle != "" {
+		return appTitle
+	}
+	return "tubeless"
+}
+
 func startShell(shell string, useTmux bool) *ptyio.Session {
 	name, args := shellCommand(shell, useTmux)
 	if name == "" {
@@ -961,6 +974,7 @@ const (
 func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config], req chan fontBuildReq, res chan fontBuildResult, load *fontLoad) {
 	r := renderer
 	var lastScr *screen.Screen
+	lastTitle := windowTitle("")
 	var lastW, lastH int
 	lastScrollLine := -1
 	var lastSel render.Selection
@@ -1150,6 +1164,10 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			// this frame.
 			if sets := scr.PendingClipboard(); len(sets) > 0 {
 				writeClipboard(win, sets[len(sets)-1])
+			}
+			if title := windowTitle(scr.Title); title != lastTitle {
+				win.SetTitle(title)
+				lastTitle = title
 			}
 		}
 		if scr != lastScr && w == lastW && h == lastH && scrollLine == 0 {
