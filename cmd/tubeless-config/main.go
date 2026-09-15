@@ -10,15 +10,18 @@
 // block bars use reverse video (bright phosphor block, black text) so they
 // read clearly.
 //
-// The screen is two tabs (Tab/Shift+Tab, or Shift+Tab's ESC[Z, to switch):
-// GENERAL holds the font, layout (padding), scrolling behavior, and
-// every color setting (see pkg/config's ThemeColors), including a
-// per-channel custom-color editor, with a live swatch/sample preview at
-// the bottom; VISUAL EFFECTS holds every non-color, non-font visual
-// effect (see pkg/config's Effects), cycled through a list of
-// period-accurate 80s monitors alongside the "modern" default (CRT
-// emulation off). Editing any setting on either tab by hand flips that
-// tab's own preset/theme name to "custom" — see adjust().
+// The screen is three tabs (Tab/Shift+Tab, or Shift+Tab's ESC[Z, to
+// switch): GENERAL holds the font, layout (padding), and every color
+// setting (see pkg/config's ThemeColors), including a per-channel
+// custom-color editor, with a live swatch/sample preview at the bottom;
+// VISUAL EFFECTS holds every non-color, non-font visual effect (see
+// pkg/config's Effects), cycled through a list of period-accurate 80s
+// monitors alongside the "modern" default (CRT emulation off);
+// EXPERIMENTAL holds settings still under active development that don't
+// yet meet the bar for the other two tabs (currently just smooth-scroll
+// — see config.Scrolling's own doc comment). Editing any General/Visual
+// Effects setting by hand flips that tab's own preset/theme name to
+// "custom" — see adjust(); Experimental has no such axis to flip.
 //
 // Edits only take effect in memory as you navigate — nothing is written to
 // ~/.config/tubeless/config.toml until you press 's'. The running tubeless
@@ -50,16 +53,17 @@ type ui struct {
 	cols int
 	rows int
 
-	// tab is which of the two top-level tabs is active (0 = general, 1 =
-	// visual effects) — see listFor/switchTab. Each tab keeps its own
-	// navigation position in selByTab so switching away and back doesn't
-	// lose your place.
-	tab         int
-	listPresets []panelRow
-	listFonts   []panelRow
-	list        []panelRow
-	sel         int
-	selByTab    [2]int
+	// tab is which of the top-level tabs is active (0 = general, 1 =
+	// visual effects, 2 = experimental) — see listFor/switchTab. Each
+	// tab keeps its own navigation position in selByTab so switching
+	// away and back doesn't lose your place.
+	tab              int
+	listPresets      []panelRow
+	listFonts        []panelRow
+	listExperimental []panelRow
+	list             []panelRow
+	sel              int
+	selByTab         [numTabs]int
 
 	status  string
 	esc     []byte
@@ -98,6 +102,10 @@ type ui struct {
 func (u *ui) modalOpen() bool {
 	return u.fontPicker || u.profileSaving || u.profileLoading
 }
+
+// numTabs is how many top-level tabs the screen has — see listFor/
+// switchTab/tabTitle/drawTabs, the only places that need to know.
+const numTabs = 3
 
 type rowKind uint8
 
@@ -343,22 +351,27 @@ func (u *ui) feed(b byte) (quit bool) {
 
 // listFor returns the row list for a tab index — the single source both
 // buildLists and switchTab read from, so they can't drift. General is
-// tab 0 (the first thing you see on open); visual effects is tab 1.
+// tab 0 (the first thing you see on open); visual effects is tab 1;
+// experimental is tab 2.
 func (u *ui) listFor(tab int) []panelRow {
-	if tab == 1 {
+	switch tab {
+	case 1:
 		return u.listPresets
+	case 2:
+		return u.listExperimental
+	default:
+		return u.listFonts
 	}
-	return u.listFonts
 }
 
-// switchTab moves to tab (0 or 1, wrapping) after remembering the
+// switchTab moves to tab (wrapping across numTabs) after remembering the
 // outgoing tab's cursor position, then restores the incoming tab's own —
 // snapping onto the first real setting if that position landed on a
 // section header (always true the first time a tab is visited, since
 // selByTab starts zeroed).
 func (u *ui) switchTab(d int) {
 	u.selByTab[u.tab] = u.sel
-	u.tab = ((u.tab+d)%2 + 2) % 2
+	u.tab = ((u.tab+d)%numTabs + numTabs) % numTabs
 	u.list = u.listFor(u.tab)
 	u.sel = u.selByTab[u.tab]
 	if u.sel >= len(u.list) || u.list[u.sel].kind != rowSetting {
@@ -642,16 +655,22 @@ func (u *ui) save() {
 
 // resetPreset snaps the active tab's own axis back to its named
 // preset/theme's canonical values — modern/rosepine if that axis is
-// currently "custom" (nothing named to snap back to).
+// currently "custom" (nothing named to snap back to). The experimental
+// tab has no axis (see config.Scrolling's own doc comment on why it
+// isn't preset-seeded) — reset there just zeroes it directly.
 func (u *ui) resetPreset() {
-	if u.tab == 1 {
+	switch u.tab {
+	case 1:
 		name := u.cfg.Preset
 		if name == "" || name == "custom" {
 			name = "modern"
 		}
 		applyEffectsPresetCfg(&u.cfg, name)
 		u.status = "reset to " + name + " preset"
-	} else {
+	case 2:
+		u.cfg.Scrolling = config.Scrolling{}
+		u.status = "reset experimental settings"
+	default:
 		name := u.cfg.Theme
 		if name == "" || name == "custom" {
 			name = "rosepine"
@@ -692,7 +711,7 @@ func applyEffectsPresetCfg(c *config.Config, name string) {
 	e := config.EffectsPreset(name)
 	c.Preset = name
 	c.Surface, c.Blur, c.Cursor = e.Surface, e.Blur, e.Cursor
-	c.Face, c.Contrast, c.Scrolling, c.CRT = e.Face, e.Contrast, e.Scrolling, e.CRT
+	c.Face, c.Contrast, c.CRT = e.Face, e.Contrast, e.CRT
 	if theme, ok := config.MonitorTheme(name); ok {
 		applyThemeCfg(c, theme)
 	}
@@ -710,6 +729,7 @@ func applyThemeCfg(c *config.Config, name string) {
 func (u *ui) buildLists() {
 	u.listPresets = u.buildPresetsList()
 	u.listFonts = u.buildFontsThemeList()
+	u.listExperimental = u.buildExperimentalList()
 	u.tab = 0
 	u.list = u.listFonts
 	u.firstSetting()
@@ -902,11 +922,11 @@ func (u *ui) buildPresetsList() []panelRow {
 }
 
 // buildFontsThemeList is the GENERAL tab: font shaping settings, layout
-// (padding), scrolling behavior, a cycle through every registered color
-// theme, and a per-channel custom-color editor (text/background/accent/
-// glow) — editing any color channel by hand flips Theme to "custom"
-// (see adjust()). See drawColorPreview for the live swatch/sample
-// preview this feeds.
+// (padding), a cycle through every registered color theme, and a
+// per-channel custom-color editor (text/background/accent/glow) —
+// editing any color channel by hand flips Theme to "custom" (see
+// adjust()). See drawColorPreview for the live swatch/sample preview
+// this feeds.
 func (u *ui) buildFontsThemeList() []panelRow {
 	var list []panelRow
 	section := func(name string) { list = append(list, panelRow{kind: rowSection, section: name}) }
@@ -969,12 +989,6 @@ func (u *ui) buildFontsThemeList() []panelRow {
 		func(c *config.Config) float64 { return float64(c.Padding.Size) },
 		func(c *config.Config, v float64) { c.Padding.Size = float32(v) }))
 
-	section("scrolling")
-	add(asEffect(newToggle("scrolling.smooth_content_shift", "smooth scroll",
-		"glide detected scroll shifts (vertical and horizontal) instead of snapping; a heuristic diff, disable if it wobbles on some app's output",
-		func(c *config.Config) bool { return c.Scrolling.SmoothContentShift },
-		func(c *config.Config, v bool) { c.Scrolling.SmoothContentShift = v })))
-
 	section("theme")
 	add(&setting{
 		key: "theme", label: "theme",
@@ -1001,6 +1015,27 @@ func (u *ui) buildFontsThemeList() []panelRow {
 	role("bg", "background", func(c *config.Config) *[3]float32 { return &c.Colors.DefaultBg })
 	role("accent", "accent", func(c *config.Config) *[3]float32 { return &c.Phosphor.High })
 	role("glow", "glow", func(c *config.Config) *[3]float32 { return &c.Phosphor.Low })
+
+	return list
+}
+
+// buildExperimentalList is the EXPERIMENTAL tab: settings under active
+// development that don't yet meet the bar for General/Visual Effects —
+// currently just smooth-scroll. Deliberately not wrapped in asEffect:
+// unlike Surface/Blur/Cursor/CRT, nothing here is seeded or reset by a
+// Preset (see config.Scrolling's own doc comment) — an experimental
+// feature shouldn't silently flip on or off just because you cycled a
+// monitor preset on a different tab.
+func (u *ui) buildExperimentalList() []panelRow {
+	var list []panelRow
+	section := func(name string) { list = append(list, panelRow{kind: rowSection, section: name}) }
+	add := func(s *setting) { list = append(list, panelRow{kind: rowSetting, set: s}) }
+
+	section("scrolling")
+	add(newToggle("scrolling.smooth_content_shift", "smooth scroll",
+		"glide detected scroll shifts (vertical and horizontal) instead of snapping; a heuristic diff still being hardened against real-world editor/TUI output — disable if it wobbles or drags a status bar on some particular app",
+		func(c *config.Config) bool { return c.Scrolling.SmoothContentShift },
+		func(c *config.Config, v bool) { c.Scrolling.SmoothContentShift = v }))
 
 	return list
 }
@@ -1062,10 +1097,14 @@ func (u *ui) accent() [3]float32 { return u.cfg.Phosphor.High }
 // tabTitle names a tab index for both the tab bar and the settings box's
 // own title.
 func tabTitle(tab int) string {
-	if tab == 1 {
+	switch tab {
+	case 1:
 		return "visual effects"
+	case 2:
+		return "experimental"
+	default:
+		return "general"
 	}
-	return "general"
 }
 
 func (u *ui) redraw() {
@@ -1125,12 +1164,12 @@ func (u *ui) redraw() {
 	flush(b)
 }
 
-// drawTabs renders the two-tab segmented control: the active tab paints
-// as a solid accent bar (matching the settings list's own selected-row
-// treatment), the inactive one dims — no border, just color.
+// drawTabs renders the segmented tab control: the active tab paints as
+// a solid accent bar (matching the settings list's own selected-row
+// treatment), the inactive ones dim — no border, just color.
 func (u *ui) drawTabs(b *strings.Builder, y int, accent [3]float32) {
 	var line strings.Builder
-	for i := range 2 {
+	for i := range numTabs {
 		chip := " " + strings.ToUpper(tabTitle(i)) + " "
 		if i == u.tab {
 			line.WriteString(truecolorBg(accent) + contrastFg(accent) + sgrBold + chip + sgrReset)

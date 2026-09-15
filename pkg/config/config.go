@@ -27,8 +27,9 @@ import (
 //
 //   - Theme governs color: TrueColor, Colors, Phosphor.
 //   - Preset governs every other visual effect: Surface, Blur, Cursor,
-//     Face, Contrast, Scrolling, CRT. Font/Atlas sit outside both axes —
-//     always user-set directly, never reseeded by either.
+//     Face, Contrast, CRT. Font/Atlas/Padding/Scrolling sit outside both
+//     axes — always user-set directly, never reseeded by either (see
+//     the config TUI's "experimental" tab for Scrolling specifically).
 type Config struct {
 	Theme  string `toml:"theme"`
 	Preset string `toml:"preset"`
@@ -56,7 +57,10 @@ type Config struct {
 }
 
 // Scrolling controls scroll-related behavior beyond the raw scrollback
-// buffer size (see Scrollback).
+// buffer size (see Scrollback). Lives on the config TUI's own
+// "experimental" tab, not seeded or reset by either the Theme or Preset
+// axis — it's a heuristic feature under active development, not a
+// finished visual effect.
 type Scrolling struct {
 	// SmoothContentShift gates both axes of the content-shift glide:
 	// detected uniform row shifts (pkg/screen's DetectContentShift) and
@@ -518,7 +522,7 @@ func applyEffectsPreset(cfg *Config, name string) {
 	}
 	e := EffectsPreset(name)
 	cfg.Surface, cfg.Blur, cfg.Cursor = e.Surface, e.Blur, e.Cursor
-	cfg.Face, cfg.Contrast, cfg.Scrolling, cfg.CRT = e.Face, e.Contrast, e.Scrolling, e.CRT
+	cfg.Face, cfg.Contrast, cfg.CRT = e.Face, e.Contrast, e.CRT
 }
 
 // Save writes cfg to path as TOML, creating parent directories as needed.
