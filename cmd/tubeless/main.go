@@ -695,12 +695,26 @@ const tmuxSessionName = "home"
 // ok=false if tmux isn't on PATH (shellCommand falls back to the plain
 // shell in that case). `new-session -A -s` attaches if the session
 // already exists and creates it otherwise, in one atomic step.
+//
+// Runs through `$SHELL -l -c` rather than exec'ing tmux directly: a login
+// shell sources .zprofile/.zshrc, which is where LANG/LC_ALL normally get
+// exported. tmux decides once, at its own startup, how to interpret and
+// write UTF-8 for its client connection — skipping the login shell means
+// tmux launches with whatever locale-less environment a Finder/Dock
+// launch gives the GUI process (no LANG at all, on macOS), which can
+// mangle Nerd Font icons into "_" even with tmux linked against utf8proc.
+// `-c` execs tmux as the shell's last act, so the shell doesn't linger as
+// an extra process — tmux still ends up as the pty's direct child.
 func tmuxCommand() (name string, args []string, ok bool) {
-	path, err := exec.LookPath("tmux")
-	if err != nil {
+	if _, err := exec.LookPath("tmux"); err != nil {
 		return "", nil, false
 	}
-	return path, []string{"new-session", "-A", "-s", tmuxSessionName}, true
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	cmd := fmt.Sprintf("exec tmux new-session -A -s %s", tmuxSessionName)
+	return shell, []string{"-l", "-c", cmd}, true
 }
 
 // pumpPTYOutput only ever reads and forwards — it never touches Screen —
