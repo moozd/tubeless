@@ -69,6 +69,56 @@ func TestEffectiveAtlasScale(t *testing.T) {
 	}
 }
 
+// TestAutoAtlasScale guards the fix for atlas.scale "auto" (Scale <= 0)
+// picking a base that looks right on a standard-DPI display too: naively
+// reusing the Retina-tuned default of 4 there makes the mip chain deeper
+// than it needs to be, compounding coverage loss on thin strokes instead
+// of helping (see effectiveAtlasScale's doc comment).
+func TestAutoAtlasScale(t *testing.T) {
+	cases := []struct {
+		dpi  float32
+		want int
+	}{
+		{dpi: 1, want: 1},
+		{dpi: 0, want: 1},
+		{dpi: 1.5, want: 2},
+		{dpi: 2, want: 4},
+		{dpi: 3, want: 4},
+	}
+	for _, c := range cases {
+		if got := autoAtlasScale(c.dpi); got != c.want {
+			t.Errorf("autoAtlasScale(%v) = %d, want %d", c.dpi, got, c.want)
+		}
+	}
+}
+
+// TestBuildFacesForResolvesAutoScale guards "auto" actually taking effect
+// end to end: with Scale <= 0, buildFacesFor must resolve a per-DPI base
+// via autoAtlasScale rather than treating the sentinel as a literal raster
+// multiplier (which would collapse every display to effectiveScale 0).
+func TestBuildFacesForResolvesAutoScale(t *testing.T) {
+	const maxTextureSize = 16384
+	autoCfg := config.Config{
+		Font:  config.Font{Size: 14, LineHeight: 1},
+		Atlas: config.Atlas{Scale: 0, Gamma: 1.0},
+	}
+	explicitCfg := autoCfg
+	explicitCfg.Atlas.Scale = autoAtlasScale(2)
+
+	_, autoScale, err := buildFacesFor(autoCfg, 2, maxTextureSize)
+	if err != nil {
+		t.Fatalf("buildFacesFor(auto): %v", err)
+	}
+	_, explicitScale, err := buildFacesFor(explicitCfg, 2, maxTextureSize)
+	if err != nil {
+		t.Fatalf("buildFacesFor(explicit base %d): %v", explicitCfg.Atlas.Scale, err)
+	}
+	if autoScale != explicitScale {
+		t.Fatalf("auto resolved to effectiveScale %d, but explicit base %d (what autoAtlasScale(2) returns) resolved to %d",
+			autoScale, explicitCfg.Atlas.Scale, explicitScale)
+	}
+}
+
 // TestBuildFacesForClampsOversizedScale guards the fix for the app
 // crashing at launch — never even opening a window — when cfg.Atlas.Scale
 // (now multiplied by DPI, see effectiveAtlasScale) produces an atlas

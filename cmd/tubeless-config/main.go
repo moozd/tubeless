@@ -943,13 +943,18 @@ func (u *ui) buildFontsThemeList() []panelRow {
 		rangeOf: func(c *config.Config) (float64, float64, float64) { return float64(c.Font.Size), 10, 96 },
 	})
 	add(&setting{
-		key: "atlas.scale", label: "atlas scale", help: "glyph supersampling (rebuilds the atlas)",
-		get: func(c *config.Config) string { return fmt.Sprintf("%d×", c.Atlas.Scale) },
+		key: "atlas.scale", label: "atlas scale", help: "glyph supersampling, 0 = auto per-monitor (rebuilds the atlas)",
+		get: func(c *config.Config) string {
+			if c.Atlas.Scale <= 0 {
+				return "auto"
+			}
+			return fmt.Sprintf("%d×", c.Atlas.Scale)
+		},
 		applyStep: func(c *config.Config, d int) bool {
-			c.Atlas.Scale = clampInt(c.Atlas.Scale+d, 1, 8)
+			c.Atlas.Scale = clampInt(c.Atlas.Scale+d, 0, 8)
 			return true
 		},
-		rangeOf: func(c *config.Config) (float64, float64, float64) { return float64(c.Atlas.Scale), 1, 8 },
+		rangeOf: func(c *config.Config) (float64, float64, float64) { return float64(c.Atlas.Scale), 0, 8 },
 	})
 	add(&setting{
 		key: "font.gamma", label: "gamma", help: "coverage curve shaping (rebuilds the atlas)",

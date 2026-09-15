@@ -98,7 +98,11 @@ type Font struct {
 }
 
 // Atlas controls the offscreen glyph rasterization (see cmd/tubeless's
-// atlasScale/fontGamma constants for what these do).
+// atlasScale/fontGamma constants for what these do). Scale <= 0 means
+// "auto": cmd/tubeless picks a base scale from the current monitor's own
+// content scale instead of using a single flat number for every display
+// (see autoAtlasScale) — a standard-DPI panel and a Retina one want
+// different base values, not just the same one scaled by dpi.
 type Atlas struct {
 	Scale int     `toml:"scale"`
 	Gamma float64 `toml:"gamma"`

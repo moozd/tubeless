@@ -371,6 +371,26 @@ func effectiveAtlasScale(scale int, dpi float32) int {
 	return max(1, int(math.Round(float64(scale)*float64(dpi))))
 }
 
+// autoAtlasScale picks a base cfg.Atlas.Scale for "auto" (cfg.Atlas.Scale
+// <= 0) from the monitor's own content scale. This isn't just "scale by
+// dpi" — effectiveAtlasScale already does that multiplication on top of
+// whatever base comes back here. The base itself needs to differ by
+// panel class: a standard-DPI display wants almost no mip chain (a
+// deeper one just compounds coverage loss on thin strokes through GL's
+// box-filtered mipmaps — see uploadAtlas), while a Retina display has
+// pixels to spare and looks best with the deeper chain the existing
+// default plus its own 2x dpi multiplier gives it.
+func autoAtlasScale(dpi float32) int {
+	switch {
+	case dpi <= 1:
+		return 1
+	case dpi < 2:
+		return 2
+	default:
+		return 4
+	}
+}
+
 // buildFacesFor builds cfg's glyph atlas at the raster resolution
 // effectiveAtlasScale computes for dpi, returning that effective scale
 // alongside the faces since callers need it again to convert the
@@ -394,7 +414,11 @@ func buildFacesFor(cfg config.Config, dpi float32, maxTextureSize int) (*font.Fa
 // (see font.BuildFaces's Progress) — the async rebuild path reports into a
 // fontLoad so the render thread can draw the loading modal.
 func buildFacesWithProgress(cfg config.Config, dpi float32, maxTextureSize int, progress font.Progress) (*font.Faces, int, error) {
-	scale := cfg.Atlas.Scale
+	requested := cfg.Atlas.Scale
+	scale := requested
+	if scale <= 0 {
+		scale = autoAtlasScale(dpi)
+	}
 	for {
 		effectiveScale := effectiveAtlasScale(scale, dpi)
 		if progress != nil && cfg.Font.Family != "" {
@@ -403,8 +427,8 @@ func buildFacesWithProgress(cfg config.Config, dpi float32, maxTextureSize int, 
 		faceBytes := loadFontFaces(cfg.Font.Family)
 		faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*effectiveScale, cfg.Atlas.Gamma, effectiveScale, cfg.Font.LineHeight, maxTextureSize, progress)
 		if err == nil {
-			if scale != cfg.Atlas.Scale {
-				log.Printf("atlas.scale %d was too high for this display/GPU; using %d instead — lower it in your config to stop seeing this", cfg.Atlas.Scale, scale)
+			if requested > 0 && scale != requested {
+				log.Printf("atlas.scale %d was too high for this display/GPU; using %d instead — lower it in your config to stop seeing this", requested, scale)
 			}
 			return faces, effectiveScale, nil
 		}
