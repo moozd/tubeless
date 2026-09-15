@@ -849,6 +849,14 @@ func clampFontSize(v int) int {
 	return min(96, max(10, v))
 }
 
+// zoomedFontSize applies the session's net Ctrl/Cmd+=/- steps (2px each,
+// see drainFontZoom) on top of a base size — the same formula runLoop
+// uses both when a zoom keypress lands and when reapplying the session's
+// zoom onto a freshly disk-resolved config (see fontZoomSteps).
+func zoomedFontSize(base, steps int) int {
+	return clampFontSize(base + 2*steps)
+}
+
 // cfgWatch polls the config file's mtime so live edits (made by the
 // in-terminal config TUI, or by hand) are picked up without tight-looping
 // os.Stat.
@@ -935,6 +943,14 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	// display.
 	reqDpiX, reqDpiY := cs.dpiX, cs.dpiY
 
+	// fontZoomSteps is the session's live Ctrl/Cmd+=/- zoom, kept only in
+	// memory and never written through resolve()/config.Save — it must
+	// survive a watch.changed reload (someone editing an unrelated
+	// setting in tubeless-config, or the file touched by hand) instead of
+	// being silently discarded when cfg gets replaced wholesale by
+	// whatever the file resolves to.
+	fontZoomSteps := 0
+
 	for !win.ShouldClose() && !closeRequested.Load() {
 		if win.GetAttrib(glfw.Iconified) == glfw.True {
 			// Truly minimized windows must not burn GPU presenting frames
@@ -1006,7 +1022,8 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		}
 
 		if d := drainFontZoom(fontZoom); d != 0 {
-			cfg.Font.Size = clampFontSize(cfg.Font.Size + 2*d)
+			fontZoomSteps += d
+			cfg.Font.Size = zoomedFontSize(cfg.Font.Size, d)
 			storeCfgRef(cfgRef, cfg)
 			g := load.begin(fmt.Sprintf("Font size %dpx", cfg.Font.Size))
 			requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: reqDpiX, dy: reqDpiY})
@@ -1016,6 +1033,12 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		now := time.Now()
 		if watch.changed(now) {
 			next := resolve()
+			// Reapply the session's own zoom on top of the freshly
+			// resolved base size, not the previous (already-zoomed)
+			// cfg.Font.Size — otherwise an unrelated config edit would
+			// double-apply the zoom (or drop it, if the file's own
+			// font.size happened to already match cfg.Font.Size).
+			next.Font.Size = zoomedFontSize(next.Font.Size, fontZoomSteps)
 			fontChanged := next.Font != cfg.Font || next.Atlas != cfg.Atlas
 			// A pure aspect-ratio or padding edit (no font/atlas change)
 			// still needs cols/rows recomputed against the new letterboxed

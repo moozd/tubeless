@@ -119,6 +119,29 @@ func TestBuildFacesForResolvesAutoScale(t *testing.T) {
 	}
 }
 
+// TestZoomedFontSize guards the fix for a session's live font zoom
+// surviving an unrelated config-file reload: runLoop reapplies
+// fontZoomSteps onto the freshly resolved base size via this same
+// function rather than discarding it (see runLoop's watch.changed
+// branch), so the formula and its clamp must be exact.
+func TestZoomedFontSize(t *testing.T) {
+	cases := []struct {
+		base, steps, want int
+	}{
+		{base: 14, steps: 0, want: 14},
+		{base: 14, steps: 3, want: 20},
+		{base: 14, steps: -2, want: 10},
+		{base: 14, steps: -100, want: 10}, // clamped to the floor
+		{base: 14, steps: 100, want: 96},  // clamped to the ceiling
+		{base: 40, steps: -100, want: 10}, // reapplied onto a smaller disk base still clamps
+	}
+	for _, c := range cases {
+		if got := zoomedFontSize(c.base, c.steps); got != c.want {
+			t.Errorf("zoomedFontSize(%d, %d) = %d, want %d", c.base, c.steps, got, c.want)
+		}
+	}
+}
+
 // TestBuildFacesForClampsOversizedScale guards the fix for the app
 // crashing at launch — never even opening a window — when cfg.Atlas.Scale
 // (now multiplied by DPI, see effectiveAtlasScale) produces an atlas
