@@ -45,6 +45,8 @@ var symbolRunes = []rune{
 	0x2727, // ✧ white four-pointed star
 	0x23F8, // ⏸ pause (TUI media controls)
 	0x23F9, // ⏹ stop (TUI media controls)
+	0x23F5, // ⏵ play (Claude Code's "⏵⏵ auto mode on" icon, doubled up)
+	0x23F4, // ⏴ reverse (⏵'s mirror, same media-control family)
 }
 
 func isSymbolSprite(r rune) bool {
@@ -112,6 +114,22 @@ func drawSymbolSprite(r rune, img *image.Alpha, gx, gy, cellW, cellH int) {
 		pred = func(x, y float64) bool {
 			u, v := toUnit(x, y)
 			return u >= 0.22 && u <= 0.78 && v >= 0.22 && v <= 0.78
+		}
+	case 0x23F5: // ⏵ play: right-pointing triangle
+		pred = func(x, y float64) bool {
+			u, v := toUnit(x, y)
+			return inTri(u, v,
+				[2]float64{0.16, 0.08},
+				[2]float64{0.86, 0.5},
+				[2]float64{0.16, 0.92})
+		}
+	case 0x23F4: // ⏴ reverse: left-pointing triangle
+		pred = func(x, y float64) bool {
+			u, v := toUnit(x, y)
+			return inTri(u, v,
+				[2]float64{0.84, 0.08},
+				[2]float64{0.14, 0.5},
+				[2]float64{0.84, 0.92})
 		}
 	case 0x26A0: // ⚠ filled triangle with the exclamation carved out
 		pred = func(x, y float64) bool {
