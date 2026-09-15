@@ -7,7 +7,6 @@ import (
 	"github.com/go-gl/glfw/v3.4/glfw"
 
 	"github.com/moozd/tubeless/pkg/config"
-	"github.com/moozd/tubeless/pkg/ptyio"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
 )
@@ -50,7 +49,7 @@ type mouseState struct {
 // of local selection/scroll vs. VT reporting applies is decided per-event
 // from the latest published Screen's MouseMode: an app that wants mouse
 // events gets them instead of the terminal handling clicks/wheel itself.
-func wireMouse(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection) {
+func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection) {
 	ms := &mouseState{sel: sel}
 
 	win.SetScrollCallback(func(_ *glfw.Window, _, yoff float64) {

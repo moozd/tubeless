@@ -20,7 +20,8 @@ func TestPtyCoordinatorSetsCloseRequestedOnShellExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start shell: %v", err)
 	}
-	defer sess.Close()
+	ref := newSessionRef(sess)
+	defer ref.Close()
 
 	var shared atomic.Pointer[screen.Screen]
 	shared.Store(screen.New(cols, rows))
@@ -29,7 +30,7 @@ func TestPtyCoordinatorSetsCloseRequestedOnShellExit(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ptyCoordinator(sess, &shared, resizeCh, 0, closeRequested)
+		ptyCoordinator(ref, &shared, resizeCh, 0, closeRequested, nil)
 		close(done)
 	}()
 
@@ -40,6 +41,64 @@ func TestPtyCoordinatorSetsCloseRequestedOnShellExit(t *testing.T) {
 	}
 	if !closeRequested.Load() {
 		t.Fatal("closeRequested was not set after the shell exited")
+	}
+}
+
+// TestPtyCoordinatorRespawnsInsteadOfClosing locks in the tmux-integration
+// behavior: when respawn is non-nil (config.Shell.UseTmux launched into
+// tmux — see main's own gating), the pty's root process exiting must not
+// close the window outright the way a plain shell exiting does. It's
+// exactly what happens on `tmux kill-server` (or the last tmux session
+// ending normally) — respawn is tried first, and only once it also
+// declines (simulating tmux no longer being available) does
+// ptyCoordinator fall back to the plain close path.
+func TestPtyCoordinatorRespawnsInsteadOfClosing(t *testing.T) {
+	newExitingSession := func() (*ptyio.Session, error) {
+		return ptyio.Start("/bin/sh", []string{"-c", "exit 0"}, cols, rows)
+	}
+
+	sess, err := newExitingSession()
+	if err != nil {
+		t.Fatalf("start shell: %v", err)
+	}
+	ref := newSessionRef(sess)
+	defer ref.Close()
+
+	var shared atomic.Pointer[screen.Screen]
+	shared.Store(screen.New(cols, rows))
+	resizeCh := make(chan resizeReq, 1)
+	closeRequested := new(atomic.Bool)
+
+	var respawns atomic.Int32
+	respawn := func(cols, rows int) (*ptyio.Session, bool) {
+		if respawns.Add(1) > 1 {
+			// Simulate tmux no longer being available on the second exit,
+			// so the test can also confirm the eventual close path.
+			return nil, false
+		}
+		s, err := newExitingSession()
+		if err != nil {
+			return nil, false
+		}
+		return s, true
+	}
+
+	done := make(chan struct{})
+	go func() {
+		ptyCoordinator(ref, &shared, resizeCh, 0, closeRequested, respawn)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ptyCoordinator did not return")
+	}
+	if !closeRequested.Load() {
+		t.Fatal("closeRequested was not set after respawn gave up")
+	}
+	if got := respawns.Load(); got != 2 {
+		t.Fatalf("respawn called %d times, want 2 (one successful respawn, then one giving up)", got)
 	}
 }
 

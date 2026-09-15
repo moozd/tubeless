@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-gl/glfw/v3.4/glfw"
 
-	"github.com/moozd/tubeless/pkg/ptyio"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
 )
@@ -88,7 +87,7 @@ func keyboardModeOf(scr *screen.Screen) keyboardMode {
 	return keyboardMode{modifyOtherKeys: scr.ModifyOtherKeys, kittyFlags: scr.KittyFlags()}
 }
 
-func wireInput(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], sel *render.Selection, fontZoom chan<- int) {
+func wireInput(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], sel *render.Selection, fontZoom chan<- int) {
 	win.SetCharModsCallback(func(_ *glfw.Window, r rune, mods glfw.ModifierKey) {
 		handleChar(sess, r, mods, keyboardModeOf(shared.Load()))
 	})
@@ -130,7 +129,7 @@ func wireInput(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[s
 // key event, text keys included, so writing here would double-emit), and
 // for Ctrl/Alt-modified keys that handleSpecialKey encodes as CSI u
 // sequences instead.
-func handleChar(sess *ptyio.Session, r rune, mods glfw.ModifierKey, mode keyboardMode) {
+func handleChar(sess *sessionRef, r rune, mods glfw.ModifierKey, mode keyboardMode) {
 	if mode.kittyFlags&screen.KittyReportAllKeys != 0 {
 		return
 	}
@@ -169,7 +168,7 @@ func handleChar(sess *ptyio.Session, r rune, mods glfw.ModifierKey, mode keyboar
 // flags, or tmux's modifyOtherKeys request), the affected keys are instead
 // encoded as kitty "CSI u" sequences so modifiers survive the trip — see
 // extendedFor and emitExtendedKey.
-func handleSpecialKey(sess *ptyio.Session, key glfw.Key, action glfw.Action, mods glfw.ModifierKey, appCursor bool, mode keyboardMode) {
+func handleSpecialKey(sess *sessionRef, key glfw.Key, action glfw.Action, mods glfw.ModifierKey, appCursor bool, mode keyboardMode) {
 	// Legacy encodings have no way to carry an event type, so a release is
 	// only meaningful for keys being reported in CSI u form.
 	if action == glfw.Release && !extendedFor(key, mods, mode) {
@@ -285,7 +284,7 @@ func fontZoomDelta(key glfw.Key, mods glfw.ModifierKey) (delta int, ok bool) {
 // writeMeta ESC-prefixes seq when Alt is held — the same metaSendsEscape
 // convention as the char callback, for the keys (Tab/Enter/Backspace/
 // Escape) that don't have their own modifier-encoded CSI form.
-func writeMeta(sess *ptyio.Session, mods glfw.ModifierKey, seq []byte) {
+func writeMeta(sess *sessionRef, mods glfw.ModifierKey, seq []byte) {
 	if mods&glfw.ModAlt != 0 {
 		sess.Write([]byte{0x1b})
 	}
@@ -435,7 +434,7 @@ func eventType(action glfw.Action) int {
 // type (repeat/release), and associated text. base is the unshifted
 // US-layout rune for text keys (0 for pure functional keys), code its key
 // code (the Unicode codepoint for text keys, or the C0/PUA code otherwise).
-func emitExtendedKey(sess *ptyio.Session, code int, base rune, mods glfw.ModifierKey, action glfw.Action, flags int) {
+func emitExtendedKey(sess *sessionRef, code int, base rune, mods glfw.ModifierKey, action glfw.Action, flags int) {
 	sess.Write(encodeExtendedKey(code, base, mods, action, flags))
 }
 
@@ -519,7 +518,7 @@ func encodeTildeKey(num int, mods glfw.ModifierKey) []byte {
 // it can tell pasted text apart from typed input instead of, say, trying
 // to auto-indent every line of a multi-line paste. Read via readClipboard
 // so the Wayland build still sees the X11 CLIPBOARD that xclip writes.
-func pasteFromClipboard(win *render.Window, sess *ptyio.Session, shared *atomic.Pointer[screen.Screen]) {
+func pasteFromClipboard(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen]) {
 	text := readClipboard(win)
 	if text == "" {
 		return

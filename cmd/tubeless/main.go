@@ -61,6 +61,26 @@ const (
 
 type resizeReq struct{ cols, rows int }
 
+// sessionRef holds the live *ptyio.Session behind an atomic pointer.
+// wireInput/wireMouse register their GLFW callbacks once at startup and
+// close over this rather than a raw *ptyio.Session, so their writes keep
+// reaching whichever pty child is actually running even after
+// ptyCoordinator swaps in a fresh one — see its own doc comment on
+// respawning tmux after `tmux kill-server`.
+type sessionRef struct {
+	p atomic.Pointer[ptyio.Session]
+}
+
+func newSessionRef(sess *ptyio.Session) *sessionRef {
+	r := &sessionRef{}
+	r.p.Store(sess)
+	return r
+}
+
+func (r *sessionRef) Write(p []byte) (int, error) { return r.p.Load().Write(p) }
+func (r *sessionRef) Resize(cols, rows int) error { return r.p.Load().Resize(cols, rows) }
+func (r *sessionRef) Close() error                { return r.p.Load().Close() }
+
 // version is baked in at build time via -ldflags "-X main.version=..."
 // (see the Makefile's LDFLAGS) — "dev" for a plain `go build` outside it.
 var version = "dev"
@@ -159,20 +179,44 @@ func main() {
 	}
 
 	sess := startShell(*shell, cfg.Shell.UseTmux)
-	defer sess.Close()
+	ref := newSessionRef(sess)
+	defer ref.Close()
 	// log.Fatalf calls os.Exit internally, which would skip the deferred
-	// sess.Close() above and leak the already-spawned shell — every fatal
+	// ref.Close() above and leak the already-spawned shell — every fatal
 	// error from here on must close it explicitly first.
 	fatal := func(format string, args ...any) {
 		log.Printf(format, args...)
-		sess.Close()
+		ref.Close()
 		os.Exit(1)
+	}
+
+	// respawn is nil (never restart, just close) for an explicit --shell
+	// override or a plain non-tmux shell — the same gating shellCommand
+	// itself used to decide sess above. Non-nil, it's what ptyCoordinator
+	// calls when the pty's root process exits (e.g. `tmux kill-server`,
+	// or the last tmux session ending normally) to bring up a fresh tmux
+	// on tmuxSessionName instead of closing the window — see
+	// ptyCoordinator's own doc comment.
+	var respawn func(cols, rows int) (*ptyio.Session, bool)
+	if *shell == "" && cfg.Shell.UseTmux {
+		respawn = func(cols, rows int) (*ptyio.Session, bool) {
+			name, args, ok := tmuxCommand()
+			if !ok {
+				return nil, false
+			}
+			s, err := ptyio.Start(name, args, cols, rows)
+			if err != nil {
+				log.Printf("restart tmux: %v", err)
+				return nil, false
+			}
+			return s, true
+		}
 	}
 
 	var shared atomic.Pointer[screen.Screen]
 	resizeCh := make(chan resizeReq, 1)
 	shared.Store(screen.New(cols, rows))
-	go ptyCoordinator(sess, &shared, resizeCh, cfg.Scrollback.Lines, closeRequested)
+	go ptyCoordinator(ref, &shared, resizeCh, cfg.Scrollback.Lines, closeRequested, respawn)
 
 	winW := cols * (faces.Regular.CellWidth / effectiveScale) * windowScale
 	winH := rows * (faces.Regular.CellHeight / effectiveScale) * windowScale
@@ -238,9 +282,9 @@ func main() {
 
 	sel := &render.Selection{}
 	fontZoom := make(chan int, 16)
-	wireInput(win, sess, &shared, sel, fontZoom)
+	wireInput(win, ref, &shared, sel, fontZoom)
 	scroll := &scrollState{}
-	wireMouse(win, sess, &shared, scroll, cs, &cfgRef, sel)
+	wireMouse(win, ref, &shared, scroll, cs, &cfgRef, sel)
 
 	// focused tracks real window focus, read/written only from this
 	// locked OS thread (see runLoop's visibility gate) — no
@@ -502,19 +546,40 @@ func loadFontFaces(family string) font.FaceBytes {
 // requests — without either blocking the other: a resize while the shell
 // is idle (no PTY output pending) must still take effect immediately, not
 // wait for the next byte to arrive on a blocking Read.
-func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], resizeCh <-chan resizeReq, scrollbackLines int, closeRequested *atomic.Bool) {
+//
+// respawn is non-nil only when config.Shell.UseTmux launched into tmux
+// (see main's own gating on it, which built this closure) — when the
+// pty's root process exits (readCh's EOF below), respawn(cols, rows) is
+// tried before giving up: a `tmux kill-server`, or the last tmux session
+// ending normally, looks identical to ptyCoordinator (its child just
+// exited), so both bring up a fresh tmuxSessionName instead of closing
+// the window. respawn returning ok=false (tmux no longer on PATH) falls
+// through to the same close-the-window path a plain shell exiting always
+// took. ref is swapped to the new session so wireInput/wireMouse's
+// already-registered callbacks keep writing to whatever's now running.
+func ptyCoordinator(ref *sessionRef, shared *atomic.Pointer[screen.Screen], resizeCh <-chan resizeReq, scrollbackLines int, closeRequested *atomic.Bool, respawn func(cols, rows int) (*ptyio.Session, bool)) {
 	work := screen.New(cols, rows)
 	work.SetScrollbackCap(scrollbackLines)
 	handler := screen.NewHandler(work)
 	parser := vtparse.New(handler)
 
 	readCh := make(chan []byte)
-	go pumpPTYOutput(sess, readCh)
+	go pumpPTYOutput(ref.p.Load(), readCh)
 
 	for {
 		select {
 		case chunk, ok := <-readCh:
 			if !ok {
+				if respawn != nil {
+					if newSess, ok := respawn(work.Cols, work.Rows); ok {
+						ref.p.Store(newSess)
+						work.Reset()
+						shared.Store(work.Clone())
+						readCh = make(chan []byte)
+						go pumpPTYOutput(newSess, readCh)
+						continue
+					}
+				}
 				// The shell exited (pumpPTYOutput's read hit EOF and closed
 				// readCh) — without this, runLoop would never learn the
 				// shell is gone and the window would sit open forever with
@@ -540,7 +605,7 @@ func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], 
 			// back into the single complete frame it actually is.
 			drainPending(readCh, parser)
 			for _, resp := range work.DrainResponses() {
-				sess.Write(resp)
+				ref.Write(resp)
 			}
 			shared.Store(work.Clone())
 			work.ClearPendingClipboard()
@@ -549,7 +614,7 @@ func ptyCoordinator(sess *ptyio.Session, shared *atomic.Pointer[screen.Screen], 
 				continue
 			}
 			work.Resize(req.cols, req.rows)
-			if err := sess.Resize(req.cols, req.rows); err != nil {
+			if err := ref.Resize(req.cols, req.rows); err != nil {
 				log.Printf("pty resize: %v", err)
 			}
 			shared.Store(work.Clone())
