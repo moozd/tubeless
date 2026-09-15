@@ -53,7 +53,20 @@ type Config struct {
 	Contrast      Contrast   `toml:"contrast"`
 	Scrollback    Scrollback `toml:"scrollback"`
 	Scrolling     Scrolling  `toml:"scrolling"`
+	Shell         Shell      `toml:"shell"`
 	CRT           CRT        `toml:"crt"`
+}
+
+// Shell controls how the pty's child process is launched. Lives on the
+// config TUI's "experimental" tab, like Scrolling.
+type Shell struct {
+	// UseTmux launches into a fixed tmux session named "home" (attaching
+	// if it already exists, creating it otherwise — see cmd/tubeless's
+	// tmuxCommand) instead of a plain login shell. Only takes effect on
+	// the $SHELL auto-detect path (an explicit --shell override always
+	// wins) and only when tmux is actually on PATH; falls back to the
+	// plain shell otherwise.
+	UseTmux bool `toml:"use_tmux"`
 }
 
 // Scrolling controls scroll-related behavior beyond the raw scrollback

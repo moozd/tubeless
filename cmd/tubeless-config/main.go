@@ -669,6 +669,7 @@ func (u *ui) resetPreset() {
 		u.status = "reset to " + name + " preset"
 	case 2:
 		u.cfg.Scrolling = config.Scrolling{}
+		u.cfg.Shell = config.Shell{}
 		u.status = "reset experimental settings"
 	default:
 		name := u.cfg.Theme
@@ -1041,6 +1042,12 @@ func (u *ui) buildExperimentalList() []panelRow {
 		"glide detected scroll shifts (vertical and horizontal) instead of snapping; a heuristic diff still being hardened against real-world editor/TUI output — disable if it wobbles or drags a status bar on some particular app",
 		func(c *config.Config) bool { return c.Scrolling.SmoothContentShift },
 		func(c *config.Config, v bool) { c.Scrolling.SmoothContentShift = v }))
+
+	section("shell")
+	add(newToggle("shell.use_tmux", "use tmux",
+		"launch into a persistent tmux session named \"home\" (attaching if it's already running) instead of a plain login shell; only applies when tmux is actually installed and no --shell override is passed, otherwise falls back to the plain shell",
+		func(c *config.Config) bool { return c.Shell.UseTmux },
+		func(c *config.Config, v bool) { c.Shell.UseTmux = v }))
 
 	return list
 }

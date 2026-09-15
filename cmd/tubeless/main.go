@@ -158,7 +158,7 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	sess := startShell(*shell)
+	sess := startShell(*shell, cfg.Shell.UseTmux)
 	defer sess.Close()
 	// log.Fatalf calls os.Exit internally, which would skip the deferred
 	// sess.Close() above and leak the already-spawned shell — every fatal
@@ -655,19 +655,8 @@ func pushResizeSize(resizeCh chan resizeReq, cs *cellSize, w, h int, ar config.A
 	}
 }
 
-func startShell(shell string) *ptyio.Session {
-	name := shell
-	// -l (login shell) only for the $SHELL auto-detect path: it's what
-	// every other terminal emulator does by default (Terminal.app, iTerm,
-	// kitty, Alacritty) so .zprofile/.bash_profile PATH setup actually
-	// runs, but an explicit --shell override (e.g. tektest for run-green)
-	// gets exactly the program named, no injected flag it may not accept.
-	args := []string{"-l"}
-	if name == "" {
-		name = os.Getenv("SHELL")
-	} else {
-		args = nil
-	}
+func startShell(shell string, useTmux bool) *ptyio.Session {
+	name, args := shellCommand(shell, useTmux)
 	if name == "" {
 		name = "/bin/sh"
 	}
@@ -676,6 +665,42 @@ func startShell(shell string) *ptyio.Session {
 		log.Fatalf("start shell: %v", err)
 	}
 	return sess
+}
+
+// shellCommand resolves the program+args startShell should launch. An
+// explicit --shell override (e.g. tektest for run-green) always wins and
+// gets exactly the program named, no injected flag it may not accept.
+// Otherwise, when useTmux is on and tmux is actually installed, it wins
+// over the plain shell. The plain $SHELL path gets -l (login shell) so
+// .zprofile/.bash_profile PATH setup runs, matching every other terminal
+// emulator's default (Terminal.app, iTerm, kitty, Alacritty).
+func shellCommand(shell string, useTmux bool) (string, []string) {
+	if shell != "" {
+		return shell, nil
+	}
+	if useTmux {
+		if name, args, ok := tmuxCommand(); ok {
+			return name, args
+		}
+	}
+	return os.Getenv("SHELL"), []string{"-l"}
+}
+
+// tmuxSessionName is the fixed session config.Shell.UseTmux always
+// attaches to or creates — one persistent session per machine, not a
+// fresh one per window.
+const tmuxSessionName = "home"
+
+// tmuxCommand resolves the tmux invocation for tmuxSessionName, or
+// ok=false if tmux isn't on PATH (shellCommand falls back to the plain
+// shell in that case). `new-session -A -s` attaches if the session
+// already exists and creates it otherwise, in one atomic step.
+func tmuxCommand() (name string, args []string, ok bool) {
+	path, err := exec.LookPath("tmux")
+	if err != nil {
+		return "", nil, false
+	}
+	return path, []string{"new-session", "-A", "-s", tmuxSessionName}, true
 }
 
 // pumpPTYOutput only ever reads and forwards — it never touches Screen —
