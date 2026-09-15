@@ -34,6 +34,17 @@ if [ ! -e "$SRC" ]; then
 	exit 0
 fi
 
+# actool needs full Xcode, not just the Command Line Tools, so most
+# install targets won't have it — that's fine as long as OUT_DIR already
+# holds a build committed from a machine that does. Check before
+# touching OUT_DIR: rm -rf'ing it first and then failing on a missing
+# actool would destroy that committed fallback for nothing.
+if ! command -v xcrun >/dev/null 2>&1 || ! xcrun -f actool >/dev/null 2>&1; then
+	echo "note: actool not found (needs full Xcode 26, not just Command Line Tools) — skipping rebuild." >&2
+	echo "      Reusing the committed $OUT_DIR/Assets.car; rebuild it on a machine with Xcode 26 if $SRC changed." >&2
+	exit 0
+fi
+
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 xcrun actool "$SRC" \
