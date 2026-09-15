@@ -44,8 +44,9 @@ actual Mac — it can't be cross-compiled from Linux.
 
 ```sh
 make build            # tubeless, tubeless-config, tektest -> bin/
-make install           # Linux: install to ~/.local (override with PREFIX=)
-make install-darwin     # macOS: install Tubeless.app + symlink onto PATH
+make install           # detects the OS and installs (Linux: ~/.local,
+                        # override with PREFIX=; macOS: Tubeless.app +
+                        # symlink onto PATH)
 ```
 
 Run `make help` for every target, including `package-linux`/

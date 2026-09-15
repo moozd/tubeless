@@ -1,6 +1,11 @@
 .PHONY: build build-x11 tubeless tubeless-config tektest tubeless-icons test clean \
-        install uninstall install-darwin uninstall-darwin help \
+        install uninstall install-linux uninstall-linux install-darwin uninstall-darwin help \
         run-green run-amber run-config run-icons package-linux package-darwin
+
+# UNAME_S picks which per-OS target `make install`/`make uninstall`
+# dispatch to — Linux vs. Darwin are the only two this repo packages for
+# (see package-linux/package-darwin below).
+UNAME_S := $(shell uname -s)
 
 BINARY_NAME=tubeless
 BIN_DIR=bin
@@ -42,11 +47,15 @@ help:
 	@echo "  make run-config     - Run 'tubeless config' (the in-terminal settings UI)"
 	@echo "  make run-icons      - Build and run the glyph/icon coverage previewer"
 	@echo "  make test           - Run tests"
-	@echo "  make install        - Linux: build + install tubeless/tubeless-config,"
+	@echo "  make install        - Detects the host OS (\$$(uname -s)) and runs"
+	@echo "                        install-linux or install-darwin for it."
+	@echo "  make uninstall      - Detects the host OS and runs uninstall-linux"
+	@echo "                        or uninstall-darwin for it."
+	@echo "  make install-linux  - build + install tubeless/tubeless-config,"
 	@echo "                        a .desktop entry, and an icon to \$$PREFIX"
 	@echo "                        (default $(PREFIX); override for a system-wide"
-	@echo "                        install, e.g. \`sudo make install PREFIX=/usr/local\`)"
-	@echo "  make uninstall      - Remove exactly what 'make install' placed."
+	@echo "                        install, e.g. \`sudo make install-linux PREFIX=/usr/local\`)"
+	@echo "  make uninstall-linux - Remove exactly what 'make install-linux' placed."
 	@echo "                        Never touches ~/.config/tubeless/config.toml."
 	@echo "  make install-darwin - macOS only, run on an actual Mac (GLFW's Cocoa"
 	@echo "                        backend can't be cross-compiled from Linux):"
@@ -111,12 +120,30 @@ run-icons: tubeless-icons
 test:
 	go test -v ./...
 
-# install is Linux-only (desktop entries and the XDG icon theme directory
-# layout are Linux/freedesktop conventions) — see install-darwin for
-# macOS. tektest is deliberately excluded: it's a dev-only VT test-pattern
-# generator (see run-green/run-amber above), not something a system
-# install should ship.
-install: tubeless tubeless-config
+# install dispatches to whichever per-OS target matches the host, so
+# `make install` alone is the one command that works everywhere — no more
+# remembering to type install-darwin on a Mac.
+install:
+ifeq ($(UNAME_S),Darwin)
+	@$(MAKE) install-darwin
+else
+	@$(MAKE) install-linux
+endif
+
+# uninstall mirrors install's OS dispatch above.
+uninstall:
+ifeq ($(UNAME_S),Darwin)
+	@$(MAKE) uninstall-darwin
+else
+	@$(MAKE) uninstall-linux
+endif
+
+# install-linux is Linux-only (desktop entries and the XDG icon theme
+# directory layout are Linux/freedesktop conventions) — see install-darwin
+# for macOS. tektest is deliberately excluded: it's a dev-only VT
+# test-pattern generator (see run-green/run-amber above), not something a
+# system install should ship.
+install-linux: tubeless tubeless-config
 	@mkdir -p $(BIN_INSTALL_DIR) $(DESKTOP_DIR) $(ICON_DIR)
 	cp $(BIN_DIR)/$(BINARY_NAME) $(BIN_INSTALL_DIR)/
 	cp $(BIN_DIR)/tubeless-config $(BIN_INSTALL_DIR)/
@@ -132,7 +159,7 @@ install: tubeless tubeless-config
 	@echo "Installed desktop entry to $(DESKTOP_DIR)/tubeless.desktop"
 	@echo "Your config at ~/.config/tubeless/config.toml is untouched."
 
-uninstall:
+uninstall-linux:
 	rm -f $(BIN_INSTALL_DIR)/$(BINARY_NAME) $(BIN_INSTALL_DIR)/tubeless-config
 	rm -f $(DESKTOP_DIR)/tubeless.desktop
 	rm -f $(ICON_DIR)/tubeless.svg
