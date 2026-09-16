@@ -50,7 +50,7 @@ void main() {
 	// slope is steepest. Needs a noticeably thinner base thickness than
 	// even plain underline to end up looking thin once drawn.
 	if (vStyle == STYLE_CURLY) {
-		thicknessPx = max(1.0, chPx * 0.045);
+		thicknessPx = max(1.0, chPx * 0.032);
 	}
 	float thickness = thicknessPx / chPx;
 	float halfBand = thickness * 0.6;
@@ -64,17 +64,30 @@ void main() {
 		float a2 = 1.0 - smoothstep(halfBand * 0.7, halfBand, d2);
 		alpha = max(a1, a2);
 	} else if (vStyle == STYLE_CURLY) {
-		float cycles = 1.5; // wave periods per cell width
+		// Wavelength in screen pixels, not cell widths: tying the wave's
+		// period to cellW (an earlier version used 1.5, then 1.0, cycles
+		// per cell) meant it got tighter every time the font got smaller,
+		// and at ordinary text sizes (cellW around 10px) even 1 cycle per
+		// cell is under 10px per full wave — too few pixels for the eye
+		// to read as a curve rather than a tight saw-tooth, no matter how
+		// good the antialiasing is. A fixed pixel wavelength instead
+		// always gets enough pixels per cycle to look like an actual
+		// smooth, slow curl, at any font size.
+		float wavelengthPx = 18.0;
 		float amp = thickness * 1.3;
 		float twoPi = 6.2831853;
-		// Plain sine, same amplitude and phase in every cell — x=0 and
-		// x=1 both sit on the baseline, so adjacent cells' curls meet
-		// without a seam and the wave reads as one smooth, continuous
-		// curve rather than a string of separately-drawn humps. A second
-		// harmonic was tried here to fake a hand-drawn wobble, but it
-		// pinches the peaks into points instead of keeping them round —
-		// reads as jagged, not smooth, so it's gone.
-		float wave = baseline + amp * sin(vLocal.x * cycles * twoPi);
+		// globalX is this pixel's distance, in screen pixels, from the
+		// start of the underlined run — vCellPos.x (this cell's own pixel
+		// origin) plus how far across the cell vLocal.x is. Phasing off a
+		// continuous screen-space coordinate rather than each cell's own
+		// 0..1 span is what makes the wave connect seamlessly across
+		// cells automatically, without needing the period itself to hit
+		// a special value that happens to land back on the baseline at
+		// x=1. A second harmonic was tried here to fake a hand-drawn
+		// wobble, but it pinches the peaks into points instead of keeping
+		// them round — reads as jagged, not smooth, so it's gone.
+		float globalX = vCellPos.x + vLocal.x * cwPx;
+		float wave = baseline + amp * sin(globalX / wavelengthPx * twoPi);
 		// Signed distance from the band's edge (negative = inside), anti-
 		// aliased with fwidth — the screen-space rate of change of that
 		// distance — rather than a fixed fraction of halfBand. A fixed
