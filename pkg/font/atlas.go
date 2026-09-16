@@ -656,18 +656,21 @@ func scaleCoverage(pix []byte, w, h int, scale float64) (out []byte, ow, oh int)
 	return resizeCoverage(pix, w, h, max(1, int(float64(w)*scale)), max(1, int(float64(h)*scale)))
 }
 
-// resizeCoverage box-filters a single-channel coverage bitmap from w x h
-// to ow x oh — independently on each axis, so a width-only squeeze (ow <
-// w, oh == h) is exactly as valid a call as a uniform shrink —
-// area-averaging each output texel's source region. A straight
-// nearest/point resample would just re-introduce aliasing on the very
-// edges this exists to clean up. Growing a dimension (fitPrivateUse's
-// upscale case) degrades to nearest-neighbor there, srcRange's spans
-// having nothing left to average — soft, not sharp, but this only ever
-// runs on already-antialiased icon coverage that a later mipmap
-// minification pass smooths further, not on crisp text edges.
+// resizeCoverage resamples a single-channel coverage bitmap from w x h to
+// ow x oh — independently on each axis, so a width-only squeeze (ow < w,
+// oh == h) is exactly as valid a call as a uniform shrink. Shrinking
+// (either axis) area-averages each output texel's source region — a
+// straight nearest/point resample would just re-introduce aliasing on the
+// very edges this exists to clean up. Growing a dimension (fitPrivateUse's
+// undersized-icon upscale case) instead bilinearly interpolates, since
+// srcRange's box-filter spans have nothing left to average there and
+// degrade to a blocky nearest-neighbor stair-step — visibly pixelated on
+// an icon upscaled ~1.6x, unlike the box-filter shrink path.
 func resizeCoverage(pix []byte, w, h, ow, oh int) (out []byte, outW, outH int) {
 	ow, oh = max(1, ow), max(1, oh)
+	if ow > w || oh > h {
+		return bilinearResizeCoverage(pix, w, h, ow, oh)
+	}
 	out = make([]byte, ow*oh)
 	for oy := range oh {
 		sy0, sy1 := srcRange(oy, oh, h)
@@ -686,6 +689,46 @@ func resizeCoverage(pix []byte, w, h, ow, oh int) (out []byte, outW, outH int) {
 		}
 	}
 	return out, ow, oh
+}
+
+// bilinearResizeCoverage upscales a single-channel coverage bitmap from
+// w x h to ow x oh (either or both axes growing) by sampling each output
+// texel's pixel-center position back in source space and blending its
+// four nearest source texels — smooth growth instead of resizeCoverage's
+// box-filter, which has nothing to average when a dimension grows.
+func bilinearResizeCoverage(pix []byte, w, h, ow, oh int) (out []byte, outW, outH int) {
+	outW, outH = max(1, ow), max(1, oh)
+	out = make([]byte, outW*outH)
+	sx, sy := float64(w)/float64(outW), float64(h)/float64(outH)
+	for oy := range outH {
+		fy := (float64(oy)+0.5)*sy - 0.5
+		y0 := int(math.Floor(fy))
+		ty := fy - float64(y0)
+		y0c, y1c := clampInt(y0, 0, h-1), clampInt(y0+1, 0, h-1)
+		for ox := range outW {
+			fx := (float64(ox)+0.5)*sx - 0.5
+			x0 := int(math.Floor(fx))
+			tx := fx - float64(x0)
+			x0c, x1c := clampInt(x0, 0, w-1), clampInt(x0+1, 0, w-1)
+			v00, v10 := float64(pix[y0c*w+x0c]), float64(pix[y0c*w+x1c])
+			v01, v11 := float64(pix[y1c*w+x0c]), float64(pix[y1c*w+x1c])
+			top := v00 + (v10-v00)*tx
+			bot := v01 + (v11-v01)*tx
+			out[oy*outW+ox] = clampByte(top + (bot-top)*ty)
+		}
+	}
+	return out, outW, outH
+}
+
+// clampInt clamps v to [lo, hi].
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // srcRange maps output index i (of n) back to the [start,end) span of
