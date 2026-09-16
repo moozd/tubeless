@@ -20,11 +20,19 @@ void main() {
 	float sliceLen = 1.0 / uSigLen;
 	vec3 sum = vec3(0.0);
 	if (uAxis < 0.5) {
+		// cell_rect.vert/cell_glyph.vert negate NDC y so grid row 0 lands
+		// at the top of the window — meaning row 0 is rendered at the
+		// framebuffer's OpenGL-convention top, i.e. vUV.y close to 1, not
+		// 0. Undoing that here (1.0 - vUV.y) is what makes output row
+		// `oy` actually correspond to grid row `oy`; without it every row
+		// signature is read from its mirror position, and detectShift
+		// ends up comparing entirely the wrong pairs of rows.
+		float srcY = 1.0 - vUV.y;
 		float sliceStart = vUV.x - 0.5 * sliceLen;
 		for (float i = 0.0; i < 64.0; i += 1.0) {
 			if (i >= uTaps) break;
 			float u = sliceStart + (i + 0.5) / uTaps * sliceLen;
-			sum += texture(uScene, vec2(u, vUV.y)).rgb;
+			sum += texture(uScene, vec2(u, srcY)).rgb;
 		}
 	} else {
 		float sliceStart = vUV.y - 0.5 * sliceLen;
