@@ -418,6 +418,20 @@ func sameDims(prev, next *Screen) bool {
 // maxDiff (see fuzzyRowMaxDiff/fuzzyColMaxDiff's doc for why this is a
 // fixed count, not a percentage).
 //
+// Neither tier's match is taken at face value, though: both only ever
+// check whether line y resembles line y+k in the other frame, never
+// whether y also resembles ITSELF at k=0. A short, mostly blank-padded
+// line sharing a generic layout with other lines (a statusline) can
+// clear tier 1's aux threshold or tier 2's fuzzy threshold against some
+// unrelated line k rows away by coincidence, even though its real
+// signature is "barely changed from last frame, at the same row." So a
+// tier 1 or tier 2 match is only honored when selfHashMatch(y) — an
+// exact hash match against itself, see its doc for why this is
+// stricter than unshiftedMatch's own aux/affixGap fallbacks — is false:
+// self-similarity takes priority over shifted-similarity; a line that
+// matches itself is left unmatched here and falls out of the band via
+// edge-trimming, the same as a fixed header/footer.
+//
 // The matched band is then trimmed to its contiguous core (dropping
 // leading/trailing non-matching lines from either edge) so a fixed
 // header/footer/gutter sitting at an edge of the candidate band doesn't
@@ -507,6 +521,72 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 		return 0, 0, 0, false
 	}
 
+	// selfHashMatch reports whether line y's content in next EXACTLY
+	// matches its own content in prev AT THE SAME INDEX (k=0, not the
+	// candidate shift) — the strongest, narrowest half of unshiftedMatch
+	// below, without its aux (skip-prefix) leg or its lenient affixGap
+	// fallback. Used as classification-time precedence: a short, mostly
+	// blank-padded line sharing a generic layout with other lines (a
+	// statusline) can clear tier 1's aux threshold or tier 2's fuzzy
+	// threshold against some unrelated line k rows away by coincidence,
+	// even though its real signature is "unchanged from last frame, at
+	// the same row." A full hash match is unambiguous evidence of
+	// exactly that, worth overriding a shifted match for.
+	//
+	// Deliberately NOT the aux leg or affixGap here, unlike
+	// unshiftedMatch: both exist to tolerate a small, fixed-width
+	// difference near the start of an otherwise-unchanged line (a
+	// gutter, a ruler/position indicator) — the right leniency when the
+	// question is "unchanged fixed line vs. brand-new revealed content
+	// with no relationship at all to whatever was at that index."  It's
+	// the wrong leniency here: ordinary shifted content that merely
+	// shares a template (line numbers, timestamps — anything differing
+	// from its own k=0 position by only a few characters early in the
+	// line, inside the aux skip width) clears that same tolerance just
+	// as easily, and treating that as self-similarity would wrongly veto
+	// genuine, tier-1-exact shifted matches on exactly the templated
+	// content this detector exists to follow.
+	selfHashMatch := func(y int) bool {
+		return afterHash[y] == beforeHash[y] ||
+			(afterHash[y] == blank && beforeHash[y] == blank)
+	}
+
+	// unshiftedMatch reports whether line y's content in next basically
+	// matches its own content in prev AT THE SAME INDEX (k=0, not the
+	// candidate shift) — the signature of a fixed line that doesn't
+	// scroll at all (a status bar, a command line) rather than content
+	// the shift genuinely revealed. A real newly-revealed line has no
+	// meaningful relationship to whatever prev happened to show at that
+	// same row/column index, so this is false for it; a status bar
+	// showing the same layout with only a cursor-position counter
+	// ticking over is barely different from itself frame to frame, so
+	// this is true for it. See its use in the extension switch below —
+	// classification-time precedence uses the stricter selfHashMatch
+	// above instead; see its doc for why the affixGap fallback here
+	// isn't safe to reuse for that purpose.
+	//
+	// The final fallback checks affixGap — the width of content BETWEEN
+	// the longest common prefix and longest common suffix — rather than
+	// a raw mismatch count (an earlier version of this check did exactly
+	// that, and a real status bar's position/percentage indicator turned
+	// out to routinely change by MORE characters than a piece of
+	// genuinely new, unrelated content sometimes does: "39,0-1  0%" ->
+	// "40,1  1%" is 6 raw mismatches, while a real "this row is now
+	// something else entirely" case in this file's own tests is only 7
+	// — no fixed count cleanly separates them). A real status bar keeps
+	// its surrounding layout (filename, padding) byte-identical and only
+	// changes a narrow span somewhere in the middle or at one edge;
+	// genuinely unrelated content typically shares no meaningful prefix
+	// OR suffix with whatever used to be at that row/column at all. That
+	// structural difference — not the raw size of the change — is what
+	// actually distinguishes them.
+	unshiftedMatch := func(y int) bool {
+		if selfHashMatch(y) {
+			return true
+		}
+		return affixGap(y, y) <= maxChangedSpan
+	}
+
 	// Tier 2: classify every line in the winning band as matching
 	// (tier-1 exact or aux, or tier-2 fuzzy) or not. informative marks a
 	// line as carrying real evidence either way — false for a
@@ -514,7 +594,14 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 	// which counts toward a match or a mismatch below (see detectShift's
 	// doc). tier1 marks a match as coming from an exact/aux hash rather
 	// than tier 2's fuzzy fallback — see the tier1Count check below for
-	// why this is tracked separately.
+	// why this is tracked separately. Either kind of match is rejected,
+	// regardless of how well it clears its own threshold, when
+	// selfHashMatch(y) is also true: self-similarity takes priority over
+	// shifted-similarity, so such a line is left unmatched here and
+	// falls out of the band via the edge-trim logic below, exactly like
+	// a fixed header/footer. selfHashMatch, not the more lenient
+	// unshiftedMatch, is deliberately used here — see selfHashMatch's
+	// doc for why.
 	matching := make([]bool, bestHi-bestLo+1)
 	informative := make([]bool, bestHi-bestLo+1)
 	tier1 := make([]bool, bestHi-bestLo+1)
@@ -529,6 +616,9 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 			continue
 		}
 		informative[i] = true
+		if selfHashMatch(y) {
+			continue
+		}
 		auxMatch := auxAfterHash[y] == auxBeforeHash[y+bestK] &&
 			!(auxAfterHash[y] == auxBlank && auxBeforeHash[y+bestK] == auxBlank)
 		if afterHash[y] == beforeHash[y+bestK] || auxMatch {
@@ -596,46 +686,6 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 	}
 
 	finalLo, finalHi := bestLo+start, bestLo+end
-	// unshiftedMatch reports whether line y's content in next basically
-	// matches its own content in prev AT THE SAME INDEX (k=0, not the
-	// candidate shift) — the signature of a fixed line that doesn't
-	// scroll at all (a status bar, a command line) rather than content
-	// the shift genuinely revealed. A real newly-revealed line has no
-	// meaningful relationship to whatever prev happened to show at that
-	// same row/column index, so this is false for it; a status bar
-	// showing the same layout with only a cursor-position counter
-	// ticking over is barely different from itself frame to frame, so
-	// this is true for it. See its use in the extension switch below.
-	//
-	// The final fallback checks affixGap — the width of content BETWEEN
-	// the longest common prefix and longest common suffix — rather than
-	// a raw mismatch count (an earlier version of this check did exactly
-	// that, and a real status bar's position/percentage indicator turned
-	// out to routinely change by MORE characters than a piece of
-	// genuinely new, unrelated content sometimes does: "39,0-1  0%" ->
-	// "40,1  1%" is 6 raw mismatches, while a real "this row is now
-	// something else entirely" case in this file's own tests is only 7
-	// — no fixed count cleanly separates them). A real status bar keeps
-	// its surrounding layout (filename, padding) byte-identical and only
-	// changes a narrow span somewhere in the middle or at one edge;
-	// genuinely unrelated content typically shares no meaningful prefix
-	// OR suffix with whatever used to be at that row/column at all. That
-	// structural difference — not the raw size of the change — is what
-	// actually distinguishes them.
-	unshiftedMatch := func(y int) bool {
-		if afterHash[y] == beforeHash[y] {
-			return true
-		}
-		if afterHash[y] == blank && beforeHash[y] == blank {
-			return true
-		}
-		auxMatch := auxAfterHash[y] == auxBeforeHash[y] &&
-			!(auxAfterHash[y] == auxBlank && auxBeforeHash[y] == auxBlank)
-		if auxMatch {
-			return true
-		}
-		return affixGap(y, y) <= maxChangedSpan
-	}
 	// Extend the reported band out to cover brand-new lines the shift
 	// itself revealed at an edge — lines with no counterpart in the
 	// previous grid at all (never inside the overlap range to begin
