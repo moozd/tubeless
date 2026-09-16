@@ -6,11 +6,10 @@
     {
       "layers" : [
         {
-          "blend-mode" : "lighten",
-          "image-name" : "icon.svg",
-          "name" : "icon",
+          "image-name" : "icon 2.svg",
+          "name" : "icon 2",
           "position" : {
-            "scale" : 4.6,
+            "scale" : 4.5,
             "translation-in-points" : [
               0,
               0
@@ -29,9 +28,8 @@
     }
   ],
   "supported-platforms" : {
-    "circles" : [
-      "watchOS"
-    ],
-    "squares" : "shared"
+    "squares" : [
+      "macOS"
+    ]
   }
 }
