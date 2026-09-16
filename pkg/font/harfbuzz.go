@@ -25,6 +25,8 @@ package font
 */
 import "C"
 
+import "unsafe"
+
 // hbShaper shapes candidate rune sequences through one font's own real
 // OpenType layout engine. Kept open across many shapeCollapsesToOne
 // calls (see ligatures.go's discoverLigatures, which calls it tens of
@@ -81,4 +83,46 @@ func (s *hbShaper) shapeCollapsesToOne(runes []rune) (gid uint32, ok bool) {
 	}
 	info := *C.hb_buffer_get_glyph_infos(s.buffer, nil)
 	return uint32(info.codepoint), true
+}
+
+// shapeSequence shapes runes under the same fixed Latin/LTR context as
+// shapeCollapsesToOne and reports one glyph ID per input rune, in
+// order. Unlike shapeCollapsesToOne (which looks for the whole sequence
+// merging into a single glyph — a real but less common ligature style),
+// this is for fonts that keep one glyph per character and instead
+// reshape each one contextually so adjacent glyphs visually connect —
+// how FiraCode, Cascadia Code, and JetBrains Mono actually implement
+// their arrow/comparison ligatures, verified by shaping "<-" through
+// each and finding both glyph IDs change from their isolated-context
+// ones while the glyph count stays 2, never collapsing to 1 (see
+// ligatures.go's discoverLigatures, which is what actually decides
+// whether a same-count reshape is a real ligature rule vs. no-op
+// identity shaping). ok is false whenever the shaped result doesn't
+// have exactly len(runes) glyphs, or HarfBuzz reordered/merged clusters
+// (rare for punctuation-heavy Latin text, but this must not silently
+// mis-map a glyph to the wrong input position if it ever happens).
+func (s *hbShaper) shapeSequence(runes []rune) (gids []uint32, ok bool) {
+	C.hb_buffer_reset(s.buffer)
+	cps := make([]C.uint32_t, len(runes))
+	for i, r := range runes {
+		cps[i] = C.uint32_t(r)
+	}
+	C.hb_buffer_add_utf32(s.buffer, &cps[0], C.int(len(cps)), 0, C.int(len(cps)))
+	C.hb_buffer_set_direction(s.buffer, C.HB_DIRECTION_LTR)
+	C.hb_buffer_set_script(s.buffer, C.HB_SCRIPT_LATIN)
+	C.hb_shape(s.font, s.buffer, nil, 0)
+
+	n := int(C.hb_buffer_get_length(s.buffer))
+	if n != len(runes) {
+		return nil, false
+	}
+	infos := unsafe.Slice(C.hb_buffer_get_glyph_infos(s.buffer, nil), n)
+	gids = make([]uint32, n)
+	for i, info := range infos {
+		if int(info.cluster) != i {
+			return nil, false
+		}
+		gids[i] = uint32(info.codepoint)
+	}
+	return gids, true
 }
