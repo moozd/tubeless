@@ -163,7 +163,7 @@ type Colors struct {
 type Surface struct {
 	Radius   float32 `toml:"radius"`   // corner radius in pixels
 	Gradient float32 `toml:"gradient"` // 0..1 top-lit/bottom-shaded sheen, from the block's own color
-	Shadow   float32 `toml:"shadow"`   // 0..1 drop shadow cast down-right, from the casting block's own color
+	Shadow   float32 `toml:"shadow"`   // 0..1 soft layered drop shadow cast down-right, matching the block's rounded corners
 }
 
 // Blur controls image-space bloom over the rounded block/border surface.

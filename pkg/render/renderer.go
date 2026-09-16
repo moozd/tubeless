@@ -27,7 +27,8 @@ type Loading struct {
 //	-> bg fills + block glyphs (literal cells)            -> effectFBO
 //	-> box-drawing/powerline glyphs (literal glyphs)       -> effectFBO
 //	-> fragment-space surface radius                      -> surfaceFBO
-//	-> optional bloom over surfaceFBO                      -> sceneFBO
+//	-> optional dreamy drop shadow over surfaceFBO's rounded shape -> shadowFBO
+//	-> optional bloom over surfaceFBO/shadowFBO             -> sceneFBO
 //	-> sixel images                                       -> sceneFBO
 //	-> underline decorations                              -> sceneFBO
 //	-> text glyphs                                        -> sceneFBO
@@ -44,6 +45,7 @@ type Renderer struct {
 	imagePass   *ImagePass
 	blurPass    *BlurPass
 	surfacePass *SurfacePass
+	shadowPass  *ShadowPass
 	copyPass    *CopyPass
 	cursorPass  *CursorPass
 	insetPass   *InsetPass
@@ -51,6 +53,7 @@ type Renderer struct {
 	overlayPass *OverlayPass
 	effectFBO   *FBO
 	surfaceFBO  *FBO
+	shadowFBO   *FBO
 	blurFBO     *FBO
 	sceneFBO    *FBO
 	cursorFBO   *FBO
@@ -184,6 +187,10 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("surface pass: %w", err)
 	}
+	shadowPass, err := NewShadowPass()
+	if err != nil {
+		return nil, fmt.Errorf("shadow pass: %w", err)
+	}
 	copyPass, err := NewCopyPass()
 	if err != nil {
 		return nil, fmt.Errorf("copy pass: %w", err)
@@ -209,6 +216,7 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 		imagePass:   imagePass,
 		blurPass:    blurPass,
 		surfacePass: surfacePass,
+		shadowPass:  shadowPass,
 		copyPass:    copyPass,
 		cursorPass:  cursorPass,
 		insetPass:   insetPass,
@@ -216,6 +224,7 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 		overlayPass: overlayPass,
 		effectFBO:   newSRGBFBO(2, 2),
 		surfaceFBO:  newSRGBFBO(2, 2),
+		shadowFBO:   newSRGBFBO(2, 2),
 		blurFBO:     newSRGBFBO(2, 2),
 		sceneFBO:    newSRGBFBO(2, 2),
 		cursorFBO:   newSRGBFBO(2, 2),
@@ -268,9 +277,13 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	r.cellPass.DrawLineArt(effect, cellW, cellH)
 
 	surfaceTex := effect.tex
-	if cfg.Surface.Radius > 0.01 || cfg.Surface.Gradient > 0.001 || cfg.Surface.Shadow > 0.001 {
-		r.surfacePass.Draw(effect, r.surfaceFBO, cfg.Surface.Radius, cfg.Surface.Gradient, cfg.Surface.Shadow)
+	if cfg.Surface.Radius > 0.01 || cfg.Surface.Gradient > 0.001 {
+		r.surfacePass.Draw(effect, r.surfaceFBO, cfg.Surface.Radius, cfg.Surface.Gradient)
 		surfaceTex = r.surfaceFBO.tex
+	}
+	if cfg.Surface.Shadow > 0.001 {
+		r.shadowPass.Draw(surfaceTex, r.shadowFBO, outW, outH, cfg.Surface.Shadow)
+		surfaceTex = r.shadowFBO.tex
 	}
 	r.copyPass.DrawOver(surfaceTex, scene, outW, outH)
 

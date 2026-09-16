@@ -21,7 +21,7 @@ func NewSurfacePass() (*SurfacePass, error) {
 	return &SurfacePass{prog: prog, vao: newFullscreenQuadVAO()}, nil
 }
 
-func (s *SurfacePass) Draw(src, dst *FBO, radius, gradient, shadow float32) {
+func (s *SurfacePass) Draw(src, dst *FBO, radius, gradient float32) {
 	dst.Resize(src.W, src.H)
 	dst.Bind()
 	gl.UseProgram(s.prog)
@@ -32,7 +32,6 @@ func (s *SurfacePass) Draw(src, dst *FBO, radius, gradient, shadow float32) {
 	gl.Uniform2f(u("uTexel"), 1.0/float32(src.W), 1.0/float32(src.H))
 	gl.Uniform1f(u("uRadius"), radius)
 	gl.Uniform1f(u("uGradient"), gradient)
-	gl.Uniform1f(u("uShadow"), shadow)
 	gl.BindVertexArray(s.vao)
 	gl.DrawArrays(gl.TRIANGLES, 0, 6)
 	gl.BindVertexArray(0)

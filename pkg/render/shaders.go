@@ -35,6 +35,9 @@ var shapeBlurFragSrc string
 //go:embed assets/shaders/surface.frag
 var surfaceFragSrc string
 
+//go:embed assets/shaders/shadow.frag
+var shadowFragSrc string
+
 //go:embed assets/shaders/copy.frag
 var copyFragSrc string
 

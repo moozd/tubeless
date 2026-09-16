@@ -830,7 +830,7 @@ func (u *ui) buildPresetsList() []panelRow {
 	add(asEffect(newSlider("surface.gradient", "gradient sheen", "top-lit/bottom-shaded gradient over each block, from its own color", "", 2, 0.01, 0, 1,
 		func(c *config.Config) float64 { return float64(c.Surface.Gradient) },
 		func(c *config.Config, v float64) { c.Surface.Gradient = float32(v) })))
-	add(asEffect(newSlider("surface.shadow", "drop shadow", "soft shadow cast down-right of each block, from its own color", "", 2, 0.01, 0, 1,
+	add(asEffect(newSlider("surface.shadow", "drop shadow", "soft layered shadow cast down-right of each block, matching its rounded corners", "", 2, 0.01, 0, 1,
 		func(c *config.Config) float64 { return float64(c.Surface.Shadow) },
 		func(c *config.Config, v float64) { c.Surface.Shadow = float32(v) })))
 
