@@ -693,6 +693,14 @@ func (u *ui) dirty() {
 
 // cycleName steps current by d through names, wrapping — the shared step
 // behind both the preset and theme cycle settings.
+// cursorShapeNames/cursorBlinkStyleNames back the cursor.shape and
+// cursor.blink_style cycler rows above — see config.Cursor's own doc
+// comment for what each name means.
+var (
+	cursorShapeNames      = []string{"block", "bar", "underline"}
+	cursorBlinkStyleNames = []string{"ease", "static", "hard"}
+)
+
 func cycleName(names []string, current string, d int) string {
 	idx := slices.Index(names, current)
 	if idx < 0 {
@@ -851,12 +859,53 @@ func (u *ui) buildPresetsList() []panelRow {
 		func(c *config.Config, v float64) { c.Face.InsetShadow = float32(v) })))
 
 	section("cursor")
-	add(asEffect(newSlider("cursor.glow", "glow", "halo width of the block cursor", "px", 1, 0.1, 0, 8,
+	add(asEffect(&setting{
+		key: "cursor.shape", label: "shape",
+		help:    "at-rest outline; the speed-reactive ball/tail morph layers on top of whichever is picked",
+		choices: func() []string { return cursorShapeNames },
+		get:     func(c *config.Config) string { return c.Cursor.Shape },
+		applyStep: func(c *config.Config, d int) bool {
+			c.Cursor.Shape = cycleName(cursorShapeNames, c.Cursor.Shape, d)
+			return false
+		},
+	}))
+	add(asEffect(newSlider("cursor.radius", "corner radius", "at-rest corner rounding, as a fraction of the shape's short half-dimension", "", 2, 0.05, 0, 1,
+		func(c *config.Config) float64 { return float64(c.Cursor.Radius) },
+		func(c *config.Config, v float64) { c.Cursor.Radius = float32(v) })))
+	add(asEffect(newSlider("cursor.glow", "glow", "halo width of the cursor", "px", 1, 0.1, 0, 8,
 		func(c *config.Config) float64 { return float64(c.Cursor.Glow) },
 		func(c *config.Config, v float64) { c.Cursor.Glow = float32(v) })))
-	add(asEffect(newSlider("cursor.pulse_period", "pulse period", "breathing period of the cursor", "s", 2, 0.05, 0.2, 4,
+	add(asEffect(&setting{
+		key: "cursor.blink_style", label: "blink style",
+		help:    "how the cursor's brightness pulses over time; forced to static whenever glass mode is on",
+		choices: func() []string { return cursorBlinkStyleNames },
+		get:     func(c *config.Config) string { return c.Cursor.BlinkStyle },
+		applyStep: func(c *config.Config, d int) bool {
+			c.Cursor.BlinkStyle = cycleName(cursorBlinkStyleNames, c.Cursor.BlinkStyle, d)
+			return false
+		},
+	}))
+	add(asEffect(newSlider("cursor.pulse_period", "pulse period", "breathing/toggle period of the cursor", "s", 2, 0.05, 0.2, 4,
 		func(c *config.Config) float64 { return float64(c.Cursor.PulsePeriod) },
 		func(c *config.Config, v float64) { c.Cursor.PulsePeriod = float32(v) })))
+
+	section("cursor — glass mode (experimental)")
+	add(asEffect(newToggle("cursor.glass.enabled", "enabled",
+		"macOS-style frosted panel that refracts/blurs the scene behind the cursor instead of glowing over it; forces blink style to static",
+		func(c *config.Config) bool { return c.Cursor.Glass.Enabled },
+		func(c *config.Config, v bool) { c.Cursor.Glass.Enabled = v })))
+	add(asEffect(newSlider("cursor.glass.tint", "tint", "accent strength mixed into the refracted sample", "", 2, 0.02, 0, 1,
+		func(c *config.Config) float64 { return float64(c.Cursor.Glass.Tint) },
+		func(c *config.Config, v float64) { c.Cursor.Glass.Tint = float32(v) })))
+	add(asEffect(newSlider("cursor.glass.blur", "blur", "refraction sample blur spread", "px", 1, 0.1, 0, 6,
+		func(c *config.Config) float64 { return float64(c.Cursor.Glass.Blur) },
+		func(c *config.Config, v float64) { c.Cursor.Glass.Blur = float32(v) })))
+	add(asEffect(newSlider("cursor.glass.refract", "refract", "outward bend of the sampled scene", "px", 1, 0.25, 0, 12,
+		func(c *config.Config) float64 { return float64(c.Cursor.Glass.Refract) },
+		func(c *config.Config, v float64) { c.Cursor.Glass.Refract = float32(v) })))
+	add(asEffect(newSlider("cursor.glass.opacity", "opacity", "core opacity of the glass panel", "", 2, 0.02, 0, 1,
+		func(c *config.Config) float64 { return float64(c.Cursor.Glass.Opacity) },
+		func(c *config.Config, v float64) { c.Cursor.Glass.Opacity = float32(v) })))
 
 	section("contrast")
 	add(asEffect(newSlider("contrast.min_delta", "min contrast", "minimum fg/bg gap on the mono ramp", "", 2, 0.01, 0, 1,
@@ -988,6 +1037,15 @@ func (u *ui) buildFontsThemeList() []panelRow {
 		// applyStep unconditionally, so this still needs a no-op rather
 		// than staying nil.
 		applyStep: func(c *config.Config, d int) bool { return false },
+	})
+	add(&setting{
+		key: "font.ligatures", label: "ligatures",
+		help: "GSUB programming ligatures (=>, ->, !=, ...); rebuilds the atlas",
+		get:  func(c *config.Config) string { return toggleStr(c.Font.Ligatures) },
+		applyStep: func(c *config.Config, d int) bool {
+			c.Font.Ligatures = d > 0
+			return true
+		},
 	})
 
 	section("layout")

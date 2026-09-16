@@ -48,6 +48,45 @@ func TestUpdateCursorBigJumpRampsMorphUpAndDown(t *testing.T) {
 	}
 }
 
+// TestCursorBrightnessStyles checks each BlinkStyle's shape: "static" stays
+// pinned at full brightness regardless of phase, "hard" toggles cleanly at
+// the half-period boundary, and "ease" breathes between the 0.35 floor and
+// 1.0 ceiling without ever going fully dark while visible.
+func TestCursorBrightnessStyles(t *testing.T) {
+	const period = 1.0
+
+	if got := cursorBrightness("static", 0.9, period, true); got != 1 {
+		t.Errorf("static @ phase 0.9 = %v, want 1", got)
+	}
+	if got := cursorBrightness("hard", 0.1, period, true); got != 1 {
+		t.Errorf("hard @ phase 0.1 (first half) = %v, want 1", got)
+	}
+	if got := cursorBrightness("hard", 0.6, period, true); got != 0 {
+		t.Errorf("hard @ phase 0.6 (second half) = %v, want 0", got)
+	}
+	if got := cursorBrightness("ease", 0, period, true); got < 0.34 || got > 1 {
+		t.Errorf("ease @ phase 0 = %v, want within [0.34, 1]", got)
+	}
+	if got := cursorBrightness("ease", period/4, period, true); got != 1 {
+		t.Errorf("ease @ quarter phase (sine peak) = %v, want 1", got)
+	}
+}
+
+// TestCursorBrightnessHiddenAndUnset covers the two overrides every style
+// shares: an invisible cursor is always black, and a zero/negative
+// PulsePeriod (an unset pulse) reads as static even for "ease"/"hard".
+func TestCursorBrightnessHiddenAndUnset(t *testing.T) {
+	if got := cursorBrightness("ease", 0.5, 1.0, false); got != 0 {
+		t.Errorf("hidden cursor = %v, want 0", got)
+	}
+	if got := cursorBrightness("ease", 0.5, 0, true); got != 1 {
+		t.Errorf("ease with period <= 0 = %v, want 1 (reads as static)", got)
+	}
+	if got := cursorBrightness("hard", 0.5, 0, true); got != 1 {
+		t.Errorf("hard with period <= 0 = %v, want 1 (reads as static)", got)
+	}
+}
+
 // TestSmoothstep32 checks the GLSL smoothstep port's boundary and midpoint
 // behavior — it drives the speed-to-morph mapping, so an off-by-one edge
 // here would misfire the ball/tail threshold silently.

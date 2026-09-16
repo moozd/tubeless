@@ -80,9 +80,13 @@ func MonitorTheme(presetName string) (theme string, ok bool) {
 // doc comment.
 func modernEffects() Effects {
 	return Effects{
-		Surface:  Surface{Radius: 1.7},
-		Blur:     Blur{Radius: 2.0, Strength: 0.5},
-		Cursor:   Cursor{Glow: 1.5, PulsePeriod: 0.9},
+		Surface: Surface{Radius: 1.7},
+		Blur:    Blur{Radius: 2.0, Strength: 0.5},
+		Cursor: Cursor{
+			Glow: 1.5, PulsePeriod: 0.9, Radius: 0.35,
+			Shape: "block", BlinkStyle: "ease",
+			Glass: Glass{Tint: 0.35, Blur: 1.5, Refract: 2.0, Opacity: 0.55},
+		},
 		Face:     Face{BgTint: 0.04, InsetShadow: 0.3},
 		Contrast: Contrast{MinDelta: 0.35},
 	}

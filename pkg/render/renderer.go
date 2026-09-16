@@ -343,6 +343,31 @@ func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 	r.cursorMorph += (target - r.cursorMorph) * km
 }
 
+// cursorBrightness computes the cursor's uBright intensity for the
+// configured blink style. "ease" (default) breathes via a sine floor/
+// ceiling (0.35..1); "static" stays fully lit with no pulse; "hard"
+// toggles fully on/off each half-period, like a classic terminal cursor.
+// phase is UpdateCursor's running clock, already wrapped to one period by
+// the caller; period <= 0 reads as "static" regardless of style, same as
+// an unset pulse always did.
+func cursorBrightness(style string, phase, period float64, visible bool) float32 {
+	if !visible {
+		return 0
+	}
+	if style == "static" || period <= 0 {
+		return 1
+	}
+	if style == "hard" {
+		if phase < period/2 {
+			return 1
+		}
+		return 0
+	}
+	pulse := math.Sin(2 * math.Pi * phase / period)
+	bright := 0.6 + 0.4*pulse
+	return float32(0.35 + 0.65*bright)
+}
+
 // smoothstep32 mirrors GLSL's smoothstep: a hermite curve that maps x into
 // 0..1 across edge0..edge1 with zero slope at both ends, so the speed-to-
 // morph mapping eases in and out instead of ramping linearly.
@@ -539,21 +564,20 @@ func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config, dt float64) 
 	// cycle's timing drifting/stuttering. Wrapping here bounds the value
 	// actually fed to sin() without touching UpdateCursor's signature.
 	period := float64(cfg.Cursor.PulsePeriod)
-	pulse := 1.0
 	if period > 0 {
 		r.cursorPhase = math.Mod(r.cursorPhase, period)
-		// Gentle breathing: a sine around a floor so the cursor never
-		// vanishes while visible — just swells and relaxes. The floor
-		// used to live in cursor.frag, where it leaked a ghost whenever a
-		// program hid the cursor — the shader now multiplies by uBright
-		// directly, so hidden means exactly black.
-		pulse = math.Sin(2 * math.Pi * r.cursorPhase / period)
 	}
-	bright := float32(0.6 + 0.4*pulse)
-	bright = 0.35 + 0.65*bright
-	if !r.cursorVisible {
-		bright = 0
+	// Glass mode reads as a static panel, not an animated cursor — see
+	// config.Glass's own doc comment — so it overrides BlinkStyle
+	// (ignoring PulsePeriod entirely) and the speed-reactive ball/tail
+	// morph, regardless of what glide speed UpdateCursor is tracking.
+	style := cfg.Cursor.BlinkStyle
+	morph := r.cursorMorph
+	if cfg.Cursor.Glass.Enabled {
+		style = "static"
+		morph = 0
 	}
+	bright := cursorBrightness(style, r.cursorPhase, period, r.cursorVisible)
 
 	// The tail direction is tracked in grid-cell units (see UpdateCursor)
 	// but cells aren't necessarily square, so it's rescaled into screen
@@ -564,9 +588,9 @@ func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config, dt float64) 
 	if tailPxLen := float32(math.Hypot(float64(tailPxX), float64(tailPxY))); tailPxLen > 1e-4 {
 		tailPxX, tailPxY = tailPxX/tailPxLen, tailPxY/tailPxLen
 	}
-	tailLenPx := r.cursorMorph * cursorTailMaxCells * (r.cellW + r.cellH) * 0.5
+	tailLenPx := morph * cursorTailMaxCells * (r.cellW + r.cellH) * 0.5
 
-	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, outW, outH, bright, r.cursorMorph, tailPxX, tailPxY, tailLenPx, cfg)
+	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, outW, outH, bright, morph, tailPxX, tailPxY, tailLenPx, r.sceneFBO.tex, cfg)
 
 	sceneTex := r.sceneFBO.tex
 	if decaySeconds := cfg.CRT.PhosphorDecay.DecaySeconds; decaySeconds > 0 {

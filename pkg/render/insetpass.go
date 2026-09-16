@@ -50,6 +50,11 @@ func (i *InsetPass) Draw(sceneTex, cursorTex uint32, cfg config.Config, outW, ou
 	u := func(name string) int32 { return gl.GetUniformLocation(i.prog, gl.Str(name+"\x00")) }
 	gl.Uniform1i(u("uScene"), 0)
 	gl.Uniform1i(u("uCursor"), 1)
+	if cfg.Cursor.Glass.Enabled {
+		gl.Uniform1f(u("uGlassMode"), 1)
+	} else {
+		gl.Uniform1f(u("uGlassMode"), 0)
+	}
 	gl.Uniform3fv(u("uAccent"), 1, &cfg.Phosphor.Low[0])
 	gl.Uniform1f(u("uBgTint"), cfg.Face.BgTint)
 	gl.Uniform1f(u("uInsetShadow"), cfg.Face.InsetShadow)

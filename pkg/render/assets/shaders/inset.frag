@@ -4,7 +4,10 @@ in vec2 vUV;
 out vec4 fragColor;
 
 uniform sampler2D uScene;      // sharp scene (blurred shapes + sharp text)
-uniform sampler2D uCursor;     // animated cursor glow
+uniform sampler2D uCursor;     // animated cursor glow (or glass panel)
+uniform float uGlassMode;      // 0 = cursor is an additive glow, 1 = a
+                                // premultiplied-alpha glass panel (see
+                                // cursor.frag's own uGlassMode branch)
 uniform vec3 uAccent;          // phosphor color (linear) used as the tint hue
 uniform float uBgTint;         // empty-screen brightness, 0..1
 uniform float uInsetShadow;    // strength of the radial tube-face falloff, 0..1
@@ -22,9 +25,13 @@ uniform float uMaskIntensity, uMaskCellSize;
 uniform float uNoiseIntensity;
 uniform float uFlickerAmount, uFlickerSpeed;
 
-// Final composite. The cursor is soft-added over the scene — cursor *
-// (1 - scene) adds glow where the screen is dark and barely lifts bright
-// pixels, so it reads as a beam sweeping over the text underneath.
+// Final composite. Normally the cursor is soft-added over the scene —
+// cursor * (1 - scene) adds glow where the screen is dark and barely
+// lifts bright pixels, so it reads as a beam sweeping over the text
+// underneath. In glass mode (uGlassMode > 0) cursor.frag instead hands
+// back a premultiplied-alpha glass panel, composited with the standard
+// "over" operator (cursor + scene * (1 - cursorAlpha)) so the panel
+// reads as translucent rather than as more additive glow.
 //
 // Then the flat render becomes a recessed tube face. The screen is never
 // dead black: empty areas read as a very dim phosphor glow (uAccent *
@@ -92,8 +99,13 @@ void main() {
 	} else {
 		scene = texture(uScene, uv).rgb;
 	}
-	vec3 cursor = texture(uCursor, uv).rgb;
-	vec3 glow = scene + cursor * (1.0 - scene);
+	vec4 cursorSample = texture(uCursor, uv);
+	vec3 glow;
+	if (uGlassMode > 0.5) {
+		glow = cursorSample.rgb + scene * (1.0 - cursorSample.a);
+	} else {
+		glow = scene + cursorSample.rgb * (1.0 - scene);
+	}
 
 	vec3 color = glow + uAccent * uBgTint;
 

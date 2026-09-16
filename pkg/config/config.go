@@ -178,10 +178,47 @@ type Blur struct {
 	Strength float32 `toml:"strength"` // 0..1 mix of the blurred result
 }
 
-// Cursor is the animated block cursor's shape and breathing pulse.
+// Cursor is the animated cursor's shape, corner rounding, and breathing
+// pulse.
 type Cursor struct {
 	Glow        float32 `toml:"glow"`         // edge anti-aliasing width, in pixels
 	PulsePeriod float32 `toml:"pulse_period"` // breathing period in seconds
+	// Radius is the at-rest corner rounding, as a fraction (0..1) of the
+	// shape's own short half-dimension — 0 is square, 1 is a full
+	// stadium/circle. See cursor.frag's uRadius.
+	Radius float32 `toml:"radius"`
+	// Shape selects the at-rest outline: "block" (default), "bar" (a
+	// thin vertical I-beam on the cell's left edge), or "underline" (a
+	// thin strip on the cell's bottom edge). The speed-reactive ball/tail
+	// morph (see Renderer.UpdateCursor) layers on top of whichever shape
+	// is selected.
+	Shape string `toml:"shape"`
+	// BlinkStyle selects how uBright is driven over time: "ease" (default,
+	// a sine breathing pulse), "static" (always fully lit, no pulse), or
+	// "hard" (a classic on/off toggle each half of PulsePeriod). Forced to
+	// "static" whenever Glass.Enabled is on, regardless of this setting.
+	BlinkStyle string `toml:"blink_style"`
+	Glass      Glass  `toml:"glass"`
+}
+
+// Glass is the experimental macOS-style frosted-glass cursor: instead of
+// the normal additive glow, the cursor becomes a translucent panel that
+// refracts and blurs the scene behind it, tinted toward the theme's
+// accent color. Enabling it forces BlinkStyle to "static" and disables
+// the ball/tail speed morph — see Renderer.RenderEffects.
+type Glass struct {
+	Enabled bool `toml:"enabled"`
+	// Tint is how strongly the refracted sample is pulled toward the
+	// accent color, 0 (untinted) .. 1 (solid accent).
+	Tint float32 `toml:"tint"`
+	// Blur is the refraction sample's blur spread, in pixels; 0 disables
+	// the blur taps entirely (a single sharp sample).
+	Blur float32 `toml:"blur"`
+	// Refract is how far the sampled point bends outward from the
+	// cursor's center, in pixels; 0 is a plain (unrefracted) sample.
+	Refract float32 `toml:"refract"`
+	// Opacity is the panel's core opacity, 0 (invisible) .. 1 (opaque).
+	Opacity float32 `toml:"opacity"`
 }
 
 // Face is the CRT "tube face" look: a faint phosphor-tinted background

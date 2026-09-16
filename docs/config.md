@@ -142,8 +142,16 @@ RGB triples `[r, g, b]` in `0.0-1.0`, not raw hex.
 |               | `shadow`       | `0..1` soft drop shadow cast by block surfaces.                      |
 | `[blur]`      | `radius`       | Gaussian bloom spread, in pixels, over block/border surfaces.        |
 |               | `strength`     | `0..1` mix of the blurred result.                                    |
-| `[cursor]`    | `glow`         | Cursor edge anti-aliasing width, in pixels.                          |
-|               | `pulse_period` | Cursor breathing-pulse period, in seconds.                           |
+| `[cursor]`    | `shape`        | At-rest outline: `block` (default), `bar` (I-beam on the cell's left edge), or `underline`. The speed-reactive ball/tail morph layers on top of whichever is picked. |
+|               | `radius`       | `0..1` at-rest corner rounding, as a fraction of the shape's own short half-dimension. |
+|               | `glow`         | Cursor edge anti-aliasing width, in pixels.                          |
+|               | `blink_style`  | How brightness pulses over time: `ease` (default, sine breathing), `static` (always fully lit), or `hard` (on/off toggle each half-period). Forced to `static` whenever `cursor.glass.enabled` is on. |
+|               | `pulse_period` | Cursor breathing/toggle period, in seconds.                          |
+| `[cursor.glass]` (experimental) | `enabled` | macOS-style frosted panel that refracts/blurs the scene behind the cursor instead of glowing over it, tinted toward the accent color. Forces `blink_style` to `static` and disables the ball/tail morph. |
+|               | `tint`         | `0..1` accent strength mixed into the refracted sample.              |
+|               | `blur`         | Refraction sample blur spread, in pixels.                            |
+|               | `refract`      | Outward bend of the sampled scene, in pixels.                        |
+|               | `opacity`      | `0..1` core opacity of the glass panel.                              |
 | `[face]`      | `bg_tint`      | `0..1` faint phosphor-tinted background (the CRT "tube face" look).  |
 |               | `inset_shadow` | `0..1` radial falloff toward the screen corners.                     |
 | `[contrast]`  | `min_delta`    | Minimum enforced fg/bg brightness gap on the monochrome ramp, so isoluminant color pairs stay readable. |
