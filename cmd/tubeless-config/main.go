@@ -699,6 +699,10 @@ func (u *ui) dirty() {
 var (
 	cursorShapeNames      = []string{"block", "bar", "underline"}
 	cursorBlinkStyleNames = []string{"ease", "static", "hard"}
+	// contentShiftModeNames backs the scrolling.content_shift_mode
+	// cycler row below — see config.Scrolling's own doc comment for what
+	// each name means.
+	contentShiftModeNames = []string{"off", "content", "image"}
 )
 
 func cycleName(names []string, current string, d int) string {
@@ -1096,10 +1100,16 @@ func (u *ui) buildExperimentalList() []panelRow {
 	add := func(s *setting) { list = append(list, panelRow{kind: rowSetting, set: s}) }
 
 	section("scrolling")
-	add(newToggle("scrolling.smooth_content_shift", "smooth scroll",
-		"glide detected scroll shifts (vertical and horizontal) instead of snapping; a heuristic diff still being hardened against real-world editor/TUI output — disable if it wobbles or drags a status bar on some particular app",
-		func(c *config.Config) bool { return c.Scrolling.SmoothContentShift },
-		func(c *config.Config, v bool) { c.Scrolling.SmoothContentShift = v }))
+	add(&setting{
+		key: "scrolling.content_shift_mode", label: "shift detection",
+		help:    "which detector, if any, decides a redraw is a uniform scroll worth gliding instead of snapping: \"content\" diffs the terminal grid's text (a heuristic still being hardened against real-world editor/TUI output — switch back to \"off\" if it wobbles or drags a status bar on some particular app); \"image\" diffs the actually-rendered pixels on the GPU instead (experimental, no keyboard/mouse hints yet); \"off\" always snaps",
+		choices: func() []string { return contentShiftModeNames },
+		get:     func(c *config.Config) string { return c.Scrolling.ContentShiftMode },
+		applyStep: func(c *config.Config, d int) bool {
+			c.Scrolling.ContentShiftMode = cycleName(contentShiftModeNames, c.Scrolling.ContentShiftMode, d)
+			return false
+		},
+	})
 
 	section("shell")
 	add(newToggle("shell.use_tmux", "use tmux",

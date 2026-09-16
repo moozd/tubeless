@@ -27,7 +27,7 @@ type ColShift struct {
 	Delta       int
 }
 
-// Tuning constants for the shift-detection engine (see detectShift).
+// Tuning constants for the shift-detection engine (see DetectShift).
 //
 // fuzzyRowMaxDiff/fuzzyColMaxDiff cap tier 2's per-line tolerance as an
 // ABSOLUTE character count, not a percentage — this was originally a
@@ -62,7 +62,7 @@ const (
 	// minTier1Ratio floors, on both axes, how much of a winning band's
 	// evidence must come from tier 1 (an exact or gutter-aux hash match)
 	// rather than tier 2's fuzzy fallback alone — see its check in
-	// detectShift for why an unfloored tier 2 false-fires on columnar
+	// DetectShift for why an unfloored tier 2 false-fires on columnar
 	// output (ls -la, ps, git log --oneline) where unrelated rows
 	// sharing a fixed layout differ by only a handful of characters
 	// almost regardless of maxDiff. 0.5 keeps tier 2 a minority-case
@@ -72,7 +72,7 @@ const (
 
 	// popularityCap bounds how many times a line's hash may recur across
 	// the axis before any comparison involving it is treated as
-	// uninformative — see its use (as isDegenerate) in detectShift. 3
+	// uninformative — see its use (as isDegenerate) in DetectShift. 3
 	// keeps a coincidental duplicate or two (two unrelated lines/columns
 	// that just happen to share content) from being excluded, while
 	// still catching an actual repeated run, which in practice is never
@@ -94,7 +94,7 @@ const (
 	// anchorlessLineFactor scales minLines (axis-specific: minShiftBandLines
 	// or minShiftBandColumns) up to the total a band must clear to be
 	// trusted WITHOUT touching a true axis edge — see its use
-	// (chromeAnchored) at the end of detectShift. minLines alone is
+	// (chromeAnchored) at the end of DetectShift. minLines alone is
 	// tuned for the edge-touching case, where "a real scroll happened"
 	// is already established by the shape alone; a chrome-bounded band
 	// carries no such structural guarantee, so it needs to win on
@@ -237,7 +237,7 @@ func detectContentShiftInBand(prev, next *Screen, maxShift, colLo, colHi int) (R
 	affixGap := func(afterIdx, beforeIdx int) int {
 		return cellAffixGap(next.Grid[afterIdx][colLo:colHi+1], prev.Grid[beforeIdx][colLo:colHi+1])
 	}
-	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, affixGap, fuzzyRowMaxDiff, min(unshiftedMaxChangedSpan, width/2), confidenceThreshold, minShiftBandLines, blankHash(width), blankHash(colHi+1-skip))
+	lo, hi, delta, ok := DetectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, affixGap, fuzzyRowMaxDiff, min(unshiftedMaxChangedSpan, width/2), confidenceThreshold, minShiftBandLines, blankHash(width), blankHash(colHi+1-skip))
 	if !ok {
 		return RowShift{}, false
 	}
@@ -290,7 +290,7 @@ func detectHorizontalContentShiftInBand(prev, next *Screen, maxShift, rowLo, row
 	affixGap := func(afterIdx, beforeIdx int) int {
 		return colAffixGap(next.Grid[rowLo:rowHi+1], prev.Grid[rowLo:rowHi+1], afterIdx, beforeIdx)
 	}
-	lo, hi, delta, ok := detectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, affixGap, fuzzyColMaxDiff, min(unshiftedMaxChangedSpan, height/2), confidenceColThreshold, minShiftBandColumns, blankHash(height), blankHash(rowHi+1-skip))
+	lo, hi, delta, ok := DetectShift(n, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash, fuzzy, affixGap, fuzzyColMaxDiff, min(unshiftedMaxChangedSpan, height/2), confidenceColThreshold, minShiftBandColumns, blankHash(height), blankHash(rowHi+1-skip))
 	if !ok {
 		return ColShift{}, false
 	}
@@ -386,7 +386,7 @@ func sameDims(prev, next *Screen) bool {
 		prev.Cols > 0 && prev.Rows > 0
 }
 
-// detectShift is the shared engine behind DetectContentShift (rows) and
+// DetectShift is the shared engine behind DetectContentShift (rows) and
 // DetectHorizontalContentShift (columns). n is the line count on
 // whichever axis is being searched (Rows or Cols); beforeHash/afterHash
 // are that axis's per-line rune-content hashes for the previous/next
@@ -459,7 +459,7 @@ func sameDims(prev, next *Screen) bool {
 // tier 1/2's "full or aux" check fire everywhere — auxBlank lets that
 // specific match be recognized as equally uninformative and rejected,
 // without discarding a real full-hash match on the same line.
-func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfterHash []uint64, fuzzyDiff func(afterIdx, beforeIdx int) int, affixGap func(afterIdx, beforeIdx int) int, maxDiff int, maxChangedSpan int, confThreshold float64, minLines int, blank, auxBlank uint64) (lo, hi, delta int, ok bool) {
+func DetectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfterHash []uint64, fuzzyDiff func(afterIdx, beforeIdx int) int, affixGap func(afterIdx, beforeIdx int) int, maxDiff int, maxChangedSpan int, confThreshold float64, minLines int, blank, auxBlank uint64) (lo, hi, delta int, ok bool) {
 	if maxShift <= 0 || maxShift >= n {
 		maxShift = n - 1
 	}
@@ -591,7 +591,7 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 	// (tier-1 exact or aux, or tier-2 fuzzy) or not. informative marks a
 	// line as carrying real evidence either way — false for a
 	// blank-vs-blank pair or a degenerate (isDegenerate) one, neither of
-	// which counts toward a match or a mismatch below (see detectShift's
+	// which counts toward a match or a mismatch below (see DetectShift's
 	// doc). tier1 marks a match as coming from an exact/aux hash rather
 	// than tier 2's fuzzy fallback — see the tier1Count check below for
 	// why this is tracked separately. Either kind of match is rejected,
@@ -764,7 +764,7 @@ func detectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 
 // blankHash is the hash rowHash/colHash produce for a line of n cells
 // that are all Cell{Rune: ' '} — a real terminal's blank-cell fill (see
-// newRow/blankCell). Comparing against this lets detectShift recognize
+// newRow/blankCell). Comparing against this lets DetectShift recognize
 // an all-blank line cheaply, from an already-computed hash, without
 // rescanning its actual content.
 func blankHash(n int) uint64 {
@@ -818,7 +818,7 @@ func foldRune(h uint64, r rune) uint64 {
 // completely unrelated short commands (e.g. "cd .." vs "ls -la") would
 // share almost all of that padding and read as differing by only a
 // handful of characters, the same trivial-agreement problem the
-// whole-row blank check (see detectShift's blank parameter) solves one
+// whole-row blank check (see DetectShift's blank parameter) solves one
 // level up, just recurring at the per-cell level within a single row
 // that isn't blank overall. A length mismatch (shouldn't happen — both
 // rows share the screen's Cols) counts as maximally different, never a

@@ -75,18 +75,28 @@ type Shell struct {
 // axis — it's a heuristic feature under active development, not a
 // finished visual effect.
 type Scrolling struct {
-	// SmoothContentShift gates both axes of the content-shift glide:
-	// detected uniform row shifts (pkg/screen's DetectContentShift) and
-	// column shifts (DetectHorizontalContentShift) ease in like Neovide
-	// instead of snapping. One flag rather than two per-axis switches —
-	// both detectors reject the same class of adversarial false
-	// positives (columnar lookalikes, a repeated-rule/separator run;
-	// see shiftdetect.go's minTier1Ratio/popularityCap), so there's no
-	// longer a meaningfully weaker axis to gate separately. Still a
-	// heuristic diff against the previous frame, not a guaranteed-exact
-	// signal — this is the escape hatch for a misdetected shift wobbling
-	// on some particular app's output.
-	SmoothContentShift bool `toml:"smooth_content_shift"`
+	// ContentShiftMode selects which detector, if any, decides whether a
+	// redraw is a uniform content shift worth gliding in like Neovide
+	// instead of snapping — gating both axes (row and column) together,
+	// since both detectors of either mode reject the same class of
+	// adversarial false positives (columnar lookalikes, a
+	// repeated-rule/separator run), so there's no meaningfully weaker
+	// axis to gate separately. A single string field rather than
+	// multiple bools makes "only one detector active at a time"
+	// structural, not a rule to remember.
+	//
+	// "off" (default): never glide, always snap. "content": pkg/screen's
+	// rune-hash/fuzzy diff of the terminal grid (DetectContentShift/
+	// DetectHorizontalContentShift) — a heuristic still being hardened
+	// against real-world editor/TUI output; the escape hatch for a
+	// misdetected shift wobbling or dragging a status bar on some
+	// particular app is switching this back to "off". "image":
+	// pkg/render's GPU pixel diff of the actually-rendered frame instead
+	// of the grid's rune content — experimental, and without any
+	// corroborating signal yet (no keyboard/mouse/escape-sequence
+	// hints), just the raw pixel comparison, to see how robust it is on
+	// its own first.
+	ContentShiftMode string `toml:"content_shift_mode"`
 }
 
 // Scrollback controls how much scrolled-off history is retained above the

@@ -127,6 +127,34 @@ type Renderer struct {
 	// loading is the current in-progress overlay state (see SetLoading);
 	// when Active, RenderEffects draws the modal over the frame.
 	loading Loading
+
+	// Image-diff shift detection state (see imagediff.go) — the
+	// GPU-pixel-diff sibling of the rune-hash content-diff path fed by
+	// screen.DetectContentShift above, gated by
+	// config.Scrolling.ContentShiftMode == "image". Retained state, not
+	// recomputed every call: imageContentFBO plus the imageContentScr/
+	// CellW/CellH key memoize the current frame's zero-offset content
+	// render so DetectImageRowShift and DetectImageColShift, called back
+	// to back for the same frame, don't draw it twice. imagePrevRowSig/
+	// imagePrevColSig retain the previous frame's signatures directly as
+	// plain Go slices — no GPU-side ping-pong needed, since the
+	// signature is read back to the CPU every frame regardless —
+	// mirroring how cmd/tubeless retains lastScr for the CPU path.
+	signaturePass    *SignaturePass
+	imageContentFBO  *FBO
+	imageRowSigFBO   *FBO
+	imageColSigFBO   *FBO
+	imageBlankFBO    *FBO
+	imageBlankSigFBO *FBO
+	imageBlankScr    *screen.Screen
+
+	imageContentScr                      *screen.Screen
+	imageContentCellW, imageContentCellH float32
+
+	imagePrevRowSig                     []byte
+	imagePrevRowCols, imagePrevRowRows  int
+	imagePrevColSig                     []byte
+	imagePrevColCols, imagePrevColRows  int
 }
 
 // Cursor glide tuning: UpdateCursor's exponential-approach rate (per
@@ -211,24 +239,34 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("overlay pass: %w", err)
 	}
+	signaturePass, err := NewSignaturePass()
+	if err != nil {
+		return nil, fmt.Errorf("signature pass: %w", err)
+	}
 	return &Renderer{
-		cellPass:    cellPass,
-		imagePass:   imagePass,
-		blurPass:    blurPass,
-		surfacePass: surfacePass,
-		shadowPass:  shadowPass,
-		copyPass:    copyPass,
-		cursorPass:  cursorPass,
-		insetPass:   insetPass,
-		persistPass: persistPass,
-		overlayPass: overlayPass,
-		effectFBO:   newSRGBFBO(2, 2),
-		surfaceFBO:  newSRGBFBO(2, 2),
-		shadowFBO:   newSRGBFBO(2, 2),
-		blurFBO:     newSRGBFBO(2, 2),
-		sceneFBO:    newSRGBFBO(2, 2),
-		cursorFBO:   newSRGBFBO(2, 2),
-		persistFBO:  [2]*FBO{newFloatFBO(2, 2), newFloatFBO(2, 2)},
+		cellPass:         cellPass,
+		imagePass:        imagePass,
+		blurPass:         blurPass,
+		surfacePass:      surfacePass,
+		shadowPass:       shadowPass,
+		copyPass:         copyPass,
+		cursorPass:       cursorPass,
+		insetPass:        insetPass,
+		persistPass:      persistPass,
+		overlayPass:      overlayPass,
+		effectFBO:        newSRGBFBO(2, 2),
+		surfaceFBO:       newSRGBFBO(2, 2),
+		shadowFBO:        newSRGBFBO(2, 2),
+		blurFBO:          newSRGBFBO(2, 2),
+		sceneFBO:         newSRGBFBO(2, 2),
+		cursorFBO:        newSRGBFBO(2, 2),
+		persistFBO:       [2]*FBO{newFloatFBO(2, 2), newFloatFBO(2, 2)},
+		signaturePass:    signaturePass,
+		imageContentFBO:  newSRGBFBO(2, 2),
+		imageRowSigFBO:   newSRGBFBO(2, 2),
+		imageColSigFBO:   newSRGBFBO(2, 2),
+		imageBlankFBO:    newSRGBFBO(2, 2),
+		imageBlankSigFBO: newSRGBFBO(2, 2),
 	}, nil
 }
 

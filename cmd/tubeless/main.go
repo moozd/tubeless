@@ -1237,25 +1237,26 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		}
 		if scr != lastScr && w == lastW && h == lastH && scrollLine == 0 {
 			// A genuinely new screen at the same size — diff it against
-			// the previous one (screen.DetectContentShift /
-			// DetectHorizontalContentShift) so any uniform content shift,
-			// however the app actually redrew it (a real scroll-region
-			// op, or a TUI framework repainting by repositioning the
-			// cursor and overwriting cells directly), glides instead of
-			// cutting straight to the new state. This is the sole source
-			// of the content-scroll glide — pkg/screen no longer records
-			// scroll ops itself. The diff is a bounded rune-hash scan
-			// (not the old brute-force heuristic), cheap enough to run
-			// unconditionally here. Both axes are checked independently,
-			// so a region shifting vertically and a different region
-			// shifting horizontally in the same frame both animate — but
-			// gated on a single config flag: both detectors reject the
-			// same class of adversarial false positive (columnar
-			// lookalikes, a repeated-rule/separator run — see
-			// shiftdetect.go's minTier1Ratio/popularityCap), so there's
-			// no longer a meaningfully weaker axis to gate separately.
-			// Live-reloadable from config.toml/the config TUI — an escape
-			// hatch since this is a heuristic diff, not a
+			// the previous one so any uniform content shift, however the
+			// app actually redrew it (a real scroll-region op, or a TUI
+			// framework repainting by repositioning the cursor and
+			// overwriting cells directly), glides instead of cutting
+			// straight to the new state. This is the sole source of the
+			// content-scroll glide — pkg/screen no longer records scroll
+			// ops itself. Both axes are checked independently, so a
+			// region shifting vertically and a different region shifting
+			// horizontally in the same frame both animate.
+			//
+			// Which detector runs (if any) is cfg.Scrolling.ContentShiftMode:
+			// "content" is screen.DetectContentShift/
+			// DetectHorizontalContentShift, a bounded rune-hash scan
+			// cheap enough to run unconditionally; "image" is
+			// Renderer.DetectImageRowShift/DetectImageColShift (see
+			// pkg/render/imagediff.go), a GPU pixel diff of the
+			// actually-rendered frame instead — experimental. "off" runs
+			// neither. Live-reloadable from config.toml/the config TUI —
+			// the escape hatch for a misdetected shift on either detector
+			// is switching this back to "off", since neither is a
 			// guaranteed-exact signal.
 			//
 			// scrollLine == 0 additionally requires the viewport to be at
@@ -1273,11 +1274,19 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			// git history on this file. Scrolled-back viewing simply snaps
 			// like an ordinary redraw; the glide resumes once the user
 			// returns to the live tail.
-			if cfg.Scrolling.SmoothContentShift {
+			switch cfg.Scrolling.ContentShiftMode {
+			case "content":
 				if shift, ok := screen.DetectContentShift(lastScr, scr, contentShiftMaxRows); ok {
 					r.ApplyDetectedRowShift(shift, cs.h)
 				}
 				if shift, ok := screen.DetectHorizontalContentShift(lastScr, scr, contentShiftMaxCols); ok {
+					r.ApplyDetectedColShift(shift, cs.w)
+				}
+			case "image":
+				if shift, ok := r.DetectImageRowShift(scr, cfg, cs.w, cs.h, contentShiftMaxRows); ok {
+					r.ApplyDetectedRowShift(shift, cs.h)
+				}
+				if shift, ok := r.DetectImageColShift(scr, cfg, cs.w, cs.h, contentShiftMaxCols); ok {
 					r.ApplyDetectedColShift(shift, cs.w)
 				}
 			}

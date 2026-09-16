@@ -377,7 +377,7 @@ func TestDetectContentShiftLowConfidenceBoundary(t *testing.T) {
 // almost always within any reasonable fixed maxDiff regardless of how
 // long the lines are. Nothing here actually scrolled — only row 3 was
 // edited in place — so no shift, at any k, should ever be reported; a
-// prior version of detectShift let tier 2 alone report a whole-screen
+// prior version of DetectShift let tier 2 alone report a whole-screen
 // false shift here since every row happened to clear fuzzyRowMaxDiff
 // against its neighbor purely from shared layout, with zero tier-1
 // (exact/aux) corroboration anywhere in the band.
