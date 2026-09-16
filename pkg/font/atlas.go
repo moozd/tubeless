@@ -289,20 +289,38 @@ type wideIcon struct {
 	pix       []byte
 	w, h      int
 	left, top int
+	slotW     int // w plus its reserved trailing gap — see buildWideGlyphs
 }
+
+// wideFitFrac caps how much of the 2-cell budget a widened icon's own
+// ink may actually use — the rest (wideGapFrac) stays reserved as a
+// trailing blank margin. Fitting all the way to a full 2 cells left the
+// icon's own bitmap flush against whatever the blank neighbor cell it
+// grew into used to buffer it from — a file listing's icon immediately
+// touching the filename beside it, no gap at all. Ghostty avoids the
+// same trap differently (it centers the icon within the full 2-cell box
+// instead of packing tight to it, and its "icon" height metric already
+// sits under the full cell height by design — see Metrics.zig's
+// icon_height_single), but the effect wanted here is the same: real
+// breathing room between an enlarged icon and whatever comes after it.
+const wideFitFrac = 0.78
+const wideGapFrac = 1 - wideFitFrac
 
 // buildWideGlyphs packs and rasterizes atlas.WideGlyphs — see its doc
 // comment — by growing atlas.Image downward with a second region sized
-// for just the widenable icons among runes. Icons are fit to a 2*cellW x
-// cellH budget but shelf-packed at their own resulting width rather than
-// a fixed 2*cellW slot per icon: with cellW well under cellH in most
-// monospace fonts, a plain grid of worst-case-width slots routinely
-// doubled the whole atlas's texture footprint even after isWidenableIcon
-// narrowed the candidate set, which pushed otherwise-fine fonts past a
-// GPU's max texture size. Most icons don't actually need the full 2
-// cells once fit to real height, so packing each at its own width keeps
-// this region close to what the icons in it actually use.
+// for just the widenable icons among runes. Icons are fit to a
+// wideFitFrac*2*cellW x cellH budget but shelf-packed at their own
+// resulting width (plus the reserved gap) rather than a fixed 2*cellW
+// slot per icon: with cellW well under cellH in most monospace fonts, a
+// plain grid of worst-case-width slots routinely doubled the whole
+// atlas's texture footprint even after isWidenableIcon narrowed the
+// candidate set, which pushed otherwise-fine fonts past a GPU's max
+// texture size. Most icons don't actually need the full budget once fit
+// to real height, so packing each at its own width keeps this region
+// close to what the icons in it actually use.
 func buildWideGlyphs(atlas *Atlas, runes []rune, face, fallbackFace *ftFace, fromFallback map[rune]bool, cellW, cellH, ascender int, gamma float64, glyphPadding, maxTextureSize int) error {
+	maxIconW := int(float64(cellW*2) * wideFitFrac)
+	gap := max(1, int(float64(cellW)*wideGapFrac))
 	var icons []wideIcon
 	for _, r := range runes {
 		if !isWidenableIcon(r) {
@@ -316,13 +334,13 @@ func buildWideGlyphs(atlas *Atlas, runes []rune, face, fallbackFace *ftFace, fro
 		if !ok || w == 0 || h == 0 {
 			continue
 		}
-		pix, w, h, left, top = fitPrivateUse(pix, w, h, left, top, cellW*2, cellH)
+		pix, w, h, left, top = fitPrivateUse(pix, w, h, left, top, maxIconW, cellH)
 		if w <= cellW {
 			// No wider than the normal single-cell fit already gets it —
 			// nothing to gain from a second copy.
 			continue
 		}
-		icons = append(icons, wideIcon{r, pix, w, h, left, top})
+		icons = append(icons, wideIcon{r, pix, w, h, left, top, w + gap})
 	}
 	if len(icons) == 0 {
 		atlas.WideGlyphs = map[rune]Glyph{}
@@ -352,23 +370,28 @@ func buildWideGlyphs(atlas *Atlas, runes []rune, face, fallbackFace *ftFace, fro
 	for i, ic := range icons {
 		gx, gy := xs[i], yOffset+ys[i]
 		blitCoverage(ic.pix, ic.w, ic.h, ic.left, ic.top, atlas.Image, gx, gy, ic.w, cellH, ascender, gamma)
-		atlas.WideGlyphs[ic.r] = Glyph{X: gx, Y: gy, W: ic.w, H: cellH}
+		// Glyph.W is slotW, not the tighter ic.w the bitmap actually fills
+		// — the difference is the reserved trailing gap (already blank in
+		// the freshly grown image), and CellPass derives its on-screen
+		// widthScale straight from this W, so the reserved gap rides
+		// along into the rendered quad instead of being sampled away.
+		atlas.WideGlyphs[ic.r] = Glyph{X: gx, Y: gy, W: ic.slotW, H: cellH}
 	}
 	return nil
 }
 
 // packShelves lays icons out in fixed-height rows (shelves), each icon
-// placed at its own width instead of a uniform slot, wrapping to a new
-// shelf once a row would exceed targetRowW. Returns each icon's (x, y)
-// position (padding already applied) in the same order as icons, plus
-// the overall region size those positions fit within.
+// placed at its own slot width instead of a uniform one, wrapping to a
+// new shelf once a row would exceed targetRowW. Returns each icon's
+// (x, y) position (padding already applied) in the same order as icons,
+// plus the overall region size those positions fit within.
 func packShelves(icons []wideIcon, padding, rowH, targetRowW int) (xs, ys []int, regionW, regionH int) {
 	n := len(icons)
 	xs, ys = make([]int, n), make([]int, n)
 	packedH := rowH + 2*padding
 	x, y, rowW, maxRowW := 0, 0, 0, 0
 	for i, ic := range icons {
-		slot := ic.w + 2*padding
+		slot := ic.slotW + 2*padding
 		if rowW > 0 && rowW+slot > targetRowW {
 			maxRowW = max(maxRowW, rowW)
 			x, rowW = 0, 0
