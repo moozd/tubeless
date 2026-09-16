@@ -8,6 +8,7 @@ layout(location = 4) in vec3 aColor;
 layout(location = 5) in vec3 aBgColor;
 layout(location = 6) in float aStyle;
 layout(location = 7) in float aShear;
+layout(location = 8) in float aWidthScale;
 
 uniform vec2 uCellSize;
 uniform vec2 uScreenSize;
@@ -29,7 +30,15 @@ const float italicSlant = 0.22;
 void main() {
 	vec2 p = aPos;
 	p.x += (1.0 - p.y) * aShear * italicSlant;
-	vec2 pixelPos = uOffset + aCellPos + p * uCellSize;
+	// aWidthScale stretches only the quad's on-screen extent, past 1
+	// cell's worth of uCellSize, for a widened icon glyph (see
+	// CellPass.iconCanWiden) — vUV below still samples with the
+	// unstretched aPos, so it maps 1:1 onto that glyph's own
+	// correspondingly-wider atlas rect (Atlas.WideGlyphs) instead of
+	// stretching a normal single-cell glyph's image.
+	vec2 size = uCellSize;
+	size.x *= aWidthScale;
+	vec2 pixelPos = uOffset + aCellPos + p * size;
 	vec2 ndc = (pixelPos / uScreenSize) * 2.0 - 1.0;
 	ndc.y = -ndc.y;
 	gl_Position = vec4(ndc, 0.0, 1.0);

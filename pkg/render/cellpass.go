@@ -11,7 +11,7 @@ import (
 	"github.com/moozd/tubeless/pkg/screen"
 )
 
-const glyphInstanceFloats = 14    // aCellPos(2) + aUVOffset(2) + aUVSize(2) + aColor(3) + aBgColor(3) + aStyle(1) + aShear(1)
+const glyphInstanceFloats = 15    // aCellPos(2) + aUVOffset(2) + aUVSize(2) + aColor(3) + aBgColor(3) + aStyle(1) + aShear(1) + aWidthScale(1)
 const rectInstanceFloats = 13     // aCellPos(2) + aRectOffset(2) + aRectSize(2) + aColor(3) + aRadius(4)
 const underlineInstanceFloats = 6 // aCellPos(2) + aColor(3) + aStyle(1)
 
@@ -131,9 +131,9 @@ func newInstancedVAO(quadVBO uint32, floats, extra int) (vao, instVBO uint32) {
 
 // newGlyphVAO builds the VAO for glyph instances: aCellPos(2) +
 // aUVOffset(2) + aUVSize(2) + aColor(3) + aBgColor(3) + aStyle(1) +
-// aShear(1). Its own layout rather than newInstancedVAO's shared "extra"
-// slot, since no other instance kind (rect, underline) carries the
-// trailing style/shear pair.
+// aShear(1) + aWidthScale(1). Its own layout rather than newInstancedVAO's
+// shared "extra" slot, since no other instance kind (rect, underline)
+// carries the trailing style/shear/widthScale group.
 func newGlyphVAO(quadVBO uint32) (vao, instVBO uint32) {
 	gl.GenVertexArrays(1, &vao)
 	gl.BindVertexArray(vao)
@@ -152,6 +152,7 @@ func newGlyphVAO(quadVBO uint32) (vao, instVBO uint32) {
 	attachInstanceAttrib(5, 3, stride, 9*4)  // aBgColor
 	attachInstanceAttrib(6, 1, stride, 12*4) // aStyle
 	attachInstanceAttrib(7, 1, stride, 13*4) // aShear
+	attachInstanceAttrib(8, 1, stride, 14*4) // aWidthScale
 
 	gl.BindVertexArray(0)
 	return vao, instVBO
@@ -278,7 +279,7 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 					continue
 				}
 				u0, v0, us, vs := glyphUV(cp.faces.Regular, g)
-				cp.shapeScratch = appendGlyphInstance(cp.shapeScratch, px, py, u0, v0, us, vs, fg, bg, styleRegular, 0)
+				cp.shapeScratch = appendGlyphInstance(cp.shapeScratch, px, py, u0, v0, us, vs, fg, bg, styleRegular, 0, 1)
 				continue
 			}
 			style, shear := glyphStyle(cell.Attr.Bold, cell.Attr.Italic, cp.availItalic, cp.availBoldItalic)
@@ -295,10 +296,39 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 					continue
 				}
 			}
+			widthScale := float32(1)
+			if font.IsPrivateUseRune(cell.Rune) && iconCanWiden(grid, scr.Cols, x, y) {
+				// wg.W varies per icon (see Atlas.WideGlyphs) rather than
+				// always being a full 2 cells, so the on-screen quad must
+				// stretch by that icon's own ratio to cell width — not a
+				// fixed 2 — or its aspect ratio would distort.
+				if wg, ok := atlas.WideGlyphs[cell.Rune]; ok {
+					g, widthScale = wg, float32(wg.W)/float32(atlas.CellWidth)
+				}
+			}
 			u0, v0, us, vs := glyphUV(atlas, g)
-			cp.textScratch = appendGlyphInstance(cp.textScratch, px, py, u0, v0, us, vs, fg, bg, style, shear)
+			cp.textScratch = appendGlyphInstance(cp.textScratch, px, py, u0, v0, us, vs, fg, bg, style, shear, widthScale)
 		}
 	}
+}
+
+// iconCanWiden reports whether the private-use icon at (x,y) may widen
+// into a 2-cell atlas slot (see font.Atlas.WideGlyphs) instead of its
+// normal single-cell one — mirroring Ghostty's constraintWidth: not the
+// last column, the previous cell isn't itself a widen-eligible icon (so
+// two adjacent icons don't both reach for the same blank cell), and the
+// next cell is blank. Box-drawing/powerline/block glyphs never reach this
+// check — they're intercepted earlier by font.IsShapeRune/font.BlockRect
+// — so unlike Ghostty there's no need to exempt them from the
+// previous-cell block.
+func iconCanWiden(grid [][]screen.Cell, cols, x, y int) bool {
+	if x+1 >= cols {
+		return false
+	}
+	if x > 0 && font.IsPrivateUseRune(grid[y][x-1].Rune) {
+		return false
+	}
+	return grid[y][x+1].Rune == ' '
 }
 
 // glyphUV converts a Glyph's pixel rect within atlas into normalized
@@ -344,8 +374,8 @@ func expandRect(rx, ry, rw, rh, cw, ch float32, e edgeCont) (float32, float32, f
 	return rx, ry, rw, rh
 }
 
-func appendGlyphInstance(dst []float32, px, py, u0, v0, us, vs float32, fg, bg [3]float32, style, shear float32) []float32 {
-	return append(dst, px, py, u0, v0, us, vs, fg[0], fg[1], fg[2], bg[0], bg[1], bg[2], style, shear)
+func appendGlyphInstance(dst []float32, px, py, u0, v0, us, vs float32, fg, bg [3]float32, style, shear, widthScale float32) []float32 {
+	return append(dst, px, py, u0, v0, us, vs, fg[0], fg[1], fg[2], bg[0], bg[1], bg[2], style, shear, widthScale)
 }
 
 // glyphStyle picks which atlas a text glyph samples and whether the
@@ -576,7 +606,7 @@ func (cp *CellPass) DrawTextString(text string, x, y, cw, ch float32, color [3]f
 			continue
 		}
 		u0, v0, us, vs := glyphUV(atlas, g)
-		inst = appendGlyphInstance(inst, x+float32(i)*cw, y, u0, v0, us, vs, color, color, style, 0)
+		inst = appendGlyphInstance(inst, x+float32(i)*cw, y, u0, v0, us, vs, color, color, style, 0, 1)
 	}
 	if len(inst) == 0 {
 		return

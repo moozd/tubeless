@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"log"
 	"math"
 )
@@ -47,6 +48,19 @@ type Atlas struct {
 	CellWidth  int
 	CellHeight int
 	Glyphs     map[rune]Glyph
+	// WideGlyphs holds a second rasterization of every private-use (Nerd
+	// Font icon) rune in Glyphs, fit to a 2*CellWidth x CellHeight box
+	// instead of the normal single-cell one. Most Nerd Font icons are
+	// wide enough in their own design box that fitting them to one narrow
+	// cell shrinks them well below what fitting the full cell height
+	// alone would allow; CellPass draws from here instead of Glyphs
+	// whenever it decides, from the live grid, that the icon's neighbor
+	// cell is blank and free to widen into (see cellpass.go's
+	// iconCanWiden) — mirroring Ghostty's constraintWidth/nerd-font
+	// constraint-table combination, the two-pass version this package's
+	// fixed-grid atlas needs since it can't resize a glyph's box per
+	// frame the way Ghostty's shaper does.
+	WideGlyphs map[rune]Glyph
 }
 
 // Progress reports build progress: phase names the current stage (e.g.
@@ -261,7 +275,110 @@ func build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 	if progress != nil {
 		progress(len(runes), len(runes))
 	}
+	if err := buildWideGlyphs(atlas, runes, face, fallbackFace, fromFallback, cellW, cellH, ascender, gamma, glyphPadding, maxTextureSize); err != nil {
+		return nil, err
+	}
 	return atlas, nil
+}
+
+// wideIcon is one candidate for Atlas.WideGlyphs, already rasterized and
+// fit to its own natural width (see buildWideGlyphs) rather than a fixed
+// worst-case slot.
+type wideIcon struct {
+	r         rune
+	pix       []byte
+	w, h      int
+	left, top int
+}
+
+// buildWideGlyphs packs and rasterizes atlas.WideGlyphs — see its doc
+// comment — by growing atlas.Image downward with a second region sized
+// for just the widenable icons among runes. Icons are fit to a 2*cellW x
+// cellH budget but shelf-packed at their own resulting width rather than
+// a fixed 2*cellW slot per icon: with cellW well under cellH in most
+// monospace fonts, a plain grid of worst-case-width slots routinely
+// doubled the whole atlas's texture footprint even after isWidenableIcon
+// narrowed the candidate set, which pushed otherwise-fine fonts past a
+// GPU's max texture size. Most icons don't actually need the full 2
+// cells once fit to real height, so packing each at its own width keeps
+// this region close to what the icons in it actually use.
+func buildWideGlyphs(atlas *Atlas, runes []rune, face, fallbackFace *ftFace, fromFallback map[rune]bool, cellW, cellH, ascender int, gamma float64, glyphPadding, maxTextureSize int) error {
+	var icons []wideIcon
+	for _, r := range runes {
+		if !isWidenableIcon(r) {
+			continue
+		}
+		src := face
+		if fromFallback[r] {
+			src = fallbackFace
+		}
+		pix, w, h, left, top, ok := src.glyphBitmap(r)
+		if !ok || w == 0 || h == 0 {
+			continue
+		}
+		pix, w, h, left, top = fitPrivateUse(pix, w, h, left, top, cellW*2, cellH)
+		if w <= cellW {
+			// No wider than the normal single-cell fit already gets it —
+			// nothing to gain from a second copy.
+			continue
+		}
+		icons = append(icons, wideIcon{r, pix, w, h, left, top})
+	}
+	if len(icons) == 0 {
+		atlas.WideGlyphs = map[rune]Glyph{}
+		return nil
+	}
+
+	// The final texture is already at least mainBounds.Dx() wide no matter
+	// what this region packs to, so packing shelves any narrower than
+	// that only wastes the width the atlas is paying for anyway and turns
+	// straight into extra, unnecessary height — pack to the full width on
+	// offer instead of an independent sqrt(area) guess.
+	mainBounds := atlas.Image.Bounds()
+	targetRowW := max(mainBounds.Dx(), cellW*2)
+	xs, ys, regionW, regionH := packShelves(icons, glyphPadding, cellH, targetRowW)
+	finalW, finalH := max(mainBounds.Dx(), regionW), mainBounds.Dy()+regionH
+	if maxTextureSize > 0 && (finalW > maxTextureSize || finalH > maxTextureSize) {
+		return fmt.Errorf("atlas texture %dx%d (with wide icon variants) exceeds this GPU's max texture size (%d) — lower atlas.scale or font.size",
+			finalW, finalH, maxTextureSize)
+	}
+
+	grown := image.NewAlpha(image.Rect(0, 0, finalW, finalH))
+	draw.Draw(grown, mainBounds, atlas.Image, image.Point{}, draw.Src)
+	atlas.Image = grown
+
+	yOffset := mainBounds.Dy()
+	atlas.WideGlyphs = make(map[rune]Glyph, len(icons))
+	for i, ic := range icons {
+		gx, gy := xs[i], yOffset+ys[i]
+		blitCoverage(ic.pix, ic.w, ic.h, ic.left, ic.top, atlas.Image, gx, gy, ic.w, cellH, ascender, gamma)
+		atlas.WideGlyphs[ic.r] = Glyph{X: gx, Y: gy, W: ic.w, H: cellH}
+	}
+	return nil
+}
+
+// packShelves lays icons out in fixed-height rows (shelves), each icon
+// placed at its own width instead of a uniform slot, wrapping to a new
+// shelf once a row would exceed targetRowW. Returns each icon's (x, y)
+// position (padding already applied) in the same order as icons, plus
+// the overall region size those positions fit within.
+func packShelves(icons []wideIcon, padding, rowH, targetRowW int) (xs, ys []int, regionW, regionH int) {
+	n := len(icons)
+	xs, ys = make([]int, n), make([]int, n)
+	packedH := rowH + 2*padding
+	x, y, rowW, maxRowW := 0, 0, 0, 0
+	for i, ic := range icons {
+		slot := ic.w + 2*padding
+		if rowW > 0 && rowW+slot > targetRowW {
+			maxRowW = max(maxRowW, rowW)
+			x, rowW = 0, 0
+			y += packedH
+		}
+		xs[i], ys[i] = x+padding, y+padding
+		x += slot
+		rowW += slot
+	}
+	return xs, ys, max(maxRowW, rowW), y + packedH
 }
 
 // applyLineHeight scales cellH by lineHeight (1 is a no-op; <= 0 is
@@ -383,12 +500,8 @@ func blitGlyph(face *ftFace, r rune, dst *image.Alpha, gx, gy, cellW, cellH, asc
 		return
 	}
 	switch {
-	case isPrivateUseRune(r):
-		if scale := fitScale(w, h, cellW, cellH); scale < 1 {
-			pix, w, h = scaleCoverage(pix, w, h, scale)
-			left = int(float64(left) * scale)
-			top = int(float64(top) * scale)
-		}
+	case IsPrivateUseRune(r):
+		pix, w, h, left, top = fitPrivateUse(pix, w, h, left, top, cellW, cellH)
 	case w > cellW || h > cellH:
 		// Independent per-axis clamp, not fitScale's uniform one — a
 		// width-only overflow (the common italic case) stays exactly
@@ -400,26 +513,49 @@ func blitGlyph(face *ftFace, r rune, dst *image.Alpha, gx, gy, cellW, cellH, asc
 		pix, w, h = resizeCoverage(pix, w, h, ow, oh)
 		left, top = int(float64(left)*wScale), int(float64(top)*hScale)
 	}
+	blitCoverage(pix, w, h, left, top, dst, gx, gy, cellW, cellH, ascender, gamma)
+}
+
+// fitPrivateUse uniformly scales a private-use icon bitmap (and its
+// bearing) to fitScale's target — shrinking an oversized icon down or
+// growing an undersized one up, either way landing it near boxW x boxH
+// instead of whatever size the icon font happened to draw it at. A no-op
+// at exactly scale 1.
+func fitPrivateUse(pix []byte, w, h, left, top, boxW, boxH int) ([]byte, int, int, int, int) {
+	scale := fitScale(w, h, boxW, boxH)
+	if scale == 1 {
+		return pix, w, h, left, top
+	}
+	pix, w, h = scaleCoverage(pix, w, h, scale)
+	left = int(float64(left) * scale)
+	top = int(float64(top) * scale)
+	return pix, w, h, left, top
+}
+
+// blitCoverage stamps an already-fit coverage bitmap into dst's (gx,gy)
+// box of size boxW x boxH, baseline-aligned using ascender — shared by
+// blitGlyph and buildWideGlyphs.
+func blitCoverage(pix []byte, w, h, left, top int, dst *image.Alpha, gx, gy, boxW, boxH, ascender int, gamma float64) {
 	originX, originY := gx+left, gy+ascender-top
 	// fitScale only guarantees the bitmap's own w x h is small enough to
-	// fit the cell — it says nothing about where the font's bearing
+	// fit the box — it says nothing about where the font's bearing
 	// metrics place it. An icon glyph with unusual bearing (patched in
 	// from a different font, at different design coordinates than the
-	// base font's own glyphs) can still land partly outside the cell
+	// base font's own glyphs) can still land partly outside the box
 	// even though it's small enough to fit, reading as a cropped icon.
 	// Clamping the origin — never scaling, since w/h are already known
 	// to fit — keeps it fully on-screen.
-	originX = clampOrigin(originX, w, gx, cellW)
-	originY = clampOrigin(originY, h, gy, cellH)
+	originX = clampOrigin(originX, w, gx, boxW)
+	originY = clampOrigin(originY, h, gy, boxH)
 	invGamma := 1 / gamma
 	for y := range h {
 		dy := originY + y
-		if dy < gy || dy >= gy+cellH {
+		if dy < gy || dy >= gy+boxH {
 			continue
 		}
 		for x := range w {
 			dx := originX + x
-			if dx < gx || dx >= gx+cellW {
+			if dx < gx || dx >= gx+boxW {
 				continue
 			}
 			coverage := pix[y*w+x]
@@ -443,46 +579,70 @@ func clampOrigin(origin, d, cellStart, cellSize int) int {
 	return origin
 }
 
-// isPrivateUseRune reports whether r falls in one of the three Unicode
+// IsPrivateUseRune reports whether r falls in one of the three Unicode
 // Private Use Areas — where every Nerd Font icon range lives (Powerline,
 // Devicons, Font Awesome, Seti-UI, Material Design, etc.), whether
 // patched into the configured font directly or pulled from the bundled
 // fallback. Ordinary text (Latin, box-drawing, CJK, emoji, ...) never
-// lands here, which is what lets blitGlyph apply its shrink-to-fit only
-// to icons and leave real letterforms at their natural rasterized size.
-func isPrivateUseRune(r rune) bool {
+// lands here, which is what lets blitGlyph apply its fit-to-box scaling
+// only to icons and leave real letterforms at their natural rasterized
+// size. Exported for pkg/render's CellPass, which needs it to decide
+// which glyphs are eligible to widen into a blank neighbor.
+func IsPrivateUseRune(r rune) bool {
 	return (r >= 0xE000 && r <= 0xF8FF) ||
 		(r >= 0xF0000 && r <= 0xFFFFD) ||
 		(r >= 0x100000 && r <= 0x10FFFD)
 }
 
-// fitScale returns the uniform scale factor (<= 1) needed to bring a
-// w x h glyph within cellW x cellH, or 1 if it already fits.
-func fitScale(w, h, cellW, cellH int) float64 {
-	scale := 1.0
-	if w > cellW {
-		scale = float64(cellW) / float64(w)
-	}
-	if hScale := float64(cellH) / float64(h); h > cellH && hScale < scale {
-		scale = hScale
-	}
-	return scale
+// isWidenableIcon is IsPrivateUseRune narrowed to the BMP Private Use Area
+// (U+E000-U+F8FF) alone — where Powerline, Devicons, Font Awesome,
+// Seti-UI, Octicons and the other icon sets a shell prompt actually uses
+// live. The two supplementary planes IsPrivateUseRune also covers are
+// almost entirely Material Design Icons: one font can ship ~7000 of them,
+// nearly double the rest of a full Nerd Font patch combined, and a real
+// terminal prompt essentially never uses them. Building a second,
+// 2-cell-wide rasterization (see Atlas.WideGlyphs) for that whole range
+// on top of the base atlas routinely pushed the packed texture past a
+// GPU's max texture size on fonts that otherwise fit comfortably — this
+// keeps the widen feature to the icon sets it's actually for.
+func isWidenableIcon(r rune) bool {
+	return r >= 0xE000 && r <= 0xF8FF
 }
 
-// scaleCoverage box-filters a single-channel coverage bitmap down by
-// scale (< 1) uniformly on both axes — an icon's aspect ratio must stay
-// fixed, unlike resizeCoverage's independent-axis general case.
+// maxIconUpscale bounds how far fitScale will grow an icon that renders
+// small within its own design box. This resamples the already-rasterized
+// bitmap rather than re-rendering the vector outline at a bigger size, so
+// pushing it much past this starts reading as soft instead of sharp.
+const maxIconUpscale = 1.6
+
+// fitScale returns the uniform scale factor needed to bring a w x h glyph
+// to fitScale's target box — shrinking it if it overflows, or growing it
+// (up to maxIconUpscale) if it's notably smaller than the box, so an icon
+// a font drew tiny within its own em-box still reads at a normal, legible
+// size instead of looking small next to the letters around it. 1 if it
+// already fits closely enough that scaling would be a no-op either way.
+func fitScale(w, h, cellW, cellH int) float64 {
+	scale := min(float64(cellW)/float64(w), float64(cellH)/float64(h))
+	return min(scale, maxIconUpscale)
+}
+
+// scaleCoverage box-filters a single-channel coverage bitmap to scale
+// (either direction) uniformly on both axes — an icon's aspect ratio must
+// stay fixed, unlike resizeCoverage's independent-axis general case.
 func scaleCoverage(pix []byte, w, h int, scale float64) (out []byte, ow, oh int) {
 	return resizeCoverage(pix, w, h, max(1, int(float64(w)*scale)), max(1, int(float64(h)*scale)))
 }
 
 // resizeCoverage box-filters a single-channel coverage bitmap from w x h
-// down to ow x oh — independently on each axis, so a width-only squeeze
-// (ow < w, oh == h) is exactly as valid a call as a uniform shrink —
+// to ow x oh — independently on each axis, so a width-only squeeze (ow <
+// w, oh == h) is exactly as valid a call as a uniform shrink —
 // area-averaging each output texel's source region. A straight
 // nearest/point resample would just re-introduce aliasing on the very
-// edges this exists to clean up. Only ever shrinks in practice (callers
-// never grow a dimension), though nothing here assumes that.
+// edges this exists to clean up. Growing a dimension (fitPrivateUse's
+// upscale case) degrades to nearest-neighbor there, srcRange's spans
+// having nothing left to average — soft, not sharp, but this only ever
+// runs on already-antialiased icon coverage that a later mipmap
+// minification pass smooths further, not on crisp text edges.
 func resizeCoverage(pix []byte, w, h, ow, oh int) (out []byte, outW, outH int) {
 	ow, oh = max(1, ow), max(1, oh)
 	out = make([]byte, ow*oh)
