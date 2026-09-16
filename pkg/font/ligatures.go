@@ -6,30 +6,28 @@ import (
 	"image/draw"
 )
 
-// Ligature is one Atlas.Ligatures entry, in one of two shapes a real
-// font's GSUB rules can produce for a rune sequence (see discoverLigatures):
+// Ligature is one Atlas.Ligatures entry: an already-fit-and-packed glyph
+// plus how many grid columns wide it must be drawn across — the exact
+// number of cells the rune sequence it replaces occupied, unlike
+// WideGlyphs' variable, fit-driven width. CellPass stretches its quad to
+// exactly Cells*cellW rather than deriving a ratio the way it does for
+// WideGlyphs, since a ligature must land flush on the grid columns the
+// characters it replaces used to occupy.
 //
-//   - A true merge into one glyph (PerCell nil): Glyph is that single
-//     already-fit-and-packed glyph, and Cells is how many grid columns
-//     wide it must be drawn across — the exact number of cells the rune
-//     sequence it replaces occupied, unlike WideGlyphs' variable,
-//     fit-driven width. CellPass stretches its quad to exactly
-//     Cells*cellW rather than deriving a ratio the way it does for
-//     WideGlyphs, since a merged ligature must land flush on the grid
-//     columns the characters it replaces used to occupy.
-//   - A same-count contextual reshape (PerCell non-nil, len == Cells):
-//     the font keeps one glyph per character but reshapes each one via
-//     a chaining 'calt' rule so adjacent glyphs visually connect —
-//     FiraCode, Cascadia Code, and JetBrains Mono all do this rather
-//     than merging, since a genuine 1-glyph merge would need the
-//     renderer to stretch that merged glyph across N cells the way this
-//     package's own Glyph/Cells pair above does, and none of those
-//     fonts assume a renderer capable of that. Each entry in PerCell is
-//     a normal, single-cell-sized glyph — Glyph/Cells above are unused.
+// A real font's GSUB rules produce this in one of two ways (see
+// discoverLigatures/buildLigatures), both ending up as this same single
+// packed glyph: a true merge, where the font itself collapses the whole
+// rune sequence into one designed glyph, or a same-count contextual
+// reshape, where the font keeps one glyph per character but reshapes
+// each one via a chaining 'calt' rule so adjacent glyphs visually
+// connect — how FiraCode, Cascadia Code, and JetBrains Mono actually
+// implement their arrow/comparison ligatures. buildLigatures composites
+// a reshape's several glyphs onto one shared Cells*cellW canvas at their
+// natural per-character offsets before packing, so CellPass never needs
+// to know which shape produced the result it's drawing.
 type Ligature struct {
 	Glyph
-	Cells   int
-	PerCell []Glyph
+	Cells int
 }
 
 // ligatureAlphabet is the candidate corpus discoverLigatures searches
@@ -56,32 +54,36 @@ const maxLigatureLen = 6
 
 // ligCandidate is one still-unpacked merged-glyph Ligature discovery
 // result, keyed by the literal rune sequence it replaces — mirrors
-// wideIcon's role for buildWideGlyphs.
+// wideIcon's role for buildWideGlyphs. A merge (glyphs has exactly one
+// entry, already fit to the whole slotW via fitPrivateUse — the font
+// drew this one specifically to span Cells columns, same as an icon
+// spans its own box) blits as that single bitmap; a contextual reshape
+// (glyphs has one raw, unfit entry per matched column) blits each at
+// its own nominal i*cellW offset within the shared slotW box instead —
+// deliberately raw rather than individually fit, since a real
+// connecting reshape depends on each glyph's own FreeType bearings
+// landing where the font actually drew them relative to its neighbors.
+// FiraCode's "!=" is the concrete case this exists for: shaping it
+// yields a first glyph that's entirely blank and a second one whose
+// left bearing is negative — bleeding leftward into the first,
+// now-empty column — so the two only read as a connected "≠" once
+// blitted into one box wide enough to receive that overflow;
+// fitPrivateUse's fit-to-box rescaling would discard the bearing that
+// makes the connection visible in the first place.
 type ligCandidate struct {
-	key       string
-	pix       []byte
-	w, h      int
-	left, top int
-	cells     int
-	slotW     int // cells*cellW, this candidate's fixed packed width
+	key    string
+	cells  int
+	slotW  int // cells*cellW, this candidate's fixed packed width
+	glyphs []fitBitmap
 }
 
-// fitBitmap is one already-fit rasterized glyph bitmap, ready to blit —
-// the common shape both ligCandidate's single glyph and
-// reshapedCandidate's per-cell glyphs end up in after fitPrivateUse.
+// fitBitmap is one rasterized glyph bitmap, ready to blit at some
+// caller-chosen (gx, gy) — see ligCandidate's own doc comment for the
+// two ways a candidate's glyphs get here (fit vs. raw).
 type fitBitmap struct {
 	pix       []byte
 	w, h      int
 	left, top int
-}
-
-// reshapedCandidate is one still-unpacked contextual-reshape Ligature
-// discovery result (see Ligature's own doc comment on the two shapes) —
-// one already-fit glyph per matched grid column, each sized to the
-// normal single-cell box rather than ligCandidate's Cells*cellW slot.
-type reshapedCandidate struct {
-	key    string
-	glyphs []fitBitmap
 }
 
 // buildLigatures discovers and rasterizes every ligature fontBytes's own
@@ -101,68 +103,64 @@ func buildLigatures(atlas *Atlas, fontBytes []byte, face *ftFace, cellW, cellH, 
 		return nil
 	}
 
-	var merged []ligCandidate
-	var reshaped []reshapedCandidate
+	var candidates []ligCandidate
 	for key, rule := range rules {
+		cells := len([]rune(key))
+		boxW := cells * cellW
 		if rule.Merged {
 			pix, w, h, left, top, ok := face.glyphBitmapByIndex(rule.GID)
 			if !ok || w == 0 || h == 0 {
 				continue
 			}
-			cells := len([]rune(key))
-			boxW := cells * cellW
 			pix, w, h, left, top = fitPrivateUse(pix, w, h, left, top, boxW, cellH)
-			merged = append(merged, ligCandidate{key, pix, w, h, left, top, cells, boxW})
+			candidates = append(candidates, ligCandidate{key, cells, boxW, []fitBitmap{{pix, w, h, left, top}}})
 			continue
 		}
 
-		rc := reshapedCandidate{key: key}
-		complete := true
-		for _, gid := range rule.GIDs {
-			pix, w, h, left, top, ok := face.glyphBitmapByIndex(gid)
-			if !ok {
-				complete = false
+		// A reshape: rasterize each position's own glyph raw (no
+		// fitPrivateUse — see ligCandidate's doc comment), keeping a
+		// blank one (a glyph that legitimately has zero ink, like the
+		// first half of FiraCode's "!=" — see isReshapeCandidate's
+		// caller) rather than rejecting the whole candidate over it.
+		// Only a genuinely unresolvable glyph ID does that.
+		glyphs := make([]fitBitmap, len(rule.GIDs))
+		ok := true
+		for i, gid := range rule.GIDs {
+			pix, w, h, left, top, valid := face.glyphBitmapByIndex(gid)
+			if !valid {
+				ok = false
 				break
 			}
-			pix, w, h, left, top = fitPrivateUse(pix, w, h, left, top, cellW, cellH)
-			rc.glyphs = append(rc.glyphs, fitBitmap{pix, w, h, left, top})
+			if w == 0 || h == 0 {
+				continue // blank glyph at this position — nothing to blit, not an error
+			}
+			if w > cellW || h > cellH {
+				// Mirrors blitGlyph's own overflow guard for a normal
+				// text glyph: an independent per-axis clamp, not a
+				// uniform fitPrivateUse-style scale, so a width-only
+				// overflow doesn't also shrink height.
+				ow, oh := min(w, cellW), min(h, cellH)
+				wScale, hScale := float64(ow)/float64(w), float64(oh)/float64(h)
+				pix, w, h = resizeCoverage(pix, w, h, ow, oh)
+				left, top = int(float64(left)*wScale), int(float64(top)*hScale)
+			}
+			glyphs[i] = fitBitmap{pix, w, h, left, top}
 		}
-		if !complete || len(rc.glyphs) != len(rule.GIDs) {
+		if !ok {
 			continue
 		}
-		reshaped = append(reshaped, rc)
+		candidates = append(candidates, ligCandidate{key, cells, boxW, glyphs})
 	}
-	if len(merged) == 0 && len(reshaped) == 0 {
+	if len(candidates) == 0 {
 		return nil
-	}
-
-	// One flat shelf-packing pass covers every glyph this function
-	// rasterizes: each merged candidate contributes one Cells*cellW
-	// slot, each reshaped candidate contributes one cellW slot per
-	// matched column — packShelves doesn't care what's being packed,
-	// only slotWidths (see its own doc comment). packedSlot records
-	// which final Ligature each packed position belongs to, so the
-	// blit loop below can write results back after packing decides
-	// everyone's (x,y).
-	type packedSlot struct {
-		reshapedIdx int // -1 for a merged candidate
-		glyphIdx    int // merged: index into merged; reshaped: index into reshaped[reshapedIdx].glyphs
-	}
-	var slotWidths []int
-	var slots []packedSlot
-	for i, c := range merged {
-		slotWidths = append(slotWidths, c.slotW)
-		slots = append(slots, packedSlot{reshapedIdx: -1, glyphIdx: i})
-	}
-	for ri, rc := range reshaped {
-		for gi := range rc.glyphs {
-			slotWidths = append(slotWidths, cellW)
-			slots = append(slots, packedSlot{reshapedIdx: ri, glyphIdx: gi})
-		}
 	}
 
 	mainBounds := atlas.Image.Bounds()
 	targetRowW := max(mainBounds.Dx(), cellW*2)
+	slotWidths := make([]int, len(candidates))
+	for i, c := range candidates {
+		slotWidths[i] = c.slotW
+	}
 	xs, ys, regionW, regionH := packShelves(slotWidths, glyphPadding, cellH, targetRowW)
 	finalW, finalH := max(mainBounds.Dx(), regionW), mainBounds.Dy()+regionH
 	if maxTextureSize > 0 && (finalW > maxTextureSize || finalH > maxTextureSize) {
@@ -173,26 +171,23 @@ func buildLigatures(atlas *Atlas, fontBytes []byte, face *ftFace, cellW, cellH, 
 	grown := image.NewAlpha(image.Rect(0, 0, finalW, finalH))
 	draw.Draw(grown, mainBounds, atlas.Image, image.Point{}, draw.Src)
 	atlas.Image = grown
-	yOffset := mainBounds.Dy()
 
-	reshapedGlyphs := make([][]Glyph, len(reshaped))
-	for i, rc := range reshaped {
-		reshapedGlyphs[i] = make([]Glyph, len(rc.glyphs))
-	}
-	for i, s := range slots {
+	yOffset := mainBounds.Dy()
+	for i, c := range candidates {
 		gx, gy := xs[i], yOffset+ys[i]
-		if s.reshapedIdx < 0 {
-			c := merged[s.glyphIdx]
-			blitCoverage(c.pix, c.w, c.h, c.left, c.top, atlas.Image, gx, gy, c.slotW, cellH, ascender, gamma)
-			atlas.Ligatures[c.key] = Ligature{Glyph: Glyph{X: gx, Y: gy, W: c.slotW, H: cellH}, Cells: c.cells}
-			continue
+		// A merge's one glyph already fills slotW; a reshape's several
+		// each land at their own nominal cell offset within it, so
+		// blitCoverage's clamp only ever kicks in at the whole box's
+		// outer edges — never between two of a reshape's own columns —
+		// letting a negative left bearing bleed into its neighbor
+		// exactly as the font intends (see ligCandidate's doc comment).
+		for j, g := range c.glyphs {
+			if g.w == 0 || g.h == 0 {
+				continue
+			}
+			blitCoverage(g.pix, g.w, g.h, g.left, g.top, atlas.Image, gx+j*cellW, gy, c.slotW, cellH, ascender, gamma)
 		}
-		fb := reshaped[s.reshapedIdx].glyphs[s.glyphIdx]
-		blitCoverage(fb.pix, fb.w, fb.h, fb.left, fb.top, atlas.Image, gx, gy, cellW, cellH, ascender, gamma)
-		reshapedGlyphs[s.reshapedIdx][s.glyphIdx] = Glyph{X: gx, Y: gy, W: cellW, H: cellH}
-	}
-	for i, rc := range reshaped {
-		atlas.Ligatures[rc.key] = Ligature{Cells: len(rc.glyphs), PerCell: reshapedGlyphs[i]}
+		atlas.Ligatures[c.key] = Ligature{Glyph: Glyph{X: gx, Y: gy, W: c.slotW, H: cellH}, Cells: c.cells}
 	}
 	return nil
 }
@@ -227,6 +222,40 @@ func isolatedGIDs(shaper *hbShaper) map[rune]uint32 {
 	return baseline
 }
 
+// isReshapeCandidate reports whether r belongs to the character set a
+// real contextual-reshape programming ligature is ever built from:
+// punctuation, never a letter or digit — see tryRune's own doc comment
+// for why the reshape check (unlike the merge check) restricts to this
+// narrower set.
+func isReshapeCandidate(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return false
+	default:
+		return true
+	}
+}
+
+// maxLigatureTries hard-bounds discoverLigatures' total shaping work
+// regardless of what the font actually defines. The initial pair pass
+// alone (94x94, unconditional) is always cheap; the risk is the
+// growth phase after it (see discoverLigatures' own doc comment),
+// which is bounded above by frontier-size * alphabet-size * 2 per
+// round — fine for a collapse-style font (a real single-glyph merge is
+// rare, so the frontier stays in the dozens-to-low-hundreds) but not
+// for a contextual-reshape font with rich 'calt' rules: FiraCode's
+// chaining rules leave a large fraction of ALL punctuation pairs
+// reshaped relative to their isolated glyph (see shapeSequence's own
+// doc comment), so the reshape frontier can start in the thousands —
+// observed in practice to still be growing, and still using real CPU,
+// past 30+ seconds against the genuine upstream FiraCode release.
+// Stopping once this many candidate sequences have been shaped keeps
+// atlas rebuild time bounded on every font: every 2-character rule is
+// still found in full (the pair pass runs unconditionally, before this
+// budget is ever checked), only the rarer 3+-character extensions on
+// an unusually rule-dense font are the ones that can be cut short.
+const maxLigatureTries = 20_000
+
 // discoverLigatures searches ligatureAlphabet combinatorially, via
 // shaper, for every rune sequence the font's GSUB rules turn into
 // something other than each rune's own independent glyph — either a
@@ -237,46 +266,63 @@ func isolatedGIDs(shaper *hbShaper) map[rune]uint32 {
 // infeasible (94^6), so this grows breadth-first instead: test every
 // pair outright (94x94, fast), then only extend sequences that already
 // matched — trying one more alphabet character on either side — up to
-// maxLigatureLen. This assumes a real ligature font's longer rules
-// build on shorter ones that also independently match (true of every
-// font this was checked against: FiraCode, JetBrains Mono, Cascadia
-// Code — their multi-character triggers are extensions of a shorter
-// matching prefix/suffix, since that mirrors how calt rule chains and
-// GSUB ligature-of-ligatures substitutions are actually authored). A
-// font with a ligature whose every shorter sub-sequence fails to match
-// on its own would be missed; no font encountered so far does that.
+// maxLigatureLen, within maxLigatureTries' hard budget. This assumes a
+// real ligature font's longer rules build on shorter ones that also
+// independently match (true of every font this was checked against:
+// FiraCode, JetBrains Mono, Cascadia Code — their multi-character
+// triggers are extensions of a shorter matching prefix/suffix, since
+// that mirrors how calt rule chains and GSUB ligature-of-ligatures
+// substitutions are actually authored). A font with a ligature whose
+// every shorter sub-sequence fails to match on its own would be
+// missed; no font encountered so far does that.
 func discoverLigatures(shaper *hbShaper) map[string]ligatureRule {
 	alphabet := ligatureAlphabet()
 	baseline := isolatedGIDs(shaper)
 	found := make(map[string]ligatureRule)
+	tries := 0
 
 	// tryRune checks one candidate sequence against both shapes a
 	// ligature rule can take — a merge first (cheap: shapeCollapsesToOne
-	// already stops at glyph count 1), then a same-count contextual
-	// reshape, which only counts as a real match if at least one
-	// position's glyph actually differs from that rune's own isolated
-	// shape (otherwise HarfBuzz just shaped each character independently,
-	// same as not being a ligature at all).
+	// already stops at glyph count 1, and tried against any candidate,
+	// letters included, so a real text ligature like "ffi" is still
+	// found the way it always was), then a same-count contextual
+	// reshape. The reshape check is deliberately much stricter, since
+	// unlike a merge (rare, and always visually obvious when it fires)
+	// a contextual glyph swap is common in real fonts for reasons that
+	// have nothing to do with a "connecting" ligature — kerning-class
+	// substitutions, stylistic variants, letter/digit disambiguation —
+	// and an early version of this check that accepted any candidate
+	// where at least one position's glyph merely differed from its
+	// isolated shape found thousands of such false positives on real
+	// FiraCode (letters mixed with punctuation, one changed glyph out
+	// of three), most of them meaningless. Two things bring that back
+	// down to real programming ligatures specifically: every rune in
+	// the sequence must be punctuation (isReshapeCandidate — a letter
+	// or digit taking on a contextual variant is never what "ligature"
+	// means here), and every position's glyph — not just one — must
+	// differ from its own isolated shape, since a real connecting
+	// ligature reshapes both ends of the join, not one side in
+	// isolation (confirmed against FiraCode's own "<-": both the '<'
+	// and the '-' glyph IDs change, never just one).
 	tryRune := func(seq []rune) (ligatureRule, bool) {
+		tries++
 		if gid, ok := shaper.shapeCollapsesToOne(seq); ok {
 			return ligatureRule{Merged: true, GID: gid}, true
+		}
+		for _, r := range seq {
+			if !isReshapeCandidate(r) {
+				return ligatureRule{}, false
+			}
 		}
 		gids, ok := shaper.shapeSequence(seq)
 		if !ok {
 			return ligatureRule{}, false
 		}
-		changed := false
 		for i, r := range seq {
 			base, known := baseline[r]
-			if !known {
+			if !known || gids[i] == base {
 				return ligatureRule{}, false
 			}
-			if gids[i] != base {
-				changed = true
-			}
-		}
-		if !changed {
-			return ligatureRule{}, false
 		}
 		return ligatureRule{GIDs: gids}, true
 	}
@@ -292,10 +338,13 @@ func discoverLigatures(shaper *hbShaper) map[string]ligatureRule {
 		}
 	}
 
-	for length := 3; length <= maxLigatureLen && len(frontier) > 0; length++ {
+	for length := 3; length <= maxLigatureLen && len(frontier) > 0 && tries < maxLigatureTries; length++ {
 		tried := make(map[string]bool)
 		var next [][]rune
 		tryGrown := func(grown []rune) {
+			if tries >= maxLigatureTries {
+				return
+			}
 			key := string(grown)
 			if _, already := found[key]; already || tried[key] {
 				return
@@ -308,6 +357,9 @@ func discoverLigatures(shaper *hbShaper) map[string]ligatureRule {
 		}
 		for _, seq := range frontier {
 			for _, c := range alphabet {
+				if tries >= maxLigatureTries {
+					break
+				}
 				tryGrown(append([]rune{c}, seq...))
 				tryGrown(append(append([]rune{}, seq...), c))
 			}

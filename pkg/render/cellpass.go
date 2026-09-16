@@ -295,19 +295,8 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				continue
 			}
 			if lig, ok := matchLigature(atlas, grid, scr.Cols, x, y, fg, cfg, sel); ok {
-				if lig.PerCell != nil {
-					// A contextual-reshape ligature (see font.Ligature's
-					// doc comment): one real glyph per matched cell,
-					// each drawn at its own normal cell width rather
-					// than one quad stretched across the whole run.
-					for i, g := range lig.PerCell {
-						u0, v0, us, vs := glyphUV(atlas, g)
-						cp.textScratch = appendGlyphInstance(cp.textScratch, px+float32(i)*cw, py, u0, v0, us, vs, fg, bg, style, shear, 1)
-					}
-				} else {
-					u0, v0, us, vs := glyphUV(atlas, lig.Glyph)
-					cp.textScratch = appendGlyphInstance(cp.textScratch, px, py, u0, v0, us, vs, fg, bg, style, shear, float32(lig.Cells))
-				}
+				u0, v0, us, vs := glyphUV(atlas, lig.Glyph)
+				cp.textScratch = appendGlyphInstance(cp.textScratch, px, py, u0, v0, us, vs, fg, bg, style, shear, float32(lig.Cells))
 				ligatureSkip = lig.Cells - 1
 				continue
 			}

@@ -270,23 +270,34 @@ func TestBuildLigaturesDisabledSkipsDiscovery(t *testing.T) {
 
 // TestBuildLigaturesEnabledRunsDiscoveryWithoutError guards the discovery
 // pipeline's plumbing (HarfBuzz shaping -> glyph rasterization -> atlas
-// packing) end to end against the real bundled font, without asserting
-// any specific ligature was found: the bundled FiraCode build is a Nerd
-// Font Propo patch whose GSUB 'calt' ligature chains were verified
-// (independently of this package, via a standalone HarfBuzz shaping
-// test) to no longer resolve to a single glyph for any of "=>", "->",
-// "==", "!=" or a dozen other common pairs — a known side effect of how
-// the Nerd Fonts patcher renumbers glyph IDs without always updating
-// GSUB's own internal cross-references. discoverLigatures/hbShaper
-// themselves were separately confirmed correct against a real ligature
-// (DejaVu Serif's "fi"), so this test's job is only to guard that
-// enabling ligatures against a real, large font never errors, panics, or
-// leaves a nil map — not to re-assert the bundled font's own ligature
-// support, which this specific patched build doesn't have.
+// packing) end to end against the real bundled font, and — now that
+// discoverLigatures recognizes both ways a font's GSUB rules produce a
+// ligature — actually asserts a real, well-known one shows up.
+//
+// The bundled FiraCode build is a Nerd Font Propo patch whose GSUB
+// 'calt' chains were independently verified, via a standalone HarfBuzz
+// shaping test, to no longer collapse "=>"/"->"/"=="/"!=" (and a dozen
+// other common pairs) into a single merged glyph — a known side effect
+// of how the Nerd Fonts patcher renumbers glyph IDs without always
+// updating GSUB's own internal cross-references. That's still true, but
+// it turned out to be the wrong thing to check: FiraCode (and Cascadia
+// Code, and JetBrains Mono — verified against all three's genuine
+// upstream releases, not just this patched bundle) never implements
+// these as a single merged glyph in the first place. Each keeps one
+// glyph per character and reshapes it via a chaining 'calt' rule so
+// adjacent glyphs visually connect instead — the renumbering that
+// breaks a merge doesn't touch that mechanism, so it survives the patch
+// intact, and discoverLigatures now looks for it explicitly (see
+// ligatureRule/isReshapeCandidate).
 func TestBuildLigaturesEnabledRunsDiscoveryWithoutError(t *testing.T) {
 	atlas, err := Build(DefaultFontBytes(), []rune("A"), 20, 1.0, 1, 1.0, nil, 0, true)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
+	}
+	for _, want := range []string{"=>", "->", "==", "!="} {
+		if _, ok := atlas.Ligatures[want]; !ok {
+			t.Errorf("bundled font: expected %q to be a discovered ligature", want)
+		}
 	}
 	if atlas.Ligatures == nil {
 		t.Fatal("Ligatures must be a non-nil map even when discovery finds nothing")
