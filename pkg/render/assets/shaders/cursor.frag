@@ -86,9 +86,16 @@ void main() {
 	vec2 center = restCenter;
 
 	// Signed distance to the rounded rectangle: negative inside, 0 on the
-	// boundary, positive outside.
+	// boundary, positive outside. The min(max(q.x,q.y),0.0) term is the
+	// interior branch — length(max(q,0.0)) alone is only correct outside
+	// the box; without it every interior point (any q.x,q.y <= 0) evaluates
+	// to exactly -headRadius regardless of how deep inside it is, which
+	// happened to look right only because headRadius used to have a
+	// hardcoded floor (comfortably negative); at uRadius == 0 (a square
+	// cursor) that collapsed to headDist == 0 everywhere inside — right on
+	// the antialiasing edge — rendering the cursor at zero brightness.
 	vec2 q = abs(px - center) - (headHalf - headRadius);
-	float headDist = length(max(q, 0.0)) - headRadius;
+	float headDist = min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - headRadius;
 	float headCore = 1.0 - smoothstep(-uGlow, 0.0, headDist);
 
 	// The tail is a round cone (a capsule tapering to a point) from the
