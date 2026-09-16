@@ -469,7 +469,7 @@ func buildFacesWithProgress(cfg config.Config, dpi float32, maxTextureSize int, 
 			progress("Resolving font", 0, 0)
 		}
 		faceBytes := loadFontFaces(cfg.Font.Family)
-		faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*effectiveScale, cfg.Atlas.Gamma, effectiveScale, cfg.Font.LineHeight, maxTextureSize, progress)
+		faces, err := font.BuildFaces(faceBytes, cfg.Font.Size*effectiveScale, cfg.Atlas.Gamma, effectiveScale, cfg.Font.LineHeight, maxTextureSize, cfg.Font.Ligatures, progress)
 		if err == nil {
 			if requested > 0 && scale != requested {
 				log.Printf("atlas.scale %d was too high for this display/GPU; using %d instead — lower it in your config to stop seeing this", requested, scale)

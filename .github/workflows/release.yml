@@ -42,7 +42,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libgl1-mesa-dev xorg-dev \
-            libwayland-dev libxkbcommon-dev wayland-protocols extra-cmake-modules
+            libwayland-dev libxkbcommon-dev wayland-protocols extra-cmake-modules \
+            libharfbuzz-dev
       - name: Build and package
         run: make package-linux
       - uses: actions/upload-artifact@v4

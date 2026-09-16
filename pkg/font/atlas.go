@@ -61,6 +61,14 @@ type Atlas struct {
 	// fixed-grid atlas needs since it can't resize a glyph's box per
 	// frame the way Ghostty's shaper does.
 	WideGlyphs map[rune]Glyph
+	// Ligatures holds a rasterized glyph for every ligature the loaded
+	// font's own GSUB table defines (see ligatures.go/harfbuzz.go/
+	// gsub.go), keyed by the literal rune sequence it replaces (e.g.
+	// "=>") — empty, never nil, when ligature discovery is disabled or
+	// the font has none. CellPass draws from here in place of Glyphs
+	// whenever it finds a matching run of same-styled cells starting at
+	// the current one.
+	Ligatures map[string]Ligature
 }
 
 // Progress reports build progress: phase names the current stage (e.g.
@@ -139,15 +147,18 @@ func EnumerateRunes(fontBytes []byte) ([]rune, error) {
 // fails on upload and every glyph then samples as blank — text just
 // disappears, with nothing in this process's own control flow ever
 // seeing an error. maxTextureSize <= 0 disables the check (tests that
-// don't have a GL context to size against).
-func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale int, lineHeight float64, fallbackBytes []byte, maxTextureSize int) (*Atlas, error) {
-	return build(fontBytes, runes, pixelHeight, gamma, scale, lineHeight, fallbackBytes, maxTextureSize, nil)
+// don't have a GL context to size against). ligatures gates GSUB
+// ligature discovery (see ligatures.go) — false skips it entirely, at
+// zero added cost, rather than building an atlas nothing will read
+// Ligatures from.
+func Build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale int, lineHeight float64, fallbackBytes []byte, maxTextureSize int, ligatures bool) (*Atlas, error) {
+	return build(fontBytes, runes, pixelHeight, gamma, scale, lineHeight, fallbackBytes, maxTextureSize, ligatures, nil)
 }
 
 // build is Build with progress reporting during rasterization. progress
 // receives (done, total) glyph counts as the raster loop advances; nil
 // disables it.
-func build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale int, lineHeight float64, fallbackBytes []byte, maxTextureSize int, progress func(done, total int)) (*Atlas, error) {
+func build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale int, lineHeight float64, fallbackBytes []byte, maxTextureSize int, ligatures bool, progress func(done, total int)) (*Atlas, error) {
 	SetOvershoot(scale)
 	lib, err := newFTLibrary()
 	if err != nil {
@@ -278,6 +289,13 @@ func build(fontBytes []byte, runes []rune, pixelHeight int, gamma float64, scale
 	if err := buildWideGlyphs(atlas, runes, face, fallbackFace, fromFallback, cellW, cellH, ascender, gamma, glyphPadding, maxTextureSize); err != nil {
 		return nil, err
 	}
+	if ligatures {
+		if err := buildLigatures(atlas, fontBytes, face, cellW, cellH, ascender, gamma, glyphPadding, maxTextureSize); err != nil {
+			return nil, err
+		}
+	} else {
+		atlas.Ligatures = map[string]Ligature{}
+	}
 	return atlas, nil
 }
 
@@ -354,7 +372,11 @@ func buildWideGlyphs(atlas *Atlas, runes []rune, face, fallbackFace *ftFace, fro
 	// offer instead of an independent sqrt(area) guess.
 	mainBounds := atlas.Image.Bounds()
 	targetRowW := max(mainBounds.Dx(), cellW*2)
-	xs, ys, regionW, regionH := packShelves(icons, glyphPadding, cellH, targetRowW)
+	slotWidths := make([]int, len(icons))
+	for i, ic := range icons {
+		slotWidths[i] = ic.slotW
+	}
+	xs, ys, regionW, regionH := packShelves(slotWidths, glyphPadding, cellH, targetRowW)
 	finalW, finalH := max(mainBounds.Dx(), regionW), mainBounds.Dy()+regionH
 	if maxTextureSize > 0 && (finalW > maxTextureSize || finalH > maxTextureSize) {
 		return fmt.Errorf("atlas texture %dx%d (with wide icon variants) exceeds this GPU's max texture size (%d) — lower atlas.scale or font.size",
@@ -380,18 +402,20 @@ func buildWideGlyphs(atlas *Atlas, runes []rune, face, fallbackFace *ftFace, fro
 	return nil
 }
 
-// packShelves lays icons out in fixed-height rows (shelves), each icon
-// placed at its own slot width instead of a uniform one, wrapping to a
-// new shelf once a row would exceed targetRowW. Returns each icon's
-// (x, y) position (padding already applied) in the same order as icons,
-// plus the overall region size those positions fit within.
-func packShelves(icons []wideIcon, padding, rowH, targetRowW int) (xs, ys []int, regionW, regionH int) {
-	n := len(icons)
+// packShelves lays out items in fixed-height rows (shelves), each at its
+// own slot width (slotWidths[i], already including any reserved gap)
+// instead of a uniform one, wrapping to a new shelf once a row would
+// exceed targetRowW. Returns each item's (x, y) position (padding
+// already applied) in the same order as slotWidths, plus the overall
+// region size those positions fit within. Shared by buildWideGlyphs and
+// buildLigatures — packing itself doesn't care what's being packed.
+func packShelves(slotWidths []int, padding, rowH, targetRowW int) (xs, ys []int, regionW, regionH int) {
+	n := len(slotWidths)
 	xs, ys = make([]int, n), make([]int, n)
 	packedH := rowH + 2*padding
 	x, y, rowW, maxRowW := 0, 0, 0, 0
-	for i, ic := range icons {
-		slot := ic.slotW + 2*padding
+	for i, w := range slotWidths {
+		slot := w + 2*padding
 		if rowW > 0 && rowW+slot > targetRowW {
 			maxRowW = max(maxRowW, rowW)
 			x, rowW = 0, 0
@@ -445,9 +469,10 @@ type Faces struct {
 // required to be. Every style falls back to the bundled Nerd Font's own
 // glyphs (DefaultFontBytes/DefaultBoldFontBytes) for any codepoint it's
 // missing, so the icon set available doesn't depend on which family
-// config.Font.Family names — see Build's fallbackBytes. maxTextureSize is
-// forwarded to every Build call — see Build's own doc comment.
-func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int, lineHeight float64, maxTextureSize int, progress Progress) (*Faces, error) {
+// config.Font.Family names — see Build's fallbackBytes. maxTextureSize
+// and ligatures are forwarded to every Build call — see Build's own doc
+// comment.
+func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int, lineHeight float64, maxTextureSize int, ligatures bool, progress Progress) (*Faces, error) {
 	build := func(name string, b, fallback []byte) (*Atlas, error) {
 		if b == nil {
 			return nil, nil
@@ -456,7 +481,7 @@ func BuildFaces(bytes FaceBytes, pixelHeight int, gamma float64, scale int, line
 		if err != nil {
 			return nil, fmt.Errorf("enumerate %s glyphs: %w", name, err)
 		}
-		atlas, err := build(b, runes, pixelHeight, gamma, scale, lineHeight, fallback, maxTextureSize, func(done, total int) {
+		atlas, err := build(b, runes, pixelHeight, gamma, scale, lineHeight, fallback, maxTextureSize, ligatures, func(done, total int) {
 			if progress != nil {
 				progress("Rasterizing "+name, done, total)
 			}

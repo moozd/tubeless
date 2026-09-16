@@ -108,6 +108,11 @@ type Font struct {
 	Family     string  `toml:"family"`
 	Size       int     `toml:"size"`
 	LineHeight float64 `toml:"line_height"`
+	// Ligatures enables drawing GSUB programming ligatures (=>, ->, !=, ...)
+	// the loaded font itself defines, discovered from its own GSUB table
+	// at atlas build time — see font.Faces/Atlas.Ligatures. Off costs
+	// nothing beyond a couple of skipped function calls.
+	Ligatures bool `toml:"ligatures"`
 }
 
 // Atlas controls the offscreen glyph rasterization (see cmd/tubeless's
@@ -508,7 +513,7 @@ func Load(path, flagTheme string) (Config, error) {
 // doc comment on the two axes this seeds.
 func Default() Config {
 	cfg := Config{
-		Font:       Font{Family: "", Size: 14, LineHeight: 1},
+		Font:       Font{Family: "", Size: 14, LineHeight: 1, Ligatures: true},
 		Atlas:      Atlas{Scale: 4, Gamma: 1.0},
 		Scrollback: Scrollback{Lines: DefaultScrollbackLines},
 	}

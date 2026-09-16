@@ -238,6 +238,7 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 	grid := scr.VisibleWindow(scrollOffset)
 
 	for y := 0; y < scr.Rows; y++ {
+		ligatureSkip := 0 // consecutive continuation cells still owed to an already-drawn ligature this row
 		for x := 0; x < scr.Cols; x++ {
 			cell := grid[y][x]
 			fg, bg := cellColors(cell.Attr, cfg)
@@ -284,6 +285,22 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 			}
 			style, shear := glyphStyle(cell.Attr.Bold, cell.Attr.Italic, cp.availItalic, cp.availBoldItalic)
 			atlas := cp.atlasForStyle(style)
+
+			if ligatureSkip > 0 {
+				// A continuation cell of a ligature already drawn at an
+				// earlier x this row — its own bg/underline/selection
+				// handling above already ran normally; only the glyph
+				// layer is merged into that single earlier instance.
+				ligatureSkip--
+				continue
+			}
+			if lig, ok := matchLigature(atlas, grid, scr.Cols, x, y, fg, cfg, sel); ok {
+				u0, v0, us, vs := glyphUV(atlas, lig.Glyph)
+				cp.textScratch = appendGlyphInstance(cp.textScratch, px, py, u0, v0, us, vs, fg, bg, style, shear, float32(lig.Cells))
+				ligatureSkip = lig.Cells - 1
+				continue
+			}
+
 			g, ok := atlas.Glyphs[cell.Rune]
 			if !ok {
 				// The selected style's face doesn't have this rune (e.g.
@@ -329,6 +346,61 @@ func iconCanWiden(grid [][]screen.Cell, cols, x, y int) bool {
 		return false
 	}
 	return grid[y][x+1].Rune == ' '
+}
+
+// maxLigatureMatchLen bounds how many consecutive cells matchLigature
+// tries at each starting cell — a loose upper bound over any real
+// discovered ligature, decoupled from the font package's own internal
+// discovery search bound (see font's maxLigatureLen).
+const maxLigatureMatchLen = 8
+
+// matchLigature tries progressively longer runs of consecutive cells
+// starting at (x,y) — up to maxLigatureMatchLen or the row's remaining
+// width — against atlas.Ligatures, stopping a run early the moment a
+// cell's Bold/Italic or effective foreground color (including the
+// selection swap, via effectiveFg — matching exactly what's actually
+// drawn) stops matching the starting cell's, since a ligature glyph is a
+// single-color coverage bitmap that can't itself represent a style or
+// color change partway through. Returns the longest match found, since
+// a shorter prefix not being in the map never rules out a longer one
+// (e.g. "<=" and "<==>" can both be real, independent ligatures).
+func matchLigature(atlas *font.Atlas, grid [][]screen.Cell, cols, x, y int, startFg [3]float32, cfg config.Config, sel Selection) (font.Ligature, bool) {
+	if len(atlas.Ligatures) == 0 {
+		return font.Ligature{}, false
+	}
+	start := grid[y][x]
+	limit := min(maxLigatureMatchLen, cols-x)
+	runes := make([]rune, 1, limit)
+	runes[0] = start.Rune
+
+	var best font.Ligature
+	found := false
+	for length := 2; length <= limit; length++ {
+		cx := x + length - 1
+		cell := grid[y][cx]
+		if cell.Attr.Bold != start.Attr.Bold || cell.Attr.Italic != start.Attr.Italic {
+			break
+		}
+		if effectiveFg(cell.Attr, cfg, sel, cx, y) != startFg {
+			break
+		}
+		runes = append(runes, cell.Rune)
+		if lig, ok := atlas.Ligatures[string(runes)]; ok {
+			best, found = lig, true
+		}
+	}
+	return best, found
+}
+
+// effectiveFg resolves (x,y)'s foreground color exactly as BuildInstances'
+// main per-cell loop does, selection swap included, so matchLigature's
+// per-cell comparison always agrees with what actually gets drawn there.
+func effectiveFg(attr screen.Attr, cfg config.Config, sel Selection, x, y int) [3]float32 {
+	fg, bg := cellColors(attr, cfg)
+	if sel.Contains(x, y) {
+		return bg
+	}
+	return fg
 }
 
 // glyphUV converts a Glyph's pixel rect within atlas into normalized

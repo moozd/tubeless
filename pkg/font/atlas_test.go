@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildProducesCoverage(t *testing.T) {
-	atlas, err := Build(DefaultFontBytes(), []rune("Ag@"), 20, 1.0, 1, 1.0, nil, 0)
+	atlas, err := Build(DefaultFontBytes(), []rune("Ag@"), 20, 1.0, 1, 1.0, nil, 0, false)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestBuildProducesCoverage(t *testing.T) {
 func TestBuildSkipsMissingGlyphsGracefully(t *testing.T) {
 	// U+1F600 (an emoji) is very unlikely to be in a plain monospace TTF;
 	// this must not fail the whole atlas build.
-	atlas, err := Build(DefaultFontBytes(), []rune{'A', 0x1F600}, 20, 1.0, 1, 1.0, nil, 0)
+	atlas, err := Build(DefaultFontBytes(), []rune{'A', 0x1F600}, 20, 1.0, 1, 1.0, nil, 0, false)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestBuildSkipsMissingGlyphsGracefully(t *testing.T) {
 // line-height.
 func TestLineHeightKeepsSpritesEdgeToEdge(t *testing.T) {
 	for _, lh := range []float64{0.8, 1.0, 1.5, 2.0} {
-		atlas, err := Build(DefaultFontBytes(), []rune{0x2502, 0x2588}, 20, 1.0, 1, lh, nil, 0)
+		atlas, err := Build(DefaultFontBytes(), []rune{0x2502, 0x2588}, 20, 1.0, 1, lh, nil, 0, false)
 		if err != nil {
 			t.Fatalf("Build(lineHeight=%v): %v", lh, err)
 		}
@@ -72,11 +72,11 @@ func TestLineHeightKeepsSpritesEdgeToEdge(t *testing.T) {
 // the atlas's cell size, symmetric around 1.0 (no font-specific rounding
 // surprise, since 1.0 must be a no-op relative to the unscaled metrics).
 func TestLineHeightScalesCellHeight(t *testing.T) {
-	base, err := Build(DefaultFontBytes(), []rune("A"), 40, 1.0, 1, 1.0, nil, 0)
+	base, err := Build(DefaultFontBytes(), []rune("A"), 40, 1.0, 1, 1.0, nil, 0, false)
 	if err != nil {
 		t.Fatalf("Build(lineHeight=1.0): %v", err)
 	}
-	tall, err := Build(DefaultFontBytes(), []rune("A"), 40, 1.0, 1, 1.5, nil, 0)
+	tall, err := Build(DefaultFontBytes(), []rune("A"), 40, 1.0, 1, 1.5, nil, 0, false)
 	if err != nil {
 		t.Fatalf("Build(lineHeight=1.5): %v", err)
 	}
@@ -113,7 +113,7 @@ func TestBuildFillsGapsFromFallback(t *testing.T) {
 		t.Skip("bundled font has no PUA icon glyphs to test against")
 	}
 
-	withFallback, err := Build(DefaultFontBytes(), []rune{'A'}, 20, 1.0, 1, 1.0, DefaultFontBytes(), 0)
+	withFallback, err := Build(DefaultFontBytes(), []rune{'A'}, 20, 1.0, 1, 1.0, DefaultFontBytes(), 0, false)
 	if err != nil {
 		t.Fatalf("Build with fallback: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestBuildFillsGapsFromFallback(t *testing.T) {
 		t.Fatalf("icon %U has no ink", icon)
 	}
 
-	withoutFallback, err := Build(DefaultFontBytes(), []rune{'A'}, 20, 1.0, 1, 1.0, nil, 0)
+	withoutFallback, err := Build(DefaultFontBytes(), []rune{'A'}, 20, 1.0, 1, 1.0, nil, 0, false)
 	if err != nil {
 		t.Fatalf("Build without fallback: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestBuildFillsGapsFromFallback(t *testing.T) {
 // already exceeds it) keeps this fast and independent of the actual
 // rune count or any real GPU.
 func TestBuildRejectsOversizedAtlas(t *testing.T) {
-	_, err := Build(DefaultFontBytes(), []rune("A"), 200, 1.0, 1, 1.0, nil, 10)
+	_, err := Build(DefaultFontBytes(), []rune("A"), 200, 1.0, 1, 1.0, nil, 10, false)
 	if err == nil {
 		t.Fatal("Build did not reject an atlas far larger than maxTextureSize")
 	}
@@ -218,7 +218,7 @@ func TestSymbolSpriteOnlyFallsBackWhenFontLacksGlyph(t *testing.T) {
 // (2713) is shipped by the font and must come through as a real glyph; the
 // rest are generated procedurally (see sprites_symbols.go).
 func TestBuildCoversSymbolFallbacks(t *testing.T) {
-	atlas, err := Build(DefaultFontBytes(), []rune("A"), 24, 1.0, 1, 1.0, DefaultFontBytes(), 0)
+	atlas, err := Build(DefaultFontBytes(), []rune("A"), 24, 1.0, 1, 1.0, DefaultFontBytes(), 0, false)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestBuildCoversSymbolFallbacks(t *testing.T) {
 // atlas and drawn by the box-drawing geometry rather than left blank (the
 // bundled font has no glyph for it).
 func TestBuildIncludesDentistrySymbol(t *testing.T) {
-	atlas, err := Build(DefaultFontBytes(), []rune("A"), 24, 1.0, 1, 1.0, nil, 0)
+	atlas, err := Build(DefaultFontBytes(), []rune("A"), 24, 1.0, 1, 1.0, nil, 0, false)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -248,6 +248,48 @@ func TestBuildIncludesDentistrySymbol(t *testing.T) {
 	}
 	if !hasCoverage(atlas, g) {
 		t.Fatal("⎿ (U+23BF) has no ink")
+	}
+}
+
+// TestBuildLigaturesDisabledSkipsDiscovery guards the cost/gating
+// contract in Build's doc comment: ligatures=false must leave
+// Atlas.Ligatures a real, non-nil (so callers never need a nil check)
+// but empty map, without running GSUB/HarfBuzz discovery at all.
+func TestBuildLigaturesDisabledSkipsDiscovery(t *testing.T) {
+	atlas, err := Build(DefaultFontBytes(), []rune("A"), 20, 1.0, 1, 1.0, nil, 0, false)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if atlas.Ligatures == nil {
+		t.Fatal("Ligatures must be a non-nil empty map, not nil, when disabled")
+	}
+	if len(atlas.Ligatures) != 0 {
+		t.Fatalf("Ligatures must be empty when disabled, got %d entries", len(atlas.Ligatures))
+	}
+}
+
+// TestBuildLigaturesEnabledRunsDiscoveryWithoutError guards the discovery
+// pipeline's plumbing (HarfBuzz shaping -> glyph rasterization -> atlas
+// packing) end to end against the real bundled font, without asserting
+// any specific ligature was found: the bundled FiraCode build is a Nerd
+// Font Propo patch whose GSUB 'calt' ligature chains were verified
+// (independently of this package, via a standalone HarfBuzz shaping
+// test) to no longer resolve to a single glyph for any of "=>", "->",
+// "==", "!=" or a dozen other common pairs — a known side effect of how
+// the Nerd Fonts patcher renumbers glyph IDs without always updating
+// GSUB's own internal cross-references. discoverLigatures/hbShaper
+// themselves were separately confirmed correct against a real ligature
+// (DejaVu Serif's "fi"), so this test's job is only to guard that
+// enabling ligatures against a real, large font never errors, panics, or
+// leaves a nil map — not to re-assert the bundled font's own ligature
+// support, which this specific patched build doesn't have.
+func TestBuildLigaturesEnabledRunsDiscoveryWithoutError(t *testing.T) {
+	atlas, err := Build(DefaultFontBytes(), []rune("A"), 20, 1.0, 1, 1.0, nil, 0, true)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if atlas.Ligatures == nil {
+		t.Fatal("Ligatures must be a non-nil map even when discovery finds nothing")
 	}
 }
 

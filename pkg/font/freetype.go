@@ -83,11 +83,11 @@ func (f *ftFace) setPixelSize(px int) error {
 // advancePixels returns the hinted advance width for r, in whole pixels,
 // or 0 if the font has no glyph for r.
 func (f *ftFace) advancePixels(r rune) int {
-	idx := C.FT_Get_Char_Index(f.face, C.FT_ULong(r))
+	idx := f.glyphIndex(r)
 	if idx == 0 {
 		return 0
 	}
-	if C.FT_Load_Glyph(f.face, idx, C.FT_Int32(C.ft_load_flags())) != 0 {
+	if C.FT_Load_Glyph(f.face, C.FT_UInt(idx), C.FT_Int32(C.ft_load_flags())) != 0 {
 		return 0
 	}
 	return int(f.face.glyph.advance.x >> 6)
@@ -117,17 +117,32 @@ func (f *ftFace) enumerateRunes() []rune {
 	return runes
 }
 
+// glyphIndex resolves r to its glyph index (GID) via the face's charmap,
+// or 0 if the font has no glyph for r — FreeType's own convention for
+// "missing", shared by FT_Get_Char_Index itself.
+func (f *ftFace) glyphIndex(r rune) uint32 {
+	return uint32(C.FT_Get_Char_Index(f.face, C.FT_ULong(r)))
+}
+
 // glyphBitmap loads and renders r, returning its coverage bitmap and the
 // pen-relative placement (bitmapLeft/bitmapTop, FreeType's usual bearing
 // convention) to draw it at. ok is false if the font has no glyph for r —
 // callers should leave that cell blank rather than fail the whole atlas,
 // since not every font covers every rune we ask for.
 func (f *ftFace) glyphBitmap(r rune) (pix []byte, w, h, bitmapLeft, bitmapTop int, ok bool) {
-	idx := C.FT_Get_Char_Index(f.face, C.FT_ULong(r))
+	idx := f.glyphIndex(r)
 	if idx == 0 {
 		return nil, 0, 0, 0, 0, false
 	}
-	if C.FT_Load_Glyph(f.face, idx, C.FT_Int32(C.ft_load_flags())) != 0 {
+	return f.glyphBitmapByIndex(idx)
+}
+
+// glyphBitmapByIndex is glyphBitmap without the rune→GID charmap lookup —
+// for glyphs reached by index directly, such as a GSUB ligature glyph
+// (see ligatures.go), which has no single Unicode codepoint of its own to
+// look up by.
+func (f *ftFace) glyphBitmapByIndex(idx uint32) (pix []byte, w, h, bitmapLeft, bitmapTop int, ok bool) {
+	if C.FT_Load_Glyph(f.face, C.FT_UInt(idx), C.FT_Int32(C.ft_load_flags())) != 0 {
 		return nil, 0, 0, 0, 0, false
 	}
 	slot := f.face.glyph
