@@ -107,14 +107,17 @@ func lineThickness(cellW, cellH int) int {
 // (atlas.go).
 var over = 2
 
-// SetOvershoot grows the sprite gutter overshoot to match cfg.Atlas.Scale
+// SetOvershoot sets the sprite gutter overshoot to match cfg.Atlas.Scale
 // (raster pixels per on-screen pixel). Build calls this once before
 // rasterizing sprites, so a larger atlas scale — and the deeper mip chain
-// it implies — doesn't bleed into the blank part of the gutter.
+// it implies — doesn't bleed into the blank part of the gutter. Tracks
+// the current scale exactly rather than only ever growing: a caller that
+// retries Build at progressively smaller scales (see cmd/tubeless's
+// clamp-to-fit loop in buildFacesWithProgress) needs the gutter — and so
+// the packed atlas's own padding overhead — to shrink back down with it,
+// not stay pinned at whatever the largest attempt asked for.
 func SetOvershoot(scale int) {
-	if scale > over {
-		over = scale
-	}
+	over = max(2, scale)
 }
 
 const supersample = 4
