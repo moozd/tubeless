@@ -1,12 +1,24 @@
 # tubeless
 
-A GPU-rendered terminal emulator, written in Go on top of GLFW/OpenGL.
+A GPU-rendered terminal emulator, written in Go on top of GLFW/OpenGL —
+built to be a terminal you enjoy looking at, not a strict emulation
+exercise.
 
 ![tubeless rendering true-color text with bold, italic, and a curly underline](assets/screenshots/hero.png)
 
 Every glyph — including bold, italic, ligatures, and the cursor glow —
 is drawn on the GPU, not blitted from a bitmap font cache. That's what
 lets a few things most terminals don't bother with:
+
+### Real programming ligatures, from the font's own GSUB tables
+
+`=>`, `!=`, `<-`, `>=` and friends are shaped by HarfBuzz straight from
+whatever font is loaded — including fonts (FiraCode, Cascadia Code,
+JetBrains Mono) that implement a ligature by reshaping two glyphs to
+visually connect rather than merging them into one, a case worth
+getting right on its own.
+
+![Go code rendered with real FiraCode ligatures: arrows, ≠, ≥, ≤](assets/screenshots/ligatures.png)
 
 ### A GPU icon atlas wide enough for the full Nerd Font set
 
