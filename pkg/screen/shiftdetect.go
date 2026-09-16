@@ -7,7 +7,7 @@ package screen
 // negative means content moved down. See DetectContentShift. Left/Right
 // span the full screen width (0, Cols-1) for an ordinary whole-screen
 // shift; a narrower range means the shift was confined to one column
-// band — a split window's pane — found by columnBands.
+// band — a split window's pane — found by ColumnBands.
 type RowShift struct {
 	Top, Bottom int
 	Left, Right int
@@ -20,7 +20,7 @@ type RowShift struct {
 // moved right. See DetectHorizontalContentShift. Top/Bottom span the
 // full screen height for an ordinary whole-screen shift; a narrower
 // range means the shift was confined to one row band — a horizontally
-// split window's pane — found by rowBands.
+// split window's pane — found by RowBands.
 type ColShift struct {
 	Left, Right int
 	Top, Bottom int
@@ -118,7 +118,7 @@ const (
 	shiftAuxSkip = 8
 
 	// minShiftBandWidth/minShiftBandHeight floor how narrow/short a
-	// column/row band (see columnBands/rowBands) can be before it's
+	// column/row band (see ColumnBands/RowBands) can be before it's
 	// still worth searching independently — a sliver a divider-detection
 	// false-positive carved off isn't wide/tall enough to carry
 	// meaningful evidence either way, so skip it rather than let it
@@ -130,7 +130,7 @@ const (
 	// dividerRowRatio is how much of a column's (or row's) height (width)
 	// must hold the same non-blank character, in the same position in
 	// both prev and next, to count as a persistent divider — see
-	// columnBands/rowBands. Not 1.0: a per-pane statusline row and the
+	// ColumnBands/RowBands. Not 1.0: a per-pane statusline row and the
 	// bottom command-line row are typically full-width and interrupt a
 	// vertical divider for exactly those rows, so requiring literal
 	// unanimity would mean the divider — and therefore the pane
@@ -145,7 +145,7 @@ const (
 	// Observed live: an indent-guide column hovered at ~0.675 (27 of 40
 	// rows) and repeatedly crossed a 0.7 threshold in either direction
 	// as the tree scrolled and different rows' nesting depth changed,
-	// making columnBands report a different, wrong pane boundary almost
+	// making ColumnBands report a different, wrong pane boundary almost
 	// every frame — which reads as the glide resetting/flickering on
 	// every scroll, since the renderer treats a changed column band as
 	// an unrelated new glide. A real window border — always present,
@@ -156,7 +156,7 @@ const (
 )
 
 // verticalDividerRunes/horizontalDividerRunes are the box-drawing
-// characters columnBands/rowBands accept as a plausible window-border
+// characters ColumnBands/RowBands accept as a plausible window-border
 // glyph — nvim's default vertical/horizontal split separator, tmux's
 // pane border, and their common stylistic variants — kept as separate
 // sets since a real vertical divider is always drawn with a vertical
@@ -189,10 +189,10 @@ var horizontalDividerRunes = map[rune]bool{
 // unanimated snap in that case, exactly like a plain repaint today.
 //
 // Tries the whole screen width first; if that finds nothing, falls back
-// to searching within each column band columnBands finds (a split
+// to searching within each column band ColumnBands finds (a split
 // window's pane) independently — a pane's own scroll never explains the
 // physical rows it shares with a frozen neighboring pane, so a
-// whole-row comparison alone misses it entirely; see columnBands' doc.
+// whole-row comparison alone misses it entirely; see ColumnBands' doc.
 // Only the first band that clears the threshold is reported — two panes
 // scrolling independently in the same frame isn't (yet) handled, since
 // the renderer only tracks one glide band per axis at a time.
@@ -203,7 +203,7 @@ func DetectContentShift(prev, next *Screen, maxShift int) (RowShift, bool) {
 	if shift, ok := detectContentShiftInBand(prev, next, maxShift, 0, prev.Cols-1); ok {
 		return shift, true
 	}
-	for _, band := range columnBands(prev, next) {
+	for _, band := range ColumnBands(prev, next) {
 		if band[1]-band[0]+1 < minShiftBandWidth {
 			continue
 		}
@@ -247,7 +247,7 @@ func detectContentShiftInBand(prev, next *Screen, maxShift, colLo, colHi int) (R
 // DetectHorizontalContentShift is DetectContentShift's column-axis
 // mirror, for content that shifts left/right (horizontal pagination, a
 // scrolling status line) instead of up/down. Tries the whole screen
-// height first, then falls back to each row band rowBands finds (a
+// height first, then falls back to each row band RowBands finds (a
 // horizontally split window's pane) — see DetectContentShift's doc for
 // why, mirrored onto rows instead of columns.
 func DetectHorizontalContentShift(prev, next *Screen, maxShift int) (ColShift, bool) {
@@ -257,7 +257,7 @@ func DetectHorizontalContentShift(prev, next *Screen, maxShift int) (ColShift, b
 	if shift, ok := detectHorizontalContentShiftInBand(prev, next, maxShift, 0, prev.Rows-1); ok {
 		return shift, true
 	}
-	for _, band := range rowBands(prev, next) {
+	for _, band := range RowBands(prev, next) {
 		if band[1]-band[0]+1 < minShiftBandHeight {
 			continue
 		}
@@ -297,7 +297,7 @@ func detectHorizontalContentShiftInBand(prev, next *Screen, maxShift, rowLo, row
 	return ColShift{Left: lo, Right: hi, Top: rowLo, Bottom: rowHi, Delta: delta}, true
 }
 
-// columnBands splits the screen width into the column ranges between
+// ColumnBands splits the screen width into the column ranges between
 // persistent vertical divider columns — nvim's default vertical-split
 // separator, a tmux pane border: a column drawing the same non-blank
 // character down (most of) the screen's height, in the SAME position in
@@ -312,7 +312,7 @@ func detectHorizontalContentShiftInBand(prev, next *Screen, maxShift, rowLo, row
 // won't be found, so a pane scroll behind one still won't animate. That
 // matches today's (no detection at all) behavior for that case, not a
 // regression.
-func columnBands(prev, next *Screen) [][2]int {
+func ColumnBands(prev, next *Screen) [][2]int {
 	cols, rows := prev.Cols, prev.Rows
 	isDivider := func(c int) bool {
 		matches := 0
@@ -341,11 +341,11 @@ func columnBands(prev, next *Screen) [][2]int {
 	return bands
 }
 
-// rowBands is columnBands' transpose: the row ranges between persistent
+// RowBands is ColumnBands' transpose: the row ranges between persistent
 // horizontal divider rows (a horizontally split window's border). See
-// columnBands' doc for the matching rules and its known blank-divider
+// ColumnBands' doc for the matching rules and its known blank-divider
 // gap.
-func rowBands(prev, next *Screen) [][2]int {
+func RowBands(prev, next *Screen) [][2]int {
 	cols, rows := prev.Cols, prev.Rows
 	isDivider := func(y int) bool {
 		matches := 0

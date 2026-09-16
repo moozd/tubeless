@@ -436,7 +436,7 @@ func TestDetectHorizontalContentShiftRejectsRepeatedRule(t *testing.T) {
 // git history). A vertical split's divider column glues two otherwise
 // unrelated panes into the same physical rows, so a whole-row hash never
 // matches even when one pane cleanly scrolled — DetectContentShift must
-// fall back to columnBands and search the scrolled pane's own column
+// fall back to ColumnBands and search the scrolled pane's own column
 // range independently.
 func TestDetectContentShiftFindsSplitPaneScroll(t *testing.T) {
 	const cols, rows = 40, 10
@@ -510,7 +510,7 @@ func mustCells(text string, n int) []Cell {
 	return cells
 }
 
-// TestDetectContentShiftIgnoresStaticSplitDivider guards columnBands
+// TestDetectContentShiftIgnoresStaticSplitDivider guards ColumnBands
 // itself: a vertical divider with nothing scrolling on either side must
 // not manufacture a shift out of nowhere.
 func TestDetectContentShiftIgnoresStaticSplitDivider(t *testing.T) {
@@ -680,7 +680,7 @@ func TestDetectContentShiftSurvivesRulerDigitReflow(t *testing.T) {
 // window border, but only on rows whose file happens to be nested —
 // which row that is changes as the tree scrolls. At a lenient ratio,
 // this column crossed the divider threshold in either direction almost
-// every frame, so columnBands reported a different (wrong) pane
+// every frame, so ColumnBands reported a different (wrong) pane
 // boundary on nearly every scroll — read live as the glide resetting on
 // every keystroke. A real window border is interrupted only by that
 // window's own chrome rows, not by roughly a third of ordinary content
@@ -703,7 +703,7 @@ func TestColumnBandsIgnoresPartialTreeIndentGuide(t *testing.T) {
 		}
 	}
 
-	bands := columnBands(prev, next)
+	bands := ColumnBands(prev, next)
 	want := [][2]int{{0, 38}, {40, 43}}
 	if len(bands) != len(want) {
 		t.Fatalf("bands = %+v, want %+v (indent guide at col 3 must not split the band)", bands, want)

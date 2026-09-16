@@ -131,30 +131,35 @@ type Renderer struct {
 	// Image-diff shift detection state (see imagediff.go) — the
 	// GPU-pixel-diff sibling of the rune-hash content-diff path fed by
 	// screen.DetectContentShift above, gated by
-	// config.Scrolling.ContentShiftMode == "image". Retained state, not
-	// recomputed every call: imageContentFBO plus the imageContentScr/
-	// CellW/CellH key memoize the current frame's zero-offset content
-	// render so DetectImageRowShift and DetectImageColShift, called back
-	// to back for the same frame, don't draw it twice. imagePrevRowSig/
-	// imagePrevColSig retain the previous frame's signatures directly as
-	// plain Go slices — no GPU-side ping-pong needed, since the
-	// signature is read back to the CPU every frame regardless —
-	// mirroring how cmd/tubeless retains lastScr for the CPU path.
-	signaturePass    *SignaturePass
-	imageContentFBO  *FBO
-	imageRowSigFBO   *FBO
-	imageColSigFBO   *FBO
-	imageBlankFBO    *FBO
-	imageBlankSigFBO *FBO
-	imageBlankScr    *screen.Screen
+	// config.Scrolling.ContentShiftMode == "image". imageContentFBO holds
+	// the current frame's zero-offset literal render; imagePrevContentFBO
+	// holds the previous one, so any candidate band — the whole screen,
+	// or one of screen.ColumnBands/RowBands' per-pane sub-ranges — can
+	// have its own before/after pixel signature computed fresh on
+	// demand, without needing to have pre-computed a signature for that
+	// specific band ahead of time. imageContentScr/CellW/CellH memoize
+	// which screen the CURRENT slot was rendered for, so
+	// DetectImageRowShift and DetectImageColShift, called back to back
+	// for the same frame, don't draw it twice — and mark the point where
+	// the previous slot's content gets preserved into
+	// imagePrevContentFBO before the current slot moves on to a new
+	// frame. imagePrevContentValid is false until that has happened at
+	// least once (no previous frame to diff against yet).
+	signaturePass       *SignaturePass
+	imageContentFBO     *FBO
+	imagePrevContentFBO *FBO
+	imageRowSigFBO      *FBO
+	imageColSigFBO      *FBO
+	imageBlankFBO       *FBO
+	imageBlankSigFBO    *FBO
+	imageBlankScr       *screen.Screen
 
 	imageContentScr                      *screen.Screen
 	imageContentCellW, imageContentCellH float32
+	imageContentCols, imageContentRows   int
 
-	imagePrevRowSig                     []byte
-	imagePrevRowCols, imagePrevRowRows  int
-	imagePrevColSig                     []byte
-	imagePrevColCols, imagePrevColRows  int
+	imagePrevContentValid                      bool
+	imagePrevContentCols, imagePrevContentRows int
 }
 
 // Cursor glide tuning: UpdateCursor's exponential-approach rate (per
@@ -244,29 +249,30 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 		return nil, fmt.Errorf("signature pass: %w", err)
 	}
 	return &Renderer{
-		cellPass:         cellPass,
-		imagePass:        imagePass,
-		blurPass:         blurPass,
-		surfacePass:      surfacePass,
-		shadowPass:       shadowPass,
-		copyPass:         copyPass,
-		cursorPass:       cursorPass,
-		insetPass:        insetPass,
-		persistPass:      persistPass,
-		overlayPass:      overlayPass,
-		effectFBO:        newSRGBFBO(2, 2),
-		surfaceFBO:       newSRGBFBO(2, 2),
-		shadowFBO:        newSRGBFBO(2, 2),
-		blurFBO:          newSRGBFBO(2, 2),
-		sceneFBO:         newSRGBFBO(2, 2),
-		cursorFBO:        newSRGBFBO(2, 2),
-		persistFBO:       [2]*FBO{newFloatFBO(2, 2), newFloatFBO(2, 2)},
-		signaturePass:    signaturePass,
-		imageContentFBO:  newSRGBFBO(2, 2),
-		imageRowSigFBO:   newSRGBFBO(2, 2),
-		imageColSigFBO:   newSRGBFBO(2, 2),
-		imageBlankFBO:    newSRGBFBO(2, 2),
-		imageBlankSigFBO: newSRGBFBO(2, 2),
+		cellPass:            cellPass,
+		imagePass:           imagePass,
+		blurPass:            blurPass,
+		surfacePass:         surfacePass,
+		shadowPass:          shadowPass,
+		copyPass:            copyPass,
+		cursorPass:          cursorPass,
+		insetPass:           insetPass,
+		persistPass:         persistPass,
+		overlayPass:         overlayPass,
+		effectFBO:           newSRGBFBO(2, 2),
+		surfaceFBO:          newSRGBFBO(2, 2),
+		shadowFBO:           newSRGBFBO(2, 2),
+		blurFBO:             newSRGBFBO(2, 2),
+		sceneFBO:            newSRGBFBO(2, 2),
+		cursorFBO:           newSRGBFBO(2, 2),
+		persistFBO:          [2]*FBO{newFloatFBO(2, 2), newFloatFBO(2, 2)},
+		signaturePass:       signaturePass,
+		imageContentFBO:     newSRGBFBO(2, 2),
+		imagePrevContentFBO: newSRGBFBO(2, 2),
+		imageRowSigFBO:      newSRGBFBO(2, 2),
+		imageColSigFBO:      newSRGBFBO(2, 2),
+		imageBlankFBO:       newSRGBFBO(2, 2),
+		imageBlankSigFBO:    newSRGBFBO(2, 2),
 	}, nil
 }
 

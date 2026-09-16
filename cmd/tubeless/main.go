@@ -1283,10 +1283,10 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 					r.ApplyDetectedColShift(shift, cs.w)
 				}
 			case "image":
-				if shift, ok := r.DetectImageRowShift(scr, cfg, cs.w, cs.h, contentShiftMaxRows); ok {
+				if shift, ok := r.DetectImageRowShift(lastScr, scr, cfg, cs.w, cs.h, contentShiftMaxRows); ok {
 					r.ApplyDetectedRowShift(shift, cs.h)
 				}
-				if shift, ok := r.DetectImageColShift(scr, cfg, cs.w, cs.h, contentShiftMaxCols); ok {
+				if shift, ok := r.DetectImageColShift(lastScr, scr, cfg, cs.w, cs.h, contentShiftMaxCols); ok {
 					r.ApplyDetectedColShift(shift, cs.w)
 				}
 			}

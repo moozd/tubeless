@@ -9,16 +9,17 @@ import (
 
 // Tuning constants for the GPU pixel-diff detector — the image-mode
 // counterpart to shiftdetect.go's fuzzyRowMaxDiff/confidenceThreshold/
-// unshiftedMaxChangedSpan. These operate on a different metric (summed
-// byte distance across pixel-signature samples, not a character count),
-// so the CPU path's numeric values don't carry over directly — only
-// their ratio/count-based siblings (minTier1Ratio, popularityCap,
-// anchorlessLineFactor) are automatically reused as-is, since they're
-// baked into screen.DetectShift's own body and apply to every caller
-// regardless of what a "match" is made of. imageRowConfidence/
-// imageRowMinLines and their column counterparts are this file's own
-// copies of the same underlying thresholds — same meaning, independent
-// values, since Go can't share an unexported constant across packages.
+// unshiftedMaxChangedSpan/minShiftBandWidth. These operate on a
+// different metric (summed byte distance across pixel-signature samples,
+// not a character count), so the CPU path's numeric values don't carry
+// over directly — only their ratio/count-based siblings (minTier1Ratio,
+// popularityCap, anchorlessLineFactor) are automatically reused as-is,
+// since they're baked into screen.DetectShift's own body and apply to
+// every caller regardless of what a "match" is made of.
+// imageRowConfidence/imageRowMinLines and their column/band counterparts
+// are this file's own copies of the same underlying thresholds — same
+// meaning, independent values, since Go can't share an unexported
+// constant across packages.
 //
 // Every value here is a first guess, not a tuned result — this mode is
 // explicitly experimental (see config.Scrolling.ContentShiftMode's doc)
@@ -53,6 +54,13 @@ const (
 
 	imageColConfidence = 0.94
 	imageColMinLines   = 20
+
+	// imageMinBandWidth/imageMinBandHeight mirror shiftdetect.go's
+	// minShiftBandWidth/minShiftBandHeight: how narrow/short a
+	// screen.ColumnBands/RowBands result can be before it's not worth
+	// searching independently.
+	imageMinBandWidth  = 10
+	imageMinBandHeight = 4
 )
 
 // DetectImageRowShift is DetectContentShift's GPU pixel-diff sibling for
@@ -62,75 +70,133 @@ const (
 // the glide's starting position must be decided from the TRUE, unshifted
 // content, exactly like the CPU path diffs scr.Grid directly rather than
 // anything already-animated), reduces that to a compact per-row pixel
-// signature, and diffs it against the previous call's signature using
-// the exact same screen.DetectShift engine the CPU content-diff path
-// uses — only the per-line hash/fuzzy/affix signal differs. Unlike
-// DetectContentShift, this doesn't fall back to columnBands' split-pane
-// search — a deliberate v1 scope cut, matching the "start without extra
-// machinery and see how robust the plain diff is" brief this mode
-// shipped under.
-func (r *Renderer) DetectImageRowShift(scr *screen.Screen, cfg config.Config, cellW, cellH float32, maxShift int) (screen.RowShift, bool) {
-	cols, rows := scr.Cols, scr.Rows
+// signature, and diffs it against the previous frame's own signature
+// using the exact same screen.DetectShift engine the CPU content-diff
+// path uses — only the per-line hash/fuzzy/affix signal differs.
+//
+// Tries the whole screen width first; if that finds nothing, falls back
+// to each column band screen.ColumnBands finds (a split window's pane) —
+// prev is needed only for this fallback, to locate persistent divider
+// columns from rune content the same way the CPU path does; the shift
+// signal itself never touches prev's runes, only its own retained
+// previous-frame pixels (imagePrevContentFBO). See
+// DetectContentShift's doc for why a pane's own scroll needs this
+// per-band retry at all.
+func (r *Renderer) DetectImageRowShift(prev, scr *screen.Screen, cfg config.Config, cellW, cellH float32, maxShift int) (screen.RowShift, bool) {
 	r.ensureImageContent(scr, cfg, cellW, cellH)
-	r.signaturePass.DrawRowSignature(r.imageContentFBO.tex, r.imageRowSigFBO, imageSigSamples, rows)
-	sig := readFBOBytes(r.imageRowSigFBO)
-
-	prev, prevCols, prevRows := r.imagePrevRowSig, r.imagePrevRowCols, r.imagePrevRowRows
-	r.imagePrevRowSig, r.imagePrevRowCols, r.imagePrevRowRows = sig, cols, rows
-	if prev == nil || prevCols != cols || prevRows != rows {
+	cols, rows := scr.Cols, scr.Rows
+	if !r.imagePrevContentValid || r.imagePrevContentCols != cols || r.imagePrevContentRows != rows {
 		return screen.RowShift{}, false
 	}
+	if shift, ok := r.detectImageRowShiftInBand(cfg, cellW, cellH, maxShift, cols, rows, 0, cols-1); ok {
+		return shift, true
+	}
+	if prev == nil || prev.Cols != cols || prev.Rows != rows {
+		return screen.RowShift{}, false
+	}
+	for _, band := range screen.ColumnBands(prev, scr) {
+		if band[1]-band[0]+1 < imageMinBandWidth {
+			continue
+		}
+		if shift, ok := r.detectImageRowShiftInBand(cfg, cellW, cellH, maxShift, cols, rows, band[0], band[1]); ok {
+			return shift, true
+		}
+	}
+	return screen.RowShift{}, false
+}
+
+// detectImageRowShiftInBand is DetectImageRowShift's engine, restricted
+// to columns [colLo,colHi] (inclusive) — DetectImageRowShift itself is
+// just this called once over the full width, then once per
+// screen.ColumnBands result.
+func (r *Renderer) detectImageRowShiftInBand(cfg config.Config, cellW, cellH float32, maxShift, cols, rows, colLo, colHi int) (screen.RowShift, bool) {
+	rangeLo := float32(colLo) / float32(cols)
+	rangeHi := float32(colHi+1) / float32(cols)
+
+	r.signaturePass.DrawRowSignature(r.imagePrevContentFBO.tex, r.imageRowSigFBO, imageSigSamples, rows, rangeLo, rangeHi)
+	before := readFBOBytes(r.imageRowSigFBO)
+	r.signaturePass.DrawRowSignature(r.imageContentFBO.tex, r.imageRowSigFBO, imageSigSamples, rows, rangeLo, rangeHi)
+	after := readFBOBytes(r.imageRowSigFBO)
 
 	blankLine := r.imageBlankSignature(cfg, cellW, cellH)
 	blank := hashSignature(blankLine)
 	auxBlank := hashSignature(blankLine[imageAuxSkipSamples*4:])
 
-	beforeHash, afterHash, auxBeforeHash, auxAfterHash := signatureHashes(prev, sig, rows)
+	beforeHash, afterHash, auxBeforeHash, auxAfterHash := signatureHashes(before, after, rows)
 	fuzzy := func(afterIdx, beforeIdx int) int {
-		return signatureDist(lineBytes(sig, afterIdx), lineBytes(prev, beforeIdx))
+		return signatureDist(lineBytes(after, afterIdx), lineBytes(before, beforeIdx))
 	}
 	affixGap := func(afterIdx, beforeIdx int) int {
-		return signatureAffixGap(lineBytes(sig, afterIdx), lineBytes(prev, beforeIdx))
+		return signatureAffixGap(lineBytes(after, afterIdx), lineBytes(before, beforeIdx))
 	}
 	lo, hi, delta, ok := screen.DetectShift(rows, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash,
 		fuzzy, affixGap, imageFuzzyMaxDist, imageMaxChangedSpan, imageRowConfidence, imageRowMinLines, blank, auxBlank)
 	if !ok {
 		return screen.RowShift{}, false
 	}
-	return screen.RowShift{Top: lo, Bottom: hi, Left: 0, Right: cols - 1, Delta: delta}, true
+	return screen.RowShift{Top: lo, Bottom: hi, Left: colLo, Right: colHi, Delta: delta}, true
 }
 
 // DetectImageColShift is DetectImageRowShift's horizontal mirror, fed by
-// the same GPU signature pipeline transposed onto the column axis.
-func (r *Renderer) DetectImageColShift(scr *screen.Screen, cfg config.Config, cellW, cellH float32, maxShift int) (screen.ColShift, bool) {
-	cols, rows := scr.Cols, scr.Rows
+// the same GPU signature pipeline transposed onto the column axis, and
+// falling back to screen.RowBands (a horizontally-split window's own
+// row range) the same way.
+func (r *Renderer) DetectImageColShift(prev, scr *screen.Screen, cfg config.Config, cellW, cellH float32, maxShift int) (screen.ColShift, bool) {
 	r.ensureImageContent(scr, cfg, cellW, cellH)
-	r.signaturePass.DrawColSignature(r.imageContentFBO.tex, r.imageColSigFBO, cols, imageSigSamples)
-	sig := transposeColumns(readFBOBytes(r.imageColSigFBO), cols, imageSigSamples)
-
-	prev, prevCols, prevRows := r.imagePrevColSig, r.imagePrevColCols, r.imagePrevColRows
-	r.imagePrevColSig, r.imagePrevColCols, r.imagePrevColRows = sig, cols, rows
-	if prev == nil || prevCols != cols || prevRows != rows {
+	cols, rows := scr.Cols, scr.Rows
+	if !r.imagePrevContentValid || r.imagePrevContentCols != cols || r.imagePrevContentRows != rows {
 		return screen.ColShift{}, false
 	}
+	if shift, ok := r.detectImageColShiftInBand(cfg, cellW, cellH, maxShift, cols, rows, 0, rows-1); ok {
+		return shift, true
+	}
+	if prev == nil || prev.Cols != cols || prev.Rows != rows {
+		return screen.ColShift{}, false
+	}
+	for _, band := range screen.RowBands(prev, scr) {
+		if band[1]-band[0]+1 < imageMinBandHeight {
+			continue
+		}
+		if shift, ok := r.detectImageColShiftInBand(cfg, cellW, cellH, maxShift, cols, rows, band[0], band[1]); ok {
+			return shift, true
+		}
+	}
+	return screen.ColShift{}, false
+}
+
+// detectImageColShiftInBand is DetectImageColShift's engine, restricted
+// to rows [rowLo,rowHi] (inclusive). The row range is converted to UV
+// space with the same 1-flip DrawRowSignature's row axis needs (see
+// signature.frag's doc): cell_rect.vert/cell_glyph.vert render grid row
+// 0 at the framebuffer's top (UV y near 1), so real row rowLo sits at UV
+// y = 1 - rowLo/rows, and the range [rowLo,rowHi] inclusive becomes
+// [1-(rowHi+1)/rows, 1-rowLo/rows].
+func (r *Renderer) detectImageColShiftInBand(cfg config.Config, cellW, cellH float32, maxShift, cols, rows, rowLo, rowHi int) (screen.ColShift, bool) {
+	rangeLo := 1 - float32(rowHi+1)/float32(rows)
+	rangeHi := 1 - float32(rowLo)/float32(rows)
+
+	r.signaturePass.DrawColSignature(r.imagePrevContentFBO.tex, r.imageColSigFBO, cols, imageSigSamples, rangeLo, rangeHi)
+	before := transposeColumns(readFBOBytes(r.imageColSigFBO), cols, imageSigSamples)
+	r.signaturePass.DrawColSignature(r.imageContentFBO.tex, r.imageColSigFBO, cols, imageSigSamples, rangeLo, rangeHi)
+	after := transposeColumns(readFBOBytes(r.imageColSigFBO), cols, imageSigSamples)
 
 	blankLine := r.imageBlankSignature(cfg, cellW, cellH)
 	blank := hashSignature(blankLine)
 	auxBlank := hashSignature(blankLine[imageAuxSkipSamples*4:])
 
-	beforeHash, afterHash, auxBeforeHash, auxAfterHash := signatureHashes(prev, sig, cols)
+	beforeHash, afterHash, auxBeforeHash, auxAfterHash := signatureHashes(before, after, cols)
 	fuzzy := func(afterIdx, beforeIdx int) int {
-		return signatureDist(lineBytes(sig, afterIdx), lineBytes(prev, beforeIdx))
+		return signatureDist(lineBytes(after, afterIdx), lineBytes(before, beforeIdx))
 	}
 	affixGap := func(afterIdx, beforeIdx int) int {
-		return signatureAffixGap(lineBytes(sig, afterIdx), lineBytes(prev, beforeIdx))
+		return signatureAffixGap(lineBytes(after, afterIdx), lineBytes(before, beforeIdx))
 	}
 	lo, hi, delta, ok := screen.DetectShift(cols, maxShift, beforeHash, afterHash, auxBeforeHash, auxAfterHash,
 		fuzzy, affixGap, imageFuzzyMaxDist, imageMaxChangedSpan, imageColConfidence, imageColMinLines, blank, auxBlank)
 	if !ok {
 		return screen.ColShift{}, false
 	}
-	return screen.ColShift{Left: lo, Right: hi, Top: 0, Bottom: rows - 1, Delta: delta}, true
+	return screen.ColShift{Left: lo, Right: hi, Top: rowLo, Bottom: rowHi, Delta: delta}, true
 }
 
 // ensureImageContent renders scr's literal content (background fills +
@@ -141,13 +207,24 @@ func (r *Renderer) DetectImageColShift(scr *screen.Screen, cfg config.Config, ce
 // snapshot, same convention cmd/tubeless already relies on for scr !=
 // lastScr) plus cellW/cellH, so DetectImageRowShift and
 // DetectImageColShift called back to back for the same frame only draw
-// it once.
+// it once. Before moving on to a genuinely new frame, preserves the
+// outgoing content into imagePrevContentFBO — see the Renderer struct's
+// own doc for why retaining the previous CONTENT (not a pre-computed
+// signature) is what lets any candidate band compute its own signature
+// on demand.
 func (r *Renderer) ensureImageContent(scr *screen.Screen, cfg config.Config, cellW, cellH float32) {
 	if r.imageContentScr == scr && r.imageContentCellW == cellW && r.imageContentCellH == cellH {
 		return
 	}
+	if r.imageContentScr != nil {
+		r.imagePrevContentFBO.Resize(r.imageContentFBO.W, r.imageContentFBO.H)
+		r.copyPass.Draw(r.imageContentFBO.tex, r.imagePrevContentFBO, r.imageContentFBO.W, r.imageContentFBO.H)
+		r.imagePrevContentValid = true
+		r.imagePrevContentCols, r.imagePrevContentRows = r.imageContentCols, r.imageContentRows
+	}
 	r.renderZeroOffsetContent(scr, cfg, cellW, cellH, r.imageContentFBO)
 	r.imageContentScr, r.imageContentCellW, r.imageContentCellH = scr, cellW, cellH
+	r.imageContentCols, r.imageContentRows = scr.Cols, scr.Rows
 }
 
 // renderZeroOffsetContent draws scr into dst exactly like RenderScene's
@@ -189,7 +266,7 @@ func (r *Renderer) imageBlankSignature(cfg config.Config, cellW, cellH float32) 
 		r.imageBlankScr = screen.New(1, 1)
 	}
 	r.renderZeroOffsetContent(r.imageBlankScr, cfg, cellW, cellH, r.imageBlankFBO)
-	r.signaturePass.DrawRowSignature(r.imageBlankFBO.tex, r.imageBlankSigFBO, imageSigSamples, 1)
+	r.signaturePass.DrawRowSignature(r.imageBlankFBO.tex, r.imageBlankSigFBO, imageSigSamples, 1, 0, 1)
 	return readFBOBytes(r.imageBlankSigFBO)
 }
 
