@@ -222,9 +222,30 @@ func (r *Renderer) ensureImageContent(scr *screen.Screen, cfg config.Config, cel
 		r.imagePrevContentValid = true
 		r.imagePrevContentCols, r.imagePrevContentRows = r.imageContentCols, r.imageContentRows
 	}
-	r.renderZeroOffsetContent(scr, cfg, cellW, cellH, r.imageContentFBO)
+	r.renderZeroOffsetContent(neutralizeAttrs(scr), cfg, cellW, cellH, r.imageContentFBO)
 	r.imageContentScr, r.imageContentCellW, r.imageContentCellH = scr, cellW, cellH
 	r.imageContentCols, r.imageContentRows = scr.Cols, scr.Rows
+}
+
+// neutralizeAttrs returns a copy of scr with every cell's Attr reset to
+// its zero value, keeping only Rune — the pixel-diff mirror of
+// shiftdetect.go's rowHash, which hashes Cell.Rune alone so a pure
+// attribute change can never register as content moving. Without this,
+// image mode is strictly noisier than content mode: nvim's cursorline
+// moving with every cursor motion, a sign/diagnostic recolor, or a
+// statusline's color blocks would all render as "this row's pixels
+// changed" on every single frame regardless of whether anything actually
+// scrolled — exactly the gap that made content mode ignore Attr in the
+// first place. Costs an O(rows*cols) grid copy per changed frame, well
+// under a millisecond even on a large terminal.
+func neutralizeAttrs(scr *screen.Screen) *screen.Screen {
+	out := screen.New(scr.Cols, scr.Rows)
+	for y := range scr.Rows {
+		for x := range scr.Cols {
+			out.Grid[y][x].Rune = scr.Grid[y][x].Rune
+		}
+	}
+	return out
 }
 
 // renderZeroOffsetContent draws scr into dst exactly like RenderScene's
