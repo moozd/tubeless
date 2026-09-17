@@ -263,8 +263,8 @@ func main() {
 		}
 	}
 	cs := &cellSize{
-		w:    float32(faces.Regular.CellWidth) / float32(effectiveScale) * dpiX,
-		h:    float32(faces.Regular.CellHeight) / float32(effectiveScale) * dpiY,
+		w:    physicalCellSize(faces.Regular.CellWidth, effectiveScale, dpiX),
+		h:    physicalCellSize(faces.Regular.CellHeight, effectiveScale, dpiY),
 		dpiX: dpiX,
 		dpiY: dpiY,
 	}
@@ -396,6 +396,22 @@ func storeCfgRef(ref *atomic.Pointer[config.Config], cfg config.Config) {
 // scale, which can change (see runLoop's per-frame content-scale check).
 // dpiX/dpiY remember the scale the current atlas was actually built for.
 type cellSize struct{ w, h, dpiX, dpiY float32 }
+
+// physicalCellSize converts a raster cell dimension (in atlas pixels, at
+// effectiveScale) down to a physical display pixel size, rounded to the
+// nearest whole pixel. A fractional cell size means every cell boundary
+// in the grid lands at a sub-pixel position — px, py := x*cw, y*ch in
+// CellPass.BuildInstances compounds that same fractional offset at every
+// single cell, so the GPU ends up blending glyph edges across a pixel
+// boundary on essentially every cell rather than drawing them crisp,
+// which reads as text-wide blur rather than a one-off rounding error.
+// The mismatch this rounding introduces against the atlas's own exact
+// raster size is at most half a raster pixel — well under one display
+// pixel even at a shallow 2x atlas scale — far less visible than a
+// misaligned per-cell grid.
+func physicalCellSize(rasterPx, effectiveScale int, dpi float32) float32 {
+	return float32(math.Round(float64(rasterPx) / float64(effectiveScale) * float64(dpi)))
+}
 
 // effectiveAtlasScale turns cfg.Atlas.Scale — the supersampling-vs-mip
 // depth the user actually wants, calibrated by eye on whatever display
@@ -839,8 +855,8 @@ func installFaces(faces *font.Faces, effectiveScale int, dx, dy float32, cs *cel
 		return nil, fmt.Errorf("init renderer: %w", err)
 	}
 	cs.dpiX, cs.dpiY = dx, dy
-	cs.w = float32(faces.Regular.CellWidth) / float32(effectiveScale) * dx
-	cs.h = float32(faces.Regular.CellHeight) / float32(effectiveScale) * dy
+	cs.w = physicalCellSize(faces.Regular.CellWidth, effectiveScale, dx)
+	cs.h = physicalCellSize(faces.Regular.CellHeight, effectiveScale, dy)
 	return r, nil
 }
 

@@ -564,11 +564,10 @@ func blitGlyph(face *ftFace, r rune, dst *image.Alpha, gx, gy, cellW, cellH, asc
 	blitCoverage(pix, w, h, left, top, dst, gx, gy, cellW, cellH, ascender, gamma)
 }
 
-// fitPrivateUse uniformly scales a private-use icon bitmap (and its
-// bearing) to fitScale's target — shrinking an oversized icon down or
-// growing an undersized one up, either way landing it near boxW x boxH
-// instead of whatever size the icon font happened to draw it at. A no-op
-// at exactly scale 1.
+// fitPrivateUse uniformly shrinks a private-use icon bitmap (and its
+// bearing) down to fitScale's target whenever it overflows boxW x boxH —
+// see fitScale's own doc for why this never grows an undersized one up.
+// A no-op at exactly scale 1.
 func fitPrivateUse(pix []byte, w, h, left, top, boxW, boxH int) ([]byte, int, int, int, int) {
 	scale := fitScale(w, h, boxW, boxH)
 	if scale == 1 {
@@ -657,45 +656,45 @@ func isWidenableIcon(r rune) bool {
 	return r >= 0xE000 && r <= 0xF8FF
 }
 
-// maxIconUpscale bounds how far fitScale will grow an icon that renders
-// small within its own design box. This resamples the already-rasterized
-// bitmap rather than re-rendering the vector outline at a bigger size, so
-// pushing it much past this starts reading as soft instead of sharp.
-const maxIconUpscale = 1.6
-
-// fitScale returns the uniform scale factor needed to bring a w x h glyph
-// to fitScale's target box — shrinking it if it overflows, or growing it
-// (up to maxIconUpscale) if it's notably smaller than the box, so an icon
-// a font drew tiny within its own em-box still reads at a normal, legible
-// size instead of looking small next to the letters around it. 1 if it
-// already fits closely enough that scaling would be a no-op either way.
+// fitScale returns the uniform scale factor needed to shrink an oversized
+// w x h glyph down to fitScale's target box — 1 (a no-op) if it already
+// fits. Never grows a glyph past its own rasterized size: an icon a font
+// drew small within its own design em-box stays that size, the same way
+// Ghostty's curated per-icon constraint table only ever constrains an
+// icon down, never enlarges one up past what its own design called for.
+// An earlier version of this also upscaled (up to a 1.6x cap) an icon
+// that rendered notably smaller than the box, meant to keep a tiny-drawn
+// icon legible next to the letters around it — but it applied uniformly
+// to every icon under the box regardless of whether that icon's design
+// was actually "tiny by mistake" or "compact on purpose" (a chevron,
+// most arrows), so exactly the ones meant to stay small instead read as
+// oversized, worse compounded by buildWideGlyphs' 2-cell box giving them
+// even more room to inflate into. No general, non-curated rule can tell
+// those two cases apart from the bitmap alone, so this only ever shrinks
+// now, matching Ghostty's own approach for the general (non-curated)
+// case.
 func fitScale(w, h, cellW, cellH int) float64 {
-	scale := min(float64(cellW)/float64(w), float64(cellH)/float64(h))
-	return min(scale, maxIconUpscale)
+	return min(1, float64(cellW)/float64(w), float64(cellH)/float64(h))
 }
 
-// scaleCoverage box-filters a single-channel coverage bitmap to scale
-// (either direction) uniformly on both axes — an icon's aspect ratio must
-// stay fixed, unlike resizeCoverage's independent-axis general case.
+// scaleCoverage box-filters a single-channel coverage bitmap down by
+// scale uniformly on both axes — an icon's aspect ratio must stay fixed,
+// unlike resizeCoverage's independent-axis general case. scale is always
+// <= 1 (see fitScale) — this only ever shrinks.
 func scaleCoverage(pix []byte, w, h int, scale float64) (out []byte, ow, oh int) {
 	return resizeCoverage(pix, w, h, max(1, int(float64(w)*scale)), max(1, int(float64(h)*scale)))
 }
 
-// resizeCoverage resamples a single-channel coverage bitmap from w x h to
-// ow x oh — independently on each axis, so a width-only squeeze (ow < w,
-// oh == h) is exactly as valid a call as a uniform shrink. Shrinking
-// (either axis) area-averages each output texel's source region — a
-// straight nearest/point resample would just re-introduce aliasing on the
-// very edges this exists to clean up. Growing a dimension (fitPrivateUse's
-// undersized-icon upscale case) instead bilinearly interpolates, since
-// srcRange's box-filter spans have nothing left to average there and
-// degrade to a blocky nearest-neighbor stair-step — visibly pixelated on
-// an icon upscaled ~1.6x, unlike the box-filter shrink path.
+// resizeCoverage shrinks a single-channel coverage bitmap from w x h down
+// to ow x oh — independently on each axis, so a width-only squeeze
+// (ow < w, oh == h) is exactly as valid a call as a uniform shrink.
+// Area-averages each output texel's source region — a straight
+// nearest/point resample would just re-introduce aliasing on the very
+// edges this exists to clean up. Callers only ever shrink (ow <= w,
+// oh <= h — see fitScale and blitGlyph's own min(w, cellW)/min(h, cellH)
+// clamp), so there's no growing-dimension case to handle here.
 func resizeCoverage(pix []byte, w, h, ow, oh int) (out []byte, outW, outH int) {
-	ow, oh = max(1, ow), max(1, oh)
-	if ow > w || oh > h {
-		return bilinearResizeCoverage(pix, w, h, ow, oh)
-	}
+	ow, oh = max(1, min(ow, w)), max(1, min(oh, h))
 	out = make([]byte, ow*oh)
 	for oy := range oh {
 		sy0, sy1 := srcRange(oy, oh, h)
@@ -714,46 +713,6 @@ func resizeCoverage(pix []byte, w, h, ow, oh int) (out []byte, outW, outH int) {
 		}
 	}
 	return out, ow, oh
-}
-
-// bilinearResizeCoverage upscales a single-channel coverage bitmap from
-// w x h to ow x oh (either or both axes growing) by sampling each output
-// texel's pixel-center position back in source space and blending its
-// four nearest source texels — smooth growth instead of resizeCoverage's
-// box-filter, which has nothing to average when a dimension grows.
-func bilinearResizeCoverage(pix []byte, w, h, ow, oh int) (out []byte, outW, outH int) {
-	outW, outH = max(1, ow), max(1, oh)
-	out = make([]byte, outW*outH)
-	sx, sy := float64(w)/float64(outW), float64(h)/float64(outH)
-	for oy := range outH {
-		fy := (float64(oy)+0.5)*sy - 0.5
-		y0 := int(math.Floor(fy))
-		ty := fy - float64(y0)
-		y0c, y1c := clampInt(y0, 0, h-1), clampInt(y0+1, 0, h-1)
-		for ox := range outW {
-			fx := (float64(ox)+0.5)*sx - 0.5
-			x0 := int(math.Floor(fx))
-			tx := fx - float64(x0)
-			x0c, x1c := clampInt(x0, 0, w-1), clampInt(x0+1, 0, w-1)
-			v00, v10 := float64(pix[y0c*w+x0c]), float64(pix[y0c*w+x1c])
-			v01, v11 := float64(pix[y1c*w+x0c]), float64(pix[y1c*w+x1c])
-			top := v00 + (v10-v00)*tx
-			bot := v01 + (v11-v01)*tx
-			out[oy*outW+ox] = clampByte(top + (bot-top)*ty)
-		}
-	}
-	return out, outW, outH
-}
-
-// clampInt clamps v to [lo, hi].
-func clampInt(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
 
 // srcRange maps output index i (of n) back to the [start,end) span of
