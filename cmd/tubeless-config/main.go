@@ -1213,8 +1213,8 @@ func (u *ui) accent() [3]float32 { return u.cfg.Phosphor.High }
 // bare "\x1b[7m" (Reverse set, no explicit Fg/Bg) a dedicated clean
 // invert — solid bright phosphor block, true black text — where explicit
 // truecolor bg/fg would instead get reinterpreted through the monochrome
-// intensity ramp (peak-channel value, then a contrast-collapse
-// heuristic), which can leave selected text a dim shade of the same hue
+// intensity ramp (real luminance, then a contrast-collapse heuristic),
+// which can leave selected text a dim shade of the same hue
 // as its own highlight — low-contrast at best, and not an accurate
 // monochrome CRT invert even when it happens to stay readable.
 func (u *ui) highlightStyle(accent [3]float32) string {

@@ -3,18 +3,16 @@ package screen
 import "math"
 
 // The theme's phosphor ramp has no hue to give a color, only brightness —
-// these tables and helpers turn an SGR color into the 0-1 "value" (HSV
-// sense: the color's own peak channel, not perceptual luminance) an
-// app's color choice implies, so that brightness distinction survives
-// even though hue doesn't.
-//
-// This deliberately isn't photometric luminance (the standard Rec.709
-// weighted sum). That formula weights red at 0.21 and blue at 0.07, so a
-// saturated red or blue — both colors terminal UIs lean on precisely
-// because they're meant to stand out (errors, deleted lines, directories,
-// links) — comes out dim, while green and yellow dominate. Max-channel
-// tracks how vivid/prominent a color reads regardless of hue, which is
-// the property that actually matters once hue itself is gone.
+// these tables and helpers turn an SGR color into the 0-1 luminance an
+// app's color choice implies, the same way a real monochrome CRT fed a
+// color composite signal would: it never sees hue at all, only the
+// signal's own luma (Y') component, computed as the standard Rec.709
+// weighted sum of the gamma-encoded R'G'B' — matching cell_glyph.frag's
+// luminance() and cmd/tubeless-config's contrastFg, the same formula used
+// everywhere else in this codebase a color needs collapsing to one
+// number. A saturated blue reading dimmer than a saturated yellow here
+// isn't a bug to correct for — that is what actually happens to a color
+// signal once you take the hue away, on a real device or here.
 
 var ansi16RGB = [16][3]int{
 	{0, 0, 0}, {205, 0, 0}, {0, 205, 0}, {205, 205, 0},
@@ -24,11 +22,11 @@ var ansi16RGB = [16][3]int{
 }
 
 func rgbValue(r, g, b int) float32 {
-	return float32(max(r, g, b)) / 255
+	return (0.2126*float32(r) + 0.7152*float32(g) + 0.0722*float32(b)) / 255
 }
 
 // rgbTriple is rgbValue's truecolor-mode counterpart: the real RGB (0-1)
-// instead of the reduced max-channel scalar, for pkg/config's TrueColor
+// instead of the reduced luminance scalar, for pkg/config's TrueColor
 // theme (see pkg/render's cellColors). SGR truecolor/256-color params are
 // raw sRGB bytes (what every app that emits them, and every published
 // palette, means by "red 205"), but the render pipeline draws in linear
