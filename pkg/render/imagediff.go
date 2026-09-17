@@ -46,8 +46,19 @@ const (
 
 	// imageMaxChangedSpan caps the affix-gap self-match check, in
 	// signature samples — see shiftdetect.go's unshiftedMaxChangedSpan
-	// for the concept this mirrors.
-	imageMaxChangedSpan = imageSigSamples / 2
+	// for the concept this mirrors. A quarter of the row, not half:
+	// signatureAffixGap's "same" test (imageSampleMatchEps) treats any
+	// two background-colored samples as matching, same as CPU's affixGap
+	// treats two space characters as matching — legitimate for
+	// recognizing a genuinely fixed line, but it means a newly-revealed,
+	// mostly-blank line can look "barely changed" from whatever unrelated
+	// content used to sit at that row before, if the tolerance is loose
+	// enough. Half the row let that happen in practice (a scroll's newly
+	// revealed line failing to join the rest of the band's glide,
+	// starting its own out-of-sync one instead); a quarter is closer to
+	// CPU's own proportional tightness (unshiftedMaxChangedSpan=20 out of
+	// a typical 80+ column line is well under a third).
+	imageMaxChangedSpan = imageSigSamples / 4
 
 	imageRowConfidence = 0.80
 	imageRowMinLines   = 2
@@ -124,7 +135,7 @@ func (r *Renderer) detectImageRowShiftInBand(cfg config.Config, cellW, cellH flo
 
 	beforeHash, afterHash, auxBeforeHash, auxAfterHash := signatureHashes(before, after, rows)
 	fuzzy := func(afterIdx, beforeIdx int) int {
-		return signatureDist(lineBytes(after, afterIdx), lineBytes(before, beforeIdx))
+		return signatureDist(lineBytes(after, afterIdx), lineBytes(before, beforeIdx), blankLine)
 	}
 	affixGap := func(afterIdx, beforeIdx int) int {
 		return signatureAffixGap(lineBytes(after, afterIdx), lineBytes(before, beforeIdx))
@@ -186,7 +197,7 @@ func (r *Renderer) detectImageColShiftInBand(cfg config.Config, cellW, cellH flo
 
 	beforeHash, afterHash, auxBeforeHash, auxAfterHash := signatureHashes(before, after, cols)
 	fuzzy := func(afterIdx, beforeIdx int) int {
-		return signatureDist(lineBytes(after, afterIdx), lineBytes(before, beforeIdx))
+		return signatureDist(lineBytes(after, afterIdx), lineBytes(before, beforeIdx), blankLine)
 	}
 	affixGap := func(afterIdx, beforeIdx int) int {
 		return signatureAffixGap(lineBytes(after, afterIdx), lineBytes(before, beforeIdx))
@@ -361,15 +372,36 @@ func hashSignature(b []byte) uint64 {
 // signatureDist is tier 2's per-line check: the summed absolute R+G+B
 // byte distance between two lines' signatures — the pixel-domain sibling
 // of shiftdetect.go's rowMismatches, an absolute count rather than a
-// fraction for the same reason (see fuzzyRowMaxDiff's doc).
-func signatureDist(a, b []byte) int {
+// fraction for the same reason (see fuzzyRowMaxDiff's doc). A sample
+// pair where BOTH sides are close to bg (the background-color reference
+// from imageBlankSignature) is skipped entirely, mirroring rowMismatches
+// skipping a space-vs-space character pair: most of a short/mostly-blank
+// line's samples are background on both sides regardless of what little
+// real content differs, and counting that trivial agreement as
+// "closeness" is exactly what let two completely unrelated short lines
+// (a status bar's old vs. new text, two different blank-ish code lines)
+// read as coincidentally similar.
+func signatureDist(a, b, bg []byte) int {
 	dist := 0
 	for i := 0; i+4 <= len(a); i += 4 {
+		if sampleNearBG(a[i:i+4], bg) && sampleNearBG(b[i:i+4], bg) {
+			continue
+		}
 		dist += absInt(int(a[i]) - int(b[i]))
 		dist += absInt(int(a[i+1]) - int(b[i+1]))
 		dist += absInt(int(a[i+2]) - int(b[i+2]))
 	}
 	return dist
+}
+
+// sampleNearBG reports whether one RGBA sample is within
+// imageSampleMatchEps of the background-color reference — see
+// signatureDist's doc for why this pair gets excluded from evidence
+// rather than counted as a match, the same treatment DetectShift's own
+// blank parameter gives a wholly-blank line.
+func sampleNearBG(sample, bg []byte) bool {
+	d := absInt(int(sample[0])-int(bg[0])) + absInt(int(sample[1])-int(bg[1])) + absInt(int(sample[2])-int(bg[2]))
+	return d <= imageSampleMatchEps
 }
 
 // signatureAffixGap is unshiftedMatch's structural check in pixel-space:
