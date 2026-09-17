@@ -92,10 +92,21 @@ type Scrolling struct {
 	// misdetected shift wobbling or dragging a status bar on some
 	// particular app is switching this back to "off". "image":
 	// pkg/render's GPU pixel diff of the actually-rendered frame instead
-	// of the grid's rune content — experimental, and without any
-	// corroborating signal yet (no keyboard/mouse/escape-sequence
-	// hints), just the raw pixel comparison, to see how robust it is on
-	// its own first.
+	// of the grid's rune content (see pkg/render/imagediff.go) —
+	// experimental, and without any corroborating signal (no keyboard/
+	// mouse/escape-sequence hints), just the raw pixel comparison.
+	//
+	// Parked as of this writing: real-world testing against nvim
+	// (splits, cursor movement near a window edge, scrolling near
+	// end-of-buffer's repeated "~" placeholder lines) surfaced repeated
+	// false positives/negatives that several rounds of fixes — attribute
+	// stripping, per-band split search, background-sample skipping,
+	// tier-1-over-self-match precedence (a shared-engine fix that also
+	// helped "content") — didn't fully resolve, and no further
+	// corroborating signal was in scope for this pass. Left in place,
+	// opt-in only, for a future attempt rather than ripped out; see git
+	// log on this file/pkg/render/imagediff.go for what was already
+	// tried before reaching for the same ideas again.
 	ContentShiftMode string `toml:"content_shift_mode"`
 }
 
