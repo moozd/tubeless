@@ -1204,6 +1204,26 @@ const (
 // active theme instead of a fixed one.
 func (u *ui) accent() [3]float32 { return u.cfg.Phosphor.High }
 
+// highlightStyle is the SGR prefix for a selected/active highlight bar
+// (the head bar, the active tab chip, a selected settings row). A
+// TrueColor theme paints the theme's real accent explicitly (truecolorBg
+// + contrastFg — the host renders truecolor cell colors straight
+// through, so nothing else would put the accent there). A monochrome
+// theme instead emits real reverse video: pkg/render's cellColors gives
+// bare "\x1b[7m" (Reverse set, no explicit Fg/Bg) a dedicated clean
+// invert — solid bright phosphor block, true black text — where explicit
+// truecolor bg/fg would instead get reinterpreted through the monochrome
+// intensity ramp (peak-channel value, then a contrast-collapse
+// heuristic), which can leave selected text a dim shade of the same hue
+// as its own highlight — low-contrast at best, and not an accurate
+// monochrome CRT invert even when it happens to stay readable.
+func (u *ui) highlightStyle(accent [3]float32) string {
+	if !u.cfg.TrueColor {
+		return sgrReverse
+	}
+	return truecolorBg(accent) + contrastFg(accent)
+}
+
 // tabTitle names a tab index for both the tab bar and the settings box's
 // own title.
 func tabTitle(tab int) string {
@@ -1239,7 +1259,7 @@ func (u *ui) redraw() {
 	if u.fontPicker {
 		head += "  ·  searching fonts…"
 	}
-	u.at(b, 1, 1, truecolorBg(accent)+contrastFg(accent)+sgrBold+colPad(trunc(head, cols), cols)+sgrReset)
+	u.at(b, 1, 1, u.highlightStyle(accent)+sgrBold+colPad(trunc(head, cols), cols)+sgrReset)
 	u.drawTabs(b, 2, accent)
 
 	// One bordered pane (the settings list) plus two unboxed strips below
@@ -1280,7 +1300,7 @@ func (u *ui) drawTabs(b *strings.Builder, y int, accent [3]float32) {
 	for i := range numTabs {
 		chip := " " + strings.ToUpper(tabTitle(i)) + " "
 		if i == u.tab {
-			line.WriteString(truecolorBg(accent) + contrastFg(accent) + sgrBold + chip + sgrReset)
+			line.WriteString(u.highlightStyle(accent) + sgrBold + chip + sgrReset)
 		} else {
 			line.WriteString(truecolorFg(accent) + sgrDim + chip + sgrReset)
 		}
@@ -1344,7 +1364,7 @@ func (u *ui) paneRow(b *strings.Builder, y, x0, w int, content, style string, ac
 	line := colPad(trunc(content, innerW), innerW)
 	switch {
 	case selected:
-		line = truecolorBg(accent) + contrastFg(accent) + sgrBold + line + sgrReset
+		line = u.highlightStyle(accent) + sgrBold + line + sgrReset
 	case style != "":
 		line = style + line + sgrReset
 	}
