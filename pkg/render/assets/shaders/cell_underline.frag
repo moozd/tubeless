@@ -32,7 +32,7 @@ void main() {
 	if (vStyle == STYLE_SINGLE) {
 		baselineOffset = 0.03;
 	} else if (vStyle == STYLE_CURLY) {
-		baselineOffset = 0.07;
+		baselineOffset = 0.10;
 	}
 	float baseline = 0.86 + baselineOffset;
 	float thicknessPx = max(1.2, chPx * 0.09);
@@ -50,7 +50,7 @@ void main() {
 	// slope is steepest. Needs a noticeably thinner base thickness than
 	// even plain underline to end up looking thin once drawn.
 	if (vStyle == STYLE_CURLY) {
-		thicknessPx = max(1.0, chPx * 0.032);
+		thicknessPx = max(1.0, chPx * 0.022);
 	}
 	float thickness = thicknessPx / chPx;
 	float halfBand = thickness * 0.6;
