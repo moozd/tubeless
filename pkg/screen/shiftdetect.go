@@ -418,19 +418,30 @@ func sameDims(prev, next *Screen) bool {
 // maxDiff (see fuzzyRowMaxDiff/fuzzyColMaxDiff's doc for why this is a
 // fixed count, not a percentage).
 //
-// Neither tier's match is taken at face value, though: both only ever
-// check whether line y resembles line y+k in the other frame, never
-// whether y also resembles ITSELF at k=0. A short, mostly blank-padded
-// line sharing a generic layout with other lines (a statusline) can
-// clear tier 1's aux threshold or tier 2's fuzzy threshold against some
-// unrelated line k rows away by coincidence, even though its real
-// signature is "barely changed from last frame, at the same row." So a
-// tier 1 or tier 2 match is only honored when selfHashMatch(y) — an
-// exact hash match against itself, see its doc for why this is
-// stricter than unshiftedMatch's own aux/affixGap fallbacks — is false:
-// self-similarity takes priority over shifted-similarity; a line that
-// matches itself is left unmatched here and falls out of the band via
-// edge-trimming, the same as a fixed header/footer.
+// Neither of the WEAKER checks is taken at face value, though: an aux or
+// fuzzy match only ever checks whether line y resembles line y+k in the
+// other frame, never whether y also resembles ITSELF at k=0. A short,
+// mostly blank-padded line sharing a generic layout with other lines (a
+// statusline) can clear tier 1's aux threshold or tier 2's fuzzy
+// threshold against some unrelated line k rows away by coincidence, even
+// though its real signature is "barely changed from last frame, at the
+// same row." So an aux or fuzzy match is only honored when
+// selfHashMatch(y) — an exact hash match against itself, see its doc for
+// why this is stricter than unshiftedMatch's own aux/affixGap fallbacks
+// — is false: self-similarity takes priority over shifted-similarity; a
+// line that only clears aux/fuzzy but also matches itself is left
+// unmatched here and falls out of the band via edge-trimming, the same
+// as a fixed header/footer.
+//
+// A full exact tier-1 match (afterHash[y]==beforeHash[y+k]) is exempt
+// from this override and always honored outright: it's strong,
+// unambiguous evidence on its own, and repeated-but-not-degenerate
+// content (two vim "~" end-of-buffer placeholder lines, a pair of
+// otherwise-identical short lines) routinely makes a genuinely shifted
+// row ALSO equal its own unshifted position — rejecting it anyway would
+// shrink the trimmed band short of the search's own natural overlap,
+// silently blocking the extension step from ever including newly
+// revealed content in the same frame's glide.
 //
 // The matched band is then trimmed to its contiguous core (dropping
 // leading/trailing non-matching lines from either edge) so a fixed
@@ -594,14 +605,25 @@ func DetectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 	// which counts toward a match or a mismatch below (see DetectShift's
 	// doc). tier1 marks a match as coming from an exact/aux hash rather
 	// than tier 2's fuzzy fallback — see the tier1Count check below for
-	// why this is tracked separately. Either kind of match is rejected,
-	// regardless of how well it clears its own threshold, when
-	// selfHashMatch(y) is also true: self-similarity takes priority over
-	// shifted-similarity, so such a line is left unmatched here and
-	// falls out of the band via the edge-trim logic below, exactly like
-	// a fixed header/footer. selfHashMatch, not the more lenient
-	// unshiftedMatch, is deliberately used here — see selfHashMatch's
-	// doc for why.
+	// why this is tracked separately.
+	//
+	// A full exact hash match under the real candidate shift
+	// (afterHash[y]==beforeHash[y+bestK]) is always accepted outright,
+	// never second-guessed by selfHashMatch: it's checked first, ahead
+	// of self-match-precedence, on purpose. Repeated-but-not-degenerate
+	// content — two vim "~" end-of-buffer placeholder lines, a pair of
+	// otherwise-identical short lines — routinely makes a genuinely
+	// shifted row ALSO equal its own unshifted position; rejecting that
+	// row anyway (an earlier version of this code did exactly that, by
+	// checking selfHashMatch before the exact match) shrank the trimmed
+	// band short of the search's own natural overlap end, which blocks
+	// the extension step below from ever firing — a scroll's
+	// newly-revealed content then never joins the rest of the band's
+	// glide this frame. selfHashMatch only gets a say over the WEAKER
+	// aux/fuzzy signals below, which is what the original bug this
+	// override exists for actually needed — a statusline's coincidental
+	// collision was always against the fuzzy/aux threshold, never a full
+	// exact match (see selfHashMatch's own doc).
 	matching := make([]bool, bestHi-bestLo+1)
 	informative := make([]bool, bestHi-bestLo+1)
 	tier1 := make([]bool, bestHi-bestLo+1)
@@ -616,12 +638,17 @@ func DetectShift(n, maxShift int, beforeHash, afterHash, auxBeforeHash, auxAfter
 			continue
 		}
 		informative[i] = true
+		if afterHash[y] == beforeHash[y+bestK] {
+			matching[i] = true
+			tier1[i] = true
+			continue
+		}
 		if selfHashMatch(y) {
 			continue
 		}
 		auxMatch := auxAfterHash[y] == auxBeforeHash[y+bestK] &&
 			!(auxAfterHash[y] == auxBlank && auxBeforeHash[y+bestK] == auxBlank)
-		if afterHash[y] == beforeHash[y+bestK] || auxMatch {
+		if auxMatch {
 			matching[i] = true
 			tier1[i] = true
 			continue
