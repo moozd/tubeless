@@ -432,25 +432,30 @@ func effectiveAtlasScale(scale int, dpi float32) int {
 }
 
 // autoAtlasScale picks a base cfg.Atlas.Scale for "auto" (cfg.Atlas.Scale
-// <= 0) from the monitor's own content scale. This isn't just "scale by
-// dpi" — effectiveAtlasScale already does that multiplication on top of
-// whatever base comes back here. The base itself needs to differ by
-// panel class: a standard-DPI display still wants at least one level of
-// supersampling — uploadAtlas's mipmapped trilinear minification, not the
-// source rasterization, is what actually smooths glyph edges, so
-// rasterizing at exactly display size (scale 1) skips that entirely and
-// leaves quality down to FreeType's own small-size AA alone, visibly
-// softer/lower-fidelity on fine detail (Nerd Font icon glyphs
-// especially) than a supersample-then-minify result. 2 gets that benefit
-// from a single mip level's worth of minification, short of the DEEPER
-// chain (4x here, or Retina's 4x request compounded by its own 2x dpi
-// multiplier) whose repeated box-filter halvings compound coverage loss
-// on thin strokes — that deeper-chain risk, not supersampling itself, is
-// what standard-DPI needs to stay clear of.
+// <= 0). effectiveAtlasScale multiplies this by the display's own DPI
+// factor on top, so a Retina panel ends up with a deeper effective chain
+// than a standard-DPI one from the SAME base — the dpi multiplier alone
+// already gives Retina more raster detail to work with.
+//
+// The base itself was 1 on standard-DPI displays for a while — no
+// supersampling at all — specifically to avoid a deeper mip chain's
+// repeated 2x2 box-filter halvings (glGenerateMipmap in core-profile GL
+// always builds each level from the PREVIOUS one — there's no
+// GENERATE_MIPMAP_HINT in core profile to ask the driver for a better
+// filter, and no way to reach a deep level except by chaining shallow
+// ones) compounding coverage loss on thin strokes. That traded away too
+// much: uploadAtlas's mipmapped trilinear minification, not the source
+// rasterization, is what actually smooths glyph edges, so scale 1 skips
+// that entirely and leaves quality down to FreeType's own small-size AA
+// alone — visibly softer than Retina's supersample-then-minify result,
+// on fine detail (Nerd Font icons) and on ordinary text alike. 4 — the
+// same base Retina already gets, just without its extra dpi multiplier —
+// trades back into the thin-stroke risk the original 1 was written to
+// avoid; if box-drawing/serif hairlines start looking patchy on a
+// standard-DPI display, that tradeoff is why, and the fix belongs in a
+// real custom downsample pass (bypassing glGenerateMipmap's chain
+// entirely) rather than another number here.
 func autoAtlasScale(dpi float32) int {
-	if dpi < 2 {
-		return 2
-	}
 	return 4
 }
 
