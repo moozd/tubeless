@@ -110,17 +110,11 @@ func ibm5151Effects() Effects {
 	e.Face = Face{BgTint: 0.045, InsetShadow: 0.38}
 	e.Blur = Blur{Radius: 1.5, Strength: 0.4}
 	e.CRT = CRT{
-		Curvature:     Curvature{Amount: 0.10},
+		Curvature:     Curvature{Amount: 0.02},
 		Scanlines:     Scanlines{Intensity: 0.30, Period: 2.0},
 		Noise:         Noise{Intensity: 0.02},
 		Flicker:       Flicker{Amount: 0.08, Speed: 50},
 		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.35},
-		// 4:3 — the standard CRT tube shape of the era, not the raw
-		// 720x350 text-mode pixel grid: MDA's pixels were deliberately
-		// non-square (tall and thin) so that grid would *display* as 4:3
-		// on the actual tube, not the wide rectangle a naive pixel-count
-		// ratio would draw.
-		AspectRatio: AspectRatio{Width: 4, Height: 3},
 	}
 	return e
 }
@@ -138,16 +132,13 @@ func ibm5153Effects() Effects {
 	e.Face = Face{BgTint: 0.05, InsetShadow: 0.42}
 	e.Blur = Blur{Radius: 1.8, Strength: 0.45}
 	e.CRT = CRT{
-		Curvature:     Curvature{Amount: 0.13},
+		Curvature:     Curvature{Amount: 0.02},
 		Scanlines:     Scanlines{Intensity: 0.40, Period: 3.0},
 		Aberration:    Aberration{Amount: 0.004},
 		ShadowMask:    ShadowMask{Intensity: 0.35, CellSize: 3.0},
 		Noise:         Noise{Intensity: 0.02},
 		Flicker:       Flicker{Amount: 0.05, Speed: 60},
 		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.05},
-		// 4:3 tube shape — see ibm5151Effects' AspectRatio comment; CGA's
-		// 640x200 pixel grid is non-square for the same reason MDA's is.
-		AspectRatio: AspectRatio{Width: 4, Height: 3},
 	}
 	return e
 }
@@ -160,23 +151,18 @@ func ibm5153Effects() Effects {
 // beam). Amber phosphors of this era are medium-persistence — shorter
 // than IBM's long-persistence green P39, longer than a color shadow-mask
 // tube's P22. InsetShadow pushed the highest of any preset here — the
-// most curved and least corrected of these tubes. Source: Zenith's
-// ZVM-1220/1230 service manual (bitsavers).
+// least corrected of these tubes. Source: Zenith's ZVM-1220/1230 service
+// manual (bitsavers).
 func zenithZVM1220Effects() Effects {
 	e := modernEffects()
 	e.Face = Face{BgTint: 0.06, InsetShadow: 0.46}
 	e.Blur = Blur{Radius: 2.5, Strength: 0.6}
 	e.CRT = CRT{
-		Curvature:     Curvature{Amount: 0.14},
+		Curvature:     Curvature{Amount: 0.02},
 		Scanlines:     Scanlines{Intensity: 0.45, Period: 3.5},
 		Noise:         Noise{Intensity: 0.05},
 		Flicker:       Flicker{Amount: 0.10, Speed: 60},
 		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.18},
-		// 4:3 — no pixel resolution is documented for this composite
-		// monitor, but the tube shape itself needs no per-monitor spec:
-		// every CRT monitor and TV of this era, composite or digital,
-		// was 4:3.
-		AspectRatio: AspectRatio{Width: 4, Height: 3},
 	}
 	return e
 }
@@ -195,13 +181,11 @@ func appleMonitorIIIEffects() Effects {
 	e.Face = Face{BgTint: 0.06, InsetShadow: 0.40}
 	e.Blur = Blur{Radius: 1.6, Strength: 0.35}
 	e.CRT = CRT{
-		Curvature:     Curvature{Amount: 0.09},
+		Curvature:     Curvature{Amount: 0.02},
 		Scanlines:     Scanlines{Intensity: 0.30, Period: 2.2},
 		Noise:         Noise{Intensity: 0.015},
 		Flicker:       Flicker{Amount: 0.06, Speed: 50},
 		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.45},
-		// 4:3 tube shape — see ibm5151Effects' AspectRatio comment.
-		AspectRatio: AspectRatio{Width: 4, Height: 3},
 	}
 	return e
 }
@@ -219,15 +203,13 @@ func commodore1084SEffects() Effects {
 	e.Face = Face{BgTint: 0.05, InsetShadow: 0.40}
 	e.Blur = Blur{Radius: 2.0, Strength: 0.5}
 	e.CRT = CRT{
-		Curvature:     Curvature{Amount: 0.12},
+		Curvature:     Curvature{Amount: 0.02},
 		Scanlines:     Scanlines{Intensity: 0.35, Period: 3.0},
 		Aberration:    Aberration{Amount: 0.005},
 		ShadowMask:    ShadowMask{Intensity: 0.30, CellSize: 3.4},
 		Noise:         Noise{Intensity: 0.04},
 		Flicker:       Flicker{Amount: 0.07, Speed: 50},
 		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.05},
-		// 4:3 tube shape — see ibm5151Effects' AspectRatio comment.
-		AspectRatio: AspectRatio{Width: 4, Height: 3},
 	}
 	return e
 }
@@ -244,15 +226,13 @@ func princetonHX12Effects() Effects {
 	e.Face = Face{BgTint: 0.04, InsetShadow: 0.35}
 	e.Blur = Blur{Radius: 1.4, Strength: 0.35}
 	e.CRT = CRT{
-		Curvature:     Curvature{Amount: 0.10},
+		Curvature:     Curvature{Amount: 0.02},
 		Scanlines:     Scanlines{Intensity: 0.30, Period: 2.0},
 		Aberration:    Aberration{Amount: 0.003},
 		ShadowMask:    ShadowMask{Intensity: 0.25, CellSize: 2.4},
 		Noise:         Noise{Intensity: 0.02},
 		Flicker:       Flicker{Amount: 0.05, Speed: 60},
 		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.04},
-		// 4:3 tube shape — see ibm5151Effects' AspectRatio comment.
-		AspectRatio: AspectRatio{Width: 4, Height: 3},
 	}
 	return e
 }
