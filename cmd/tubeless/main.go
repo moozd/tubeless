@@ -419,20 +419,23 @@ func effectiveAtlasScale(scale int, dpi float32) int {
 // <= 0) from the monitor's own content scale. This isn't just "scale by
 // dpi" — effectiveAtlasScale already does that multiplication on top of
 // whatever base comes back here. The base itself needs to differ by
-// panel class: a standard-DPI display wants almost no mip chain (a
-// deeper one just compounds coverage loss on thin strokes through GL's
-// box-filtered mipmaps — see uploadAtlas), while a Retina display has
-// pixels to spare and looks best with the deeper chain the existing
-// default plus its own 2x dpi multiplier gives it.
+// panel class: a standard-DPI display still wants at least one level of
+// supersampling — uploadAtlas's mipmapped trilinear minification, not the
+// source rasterization, is what actually smooths glyph edges, so
+// rasterizing at exactly display size (scale 1) skips that entirely and
+// leaves quality down to FreeType's own small-size AA alone, visibly
+// softer/lower-fidelity on fine detail (Nerd Font icon glyphs
+// especially) than a supersample-then-minify result. 2 gets that benefit
+// from a single mip level's worth of minification, short of the DEEPER
+// chain (4x here, or Retina's 4x request compounded by its own 2x dpi
+// multiplier) whose repeated box-filter halvings compound coverage loss
+// on thin strokes — that deeper-chain risk, not supersampling itself, is
+// what standard-DPI needs to stay clear of.
 func autoAtlasScale(dpi float32) int {
-	switch {
-	case dpi <= 1:
-		return 1
-	case dpi < 2:
+	if dpi < 2 {
 		return 2
-	default:
-		return 4
 	}
+	return 4
 }
 
 // buildFacesFor builds cfg's glyph atlas at the raster resolution

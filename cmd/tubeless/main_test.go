@@ -128,18 +128,21 @@ func TestEffectiveAtlasScale(t *testing.T) {
 	}
 }
 
-// TestAutoAtlasScale guards the fix for atlas.scale "auto" (Scale <= 0)
-// picking a base that looks right on a standard-DPI display too: naively
-// reusing the Retina-tuned default of 4 there makes the mip chain deeper
-// than it needs to be, compounding coverage loss on thin strokes instead
-// of helping (see effectiveAtlasScale's doc comment).
+// TestAutoAtlasScale guards atlas.scale "auto" (Scale <= 0) picking a
+// base that looks right on a standard-DPI display too: naively reusing
+// the Retina-tuned default of 4 there makes the mip chain deeper than it
+// needs to be, compounding coverage loss on thin strokes instead of
+// helping (see effectiveAtlasScale's doc comment) — but scale 1 (no
+// supersampling at all) skips uploadAtlas's mipmapped-minification AA
+// entirely, visibly softer than a supersample-then-minify result. 2 is
+// the floor that still gets that benefit from a single mip level.
 func TestAutoAtlasScale(t *testing.T) {
 	cases := []struct {
 		dpi  float32
 		want int
 	}{
-		{dpi: 1, want: 1},
-		{dpi: 0, want: 1},
+		{dpi: 1, want: 2},
+		{dpi: 0, want: 2},
 		{dpi: 1.5, want: 2},
 		{dpi: 2, want: 4},
 		{dpi: 3, want: 4},
