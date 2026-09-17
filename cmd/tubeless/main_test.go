@@ -128,19 +128,18 @@ func TestEffectiveAtlasScale(t *testing.T) {
 	}
 }
 
-// TestAutoAtlasScale guards atlas.scale "auto" (Scale <= 0) using the
-// same raster base regardless of dpi — effectiveAtlasScale's own dpi
-// multiplier is what gives a Retina panel a deeper effective chain than
-// a standard-DPI one, not a different base here (see autoAtlasScale's
-// own doc for the thin-stroke tradeoff that comes with this base).
+// TestAutoAtlasScale guards atlas.scale "auto" (Scale <= 0) picking a
+// base that looks right on a standard-DPI display too — see
+// autoAtlasScale's own doc for the three values actually tried and why
+// 2, not 1 or 4, is what's here now.
 func TestAutoAtlasScale(t *testing.T) {
 	cases := []struct {
 		dpi  float32
 		want int
 	}{
-		{dpi: 1, want: 4},
-		{dpi: 0, want: 4},
-		{dpi: 1.5, want: 4},
+		{dpi: 1, want: 2},
+		{dpi: 0, want: 2},
+		{dpi: 1.5, want: 2},
 		{dpi: 2, want: 4},
 		{dpi: 3, want: 4},
 	}

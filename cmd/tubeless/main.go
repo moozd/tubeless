@@ -432,30 +432,33 @@ func effectiveAtlasScale(scale int, dpi float32) int {
 }
 
 // autoAtlasScale picks a base cfg.Atlas.Scale for "auto" (cfg.Atlas.Scale
-// <= 0). effectiveAtlasScale multiplies this by the display's own DPI
-// factor on top, so a Retina panel ends up with a deeper effective chain
-// than a standard-DPI one from the SAME base — the dpi multiplier alone
-// already gives Retina more raster detail to work with.
+// <= 0) from the display's own panel class. This isn't just "scale by
+// dpi" — effectiveAtlasScale already does that multiplication on top of
+// whatever base comes back here.
 //
-// The base itself was 1 on standard-DPI displays for a while — no
-// supersampling at all — specifically to avoid a deeper mip chain's
-// repeated 2x2 box-filter halvings (glGenerateMipmap in core-profile GL
-// always builds each level from the PREVIOUS one — there's no
-// GENERATE_MIPMAP_HINT in core profile to ask the driver for a better
-// filter, and no way to reach a deep level except by chaining shallow
-// ones) compounding coverage loss on thin strokes. That traded away too
-// much: uploadAtlas's mipmapped trilinear minification, not the source
-// rasterization, is what actually smooths glyph edges, so scale 1 skips
-// that entirely and leaves quality down to FreeType's own small-size AA
-// alone — visibly softer than Retina's supersample-then-minify result,
-// on fine detail (Nerd Font icons) and on ordinary text alike. 4 — the
-// same base Retina already gets, just without its extra dpi multiplier —
-// trades back into the thin-stroke risk the original 1 was written to
-// avoid; if box-drawing/serif hairlines start looking patchy on a
-// standard-DPI display, that tradeoff is why, and the fix belongs in a
-// real custom downsample pass (bypassing glGenerateMipmap's chain
-// entirely) rather than another number here.
+// Tried three values on a real standard-DPI display before landing here.
+// 1 (no supersampling at all) skipped uploadAtlas's mipmapped trilinear
+// minification entirely — the thing that actually smooths glyph edges,
+// not the source rasterization — leaving quality down to FreeType's own
+// small-size AA alone, visibly soft. 4 (Retina's own base, tried on the
+// theory that matching it would match Retina's quality) tested WORSE,
+// not better: glGenerateMipmap in core-profile GL always builds each mip
+// level from the previous one (no GENERATE_MIPMAP_HINT in core profile
+// to ask the driver for a better filter), so reaching a 4x-to-1x
+// minification chains two crude 2x2 box-filter halvings instead of one,
+// and that compounded coverage loss read as blur even with atlas.gamma
+// back at its 1.0 default — worse than either 1 or 2. 2 is the actual
+// sweet spot found by testing: one mip level's worth of minification,
+// short of the second halving step that made 4 worse than doing nothing.
+// A real fix past this point (matching Retina's actual sharpness on a
+// standard-DPI panel) needs a custom downsample pass that bypasses
+// glGenerateMipmap's chain entirely, not another number here — Retina
+// itself doesn't need one only because its dpi multiplier already buys
+// it enough raster detail that the chain's crudeness stops mattering.
 func autoAtlasScale(dpi float32) int {
+	if dpi < 2 {
+		return 2
+	}
 	return 4
 }
 
