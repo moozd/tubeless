@@ -35,8 +35,12 @@ func Start(name string, args []string, cols, rows int) (*Session, error) {
 	// the universally-supported baseline every terminfo database has —
 	// see setupTerminfo for the entry actually used, which extends it
 	// with the two capabilities its own terminfo lacks (undercurl style
-	// and an independent underline color) rather than leaving every app
-	// to guess or need its own manual override for those.
+	// and an independent underline color). setupTerminfo also patches
+	// tmux's and screen's own terminfo entries the same way: a program
+	// running inside one of those sees TERM=tmux-256color/screen-256color
+	// — the multiplexer's own name, not this TERM=tubeless — so without
+	// that second patch undercurl silently degrades the instant anything
+	// runs inside a multiplexer under tubeless.
 	term, extraEnv := setupTerminfo()
 	cmd.Env = append(os.Environ(), "TERM="+term)
 	cmd.Env = append(cmd.Env, extraEnv...)
