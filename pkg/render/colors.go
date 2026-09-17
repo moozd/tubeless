@@ -50,7 +50,17 @@ func cellColors(attr screen.Attr, cfg config.Config) (fg, bg [3]float32) {
 	if attr.Invisible {
 		return bg, bg
 	}
-	if abs32(fgI-bgI) < cfg.Contrast.MinDelta {
+	// Compared in OKLab lightness, not the raw fgI/bgI scalars: a
+	// saturated phosphor color's Low endpoint sits well above true black,
+	// so its whole [Low,High] span covers far less *perceived* lightness
+	// range than a 0-1 scalar gap of the same size implies — a bg-set
+	// cell (fg and bg both confined to that span, unlike plain text
+	// against real black) can pass a raw-scalar threshold while still
+	// rendering two colors the eye can't tell apart. See rampLightness's
+	// own doc comment.
+	fgL := rampLightness(cfg.Phosphor.Low, cfg.Phosphor.High, fgI)
+	bgL := rampLightness(cfg.Phosphor.Low, cfg.Phosphor.High, bgI)
+	if abs32(fgL-bgL) < cfg.Contrast.MinDelta {
 		// Too close to read once collapsed onto one hue's brightness —
 		// synthesize a full invert (opposite extremes for both fg and bg)
 		// instead of only nudging fg, which can leave two still-similar
@@ -202,15 +212,35 @@ var (
 // and pkg/screen/color.go's doc comment) are unchanged by this; only the
 // blend space is.
 func lerpPhosphor(low, high [3]float32, t float32) [3]float32 {
-	if !phosphorRampCached || phosphorRampLow != low || phosphorRampHigh != high {
-		phosphorRampLowLab[0], phosphorRampLowLab[1], phosphorRampLowLab[2] = linearSRGBToOKLab(low)
-		phosphorRampHighLab[0], phosphorRampHighLab[1], phosphorRampHighLab[2] = linearSRGBToOKLab(high)
-		phosphorRampLow, phosphorRampHigh, phosphorRampCached = low, high, true
-	}
+	ensurePhosphorRampCache(low, high)
 	L := phosphorRampLowLab[0] + (phosphorRampHighLab[0]-phosphorRampLowLab[0])*t
 	a := phosphorRampLowLab[1] + (phosphorRampHighLab[1]-phosphorRampLowLab[1])*t
 	b := phosphorRampLowLab[2] + (phosphorRampHighLab[2]-phosphorRampLowLab[2])*t
 	return clamp01_3(oklabToLinearSRGB(L, a, b))
+}
+
+func ensurePhosphorRampCache(low, high [3]float32) {
+	if phosphorRampCached && phosphorRampLow == low && phosphorRampHigh == high {
+		return
+	}
+	phosphorRampLowLab[0], phosphorRampLowLab[1], phosphorRampLowLab[2] = linearSRGBToOKLab(low)
+	phosphorRampHighLab[0], phosphorRampHighLab[1], phosphorRampHighLab[2] = linearSRGBToOKLab(high)
+	phosphorRampLow, phosphorRampHigh, phosphorRampCached = low, high, true
+}
+
+// rampLightness is lerpPhosphor's own L(t), exposed on its own: the
+// perceptual-space equivalent of t, since lerpPhosphor blends OKLab
+// lightness linearly. cellColors' contrast check compares this instead
+// of raw fgI/bgI (see its own doc comment) — t itself only means "0-1
+// pre-ramp scalar", not "0-1 of the theme's actual visible lightness
+// range", and for a saturated, non-white phosphor color (amber, green)
+// that range is much narrower than t's own 0-1 span suggests: Low is
+// already fairly light long before t=0, so two t values that look far
+// apart numerically can still land almost on top of each other in what
+// the eye actually sees.
+func rampLightness(low, high [3]float32, t float32) float32 {
+	ensurePhosphorRampCache(low, high)
+	return phosphorRampLowLab[0] + (phosphorRampHighLab[0]-phosphorRampLowLab[0])*t
 }
 
 // clamp01_3 clamps each channel of a linear-RGB triple to 0-1 — OKLab's
