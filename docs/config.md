@@ -112,17 +112,11 @@ RGB triples `[r, g, b]` in `0.0-1.0`, not raw hex.
 | ------- | ---- | ------- | ------------------------------------------------- |
 | `lines` | int  | `5000`  | Scrolled-off history retained. `<= 0` disables scrollback. Not yet exposed in the config TUI — edit the file directly. |
 
-### `[scrolling]` (experimental)
+### `[shell]`
 
-| Key                    | Type | Default | Meaning                                                                 |
-| ---------------------- | ---- | ------- | ------------------------------------------------------------------------ |
-| `smooth_content_shift` | bool | `false` | Ease detected scroll/pane shifts in like Neovide instead of snapping. A heuristic frame diff — the escape hatch if it misfires on some app's output. |
-
-### `[shell]` (experimental)
-
-| Key        | Type | Default | Meaning                                                                 |
-| ---------- | ---- | ------- | ------------------------------------------------------------------------ |
-| `use_tmux` | bool | `false` | Launch into a fixed tmux session named `home` instead of a plain login shell. Only applies on the `$SHELL` auto-detect path (an explicit `--shell` always wins) and only when tmux is on `PATH`. |
+| Key       | Type   | Default | Meaning                                                                 |
+| --------- | ------ | ------- | ------------------------------------------------------------------------ |
+| `program` | string | `""`    | Which installed shell to launch into. Empty (`"auto"` in the config TUI) follows `$SHELL`. `"tmux"` attaches to (or creates) a fixed session named `home` instead of a plain login shell, only when tmux is on `PATH`. Any other value names a shell resolved via `PATH` — the config TUI's shell row lists what's actually installed on this machine. Only applies on the `$SHELL` auto-detect path (an explicit `--shell` always wins). |
 
 ### Theme axis: `[colors]` and `[phosphor]`
 

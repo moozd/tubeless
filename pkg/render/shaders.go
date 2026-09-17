@@ -52,6 +52,3 @@ var cursorFragSrc string
 
 //go:embed assets/shaders/decay.frag
 var decayFragSrc string
-
-//go:embed assets/shaders/signature.frag
-var signatureFragSrc string

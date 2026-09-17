@@ -10,18 +10,15 @@
 // block bars use reverse video (bright phosphor block, black text) so they
 // read clearly.
 //
-// The screen is three tabs (Tab/Shift+Tab, or Shift+Tab's ESC[Z, to
-// switch): GENERAL holds the font, layout (padding), and every color
-// setting (see pkg/config's ThemeColors), including a per-channel
+// The screen is two tabs (Tab/Shift+Tab, or Shift+Tab's ESC[Z, to
+// switch): GENERAL holds the font, layout (padding), shell, and every
+// color setting (see pkg/config's ThemeColors), including a per-channel
 // custom-color editor, with a live swatch/sample preview at the bottom;
 // VISUAL EFFECTS holds every non-color, non-font visual effect (see
 // pkg/config's Effects), cycled through a list of period-accurate 80s
-// monitors alongside the "modern" default (CRT emulation off);
-// EXPERIMENTAL holds settings still under active development that don't
-// yet meet the bar for the other two tabs (currently just smooth-scroll
-// — see config.Scrolling's own doc comment). Editing any General/Visual
-// Effects setting by hand flips that tab's own preset/theme name to
-// "custom" — see adjust(); Experimental has no such axis to flip.
+// monitors alongside the "modern" default (CRT emulation off). Editing
+// any setting by hand flips that tab's own preset/theme name to
+// "custom" — see adjust().
 //
 // Edits only take effect in memory as you navigate — nothing is written to
 // ~/.config/tubeless/config.toml until you press 's'. The running tubeless
@@ -33,7 +30,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -54,16 +53,15 @@ type ui struct {
 	rows int
 
 	// tab is which of the top-level tabs is active (0 = general, 1 =
-	// visual effects, 2 = experimental) — see listFor/switchTab. Each
-	// tab keeps its own navigation position in selByTab so switching
-	// away and back doesn't lose your place.
-	tab              int
-	listPresets      []panelRow
-	listFonts        []panelRow
-	listExperimental []panelRow
-	list             []panelRow
-	sel              int
-	selByTab         [numTabs]int
+	// visual effects) — see listFor/switchTab. Each tab keeps its own
+	// navigation position in selByTab so switching away and back doesn't
+	// lose your place.
+	tab         int
+	listPresets []panelRow
+	listFonts   []panelRow
+	list        []panelRow
+	sel         int
+	selByTab    [numTabs]int
 
 	status  string
 	esc     []byte
@@ -105,7 +103,7 @@ func (u *ui) modalOpen() bool {
 
 // numTabs is how many top-level tabs the screen has — see listFor/
 // switchTab/tabTitle/drawTabs, the only places that need to know.
-const numTabs = 3
+const numTabs = 2
 
 type rowKind uint8
 
@@ -351,14 +349,11 @@ func (u *ui) feed(b byte) (quit bool) {
 
 // listFor returns the row list for a tab index — the single source both
 // buildLists and switchTab read from, so they can't drift. General is
-// tab 0 (the first thing you see on open); visual effects is tab 1;
-// experimental is tab 2.
+// tab 0 (the first thing you see on open); visual effects is tab 1.
 func (u *ui) listFor(tab int) []panelRow {
 	switch tab {
 	case 1:
 		return u.listPresets
-	case 2:
-		return u.listExperimental
 	default:
 		return u.listFonts
 	}
@@ -655,9 +650,7 @@ func (u *ui) save() {
 
 // resetPreset snaps the active tab's own axis back to its named
 // preset/theme's canonical values — modern/rosepine if that axis is
-// currently "custom" (nothing named to snap back to). The experimental
-// tab has no axis (see config.Scrolling's own doc comment on why it
-// isn't preset-seeded) — reset there just zeroes it directly.
+// currently "custom" (nothing named to snap back to).
 func (u *ui) resetPreset() {
 	switch u.tab {
 	case 1:
@@ -667,10 +660,6 @@ func (u *ui) resetPreset() {
 		}
 		applyEffectsPresetCfg(&u.cfg, name)
 		u.status = "reset to " + name + " preset"
-	case 2:
-		u.cfg.Scrolling = config.Scrolling{}
-		u.cfg.Shell = config.Shell{}
-		u.status = "reset experimental settings"
 	default:
 		name := u.cfg.Theme
 		if name == "" || name == "custom" {
@@ -699,10 +688,6 @@ func (u *ui) dirty() {
 var (
 	cursorShapeNames      = []string{"block", "bar", "underline"}
 	cursorBlinkStyleNames = []string{"ease", "static", "hard"}
-	// contentShiftModeNames backs the scrolling.content_shift_mode
-	// cycler row below — see config.Scrolling's own doc comment for what
-	// each name means.
-	contentShiftModeNames = []string{"off", "content", "image"}
 )
 
 func cycleName(names []string, current string, d int) string {
@@ -714,6 +699,60 @@ func cycleName(names []string, current string, d int) string {
 		idx = ((idx+d)%n + n) % n
 	}
 	return names[idx]
+}
+
+// shellWellKnownNames are common shell binary names checked directly on
+// PATH — a backstop for shells (fish, nu, elvish, xonsh, pwsh) that don't
+// always register themselves in /etc/shells the way the POSIX-standard
+// ones do.
+var shellWellKnownNames = []string{
+	"bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "sh",
+	"nu", "elvish", "xonsh", "pwsh",
+}
+
+// shellChoiceNames lists every shell this machine actually has installed,
+// for the shell.program cycler row — "auto" ($SHELL) always first, then
+// every distinct shell name found either in /etc/shells (the
+// POSIX-standard list of approved login shells, filtered to entries that
+// still exist — some systems leave stale ones behind after uninstalling
+// a package) or under a well-known name resolved via PATH
+// (shellWellKnownNames), sorted; "tmux" is appended last, only when it's
+// actually on PATH, as a distinct non-shell option — see
+// cmd/tubeless's tmuxCommand for what selecting it does. Scans the
+// filesystem/PATH fresh on every call rather than caching: this only
+// runs when the settings screen is actually rendering this row, cheap
+// enough not to matter, and correctly reflects a shell installed/removed
+// while the config TUI is open.
+func shellChoiceNames() []string {
+	seen := map[string]bool{"auto": true}
+	names := []string{"auto"}
+	add := func(name string) {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	if data, err := os.ReadFile("/etc/shells"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if _, err := os.Stat(line); err == nil {
+				add(filepath.Base(line))
+			}
+		}
+	}
+	for _, name := range shellWellKnownNames {
+		if _, err := exec.LookPath(name); err == nil {
+			add(name)
+		}
+	}
+	sort.Strings(names[1:])
+	if _, err := exec.LookPath("tmux"); err == nil {
+		names = append(names, "tmux")
+	}
+	return names
 }
 
 // applyEffectsPresetCfg seeds c's effects axis from a named preset and —
@@ -742,7 +781,6 @@ func applyThemeCfg(c *config.Config, name string) {
 func (u *ui) buildLists() {
 	u.listPresets = u.buildPresetsList()
 	u.listFonts = u.buildFontsThemeList()
-	u.listExperimental = u.buildExperimentalList()
 	u.tab = 0
 	u.list = u.listFonts
 	u.firstSetting()
@@ -1057,6 +1095,31 @@ func (u *ui) buildFontsThemeList() []panelRow {
 		func(c *config.Config) float64 { return float64(c.Padding.Size) },
 		func(c *config.Config, v float64) { c.Padding.Size = float32(v) }))
 
+	section("shell")
+	add(&setting{
+		key: "shell.program", label: "shell",
+		help:    "which installed shell to launch into; \"auto\" follows $SHELL, \"tmux\" attaches to (or creates) a persistent session named \"home\" instead of a plain login shell — only applies when no --shell override is passed",
+		choices: shellChoiceNames,
+		get: func(c *config.Config) string {
+			if c.Shell.Program == "" {
+				return "auto"
+			}
+			return c.Shell.Program
+		},
+		applyStep: func(c *config.Config, d int) bool {
+			current := c.Shell.Program
+			if current == "" {
+				current = "auto"
+			}
+			next := cycleName(shellChoiceNames(), current, d)
+			if next == "auto" {
+				next = ""
+			}
+			c.Shell.Program = next
+			return false
+		},
+	})
+
 	section("theme")
 	add(&setting{
 		key: "theme", label: "theme",
@@ -1083,39 +1146,6 @@ func (u *ui) buildFontsThemeList() []panelRow {
 	role("bg", "background", func(c *config.Config) *[3]float32 { return &c.Colors.DefaultBg })
 	role("accent", "accent", func(c *config.Config) *[3]float32 { return &c.Phosphor.High })
 	role("glow", "glow", func(c *config.Config) *[3]float32 { return &c.Phosphor.Low })
-
-	return list
-}
-
-// buildExperimentalList is the EXPERIMENTAL tab: settings under active
-// development that don't yet meet the bar for General/Visual Effects —
-// currently just smooth-scroll. Deliberately not wrapped in asEffect:
-// unlike Surface/Blur/Cursor/CRT, nothing here is seeded or reset by a
-// Preset (see config.Scrolling's own doc comment) — an experimental
-// feature shouldn't silently flip on or off just because you cycled a
-// monitor preset on a different tab.
-func (u *ui) buildExperimentalList() []panelRow {
-	var list []panelRow
-	section := func(name string) { list = append(list, panelRow{kind: rowSection, section: name}) }
-	add := func(s *setting) { list = append(list, panelRow{kind: rowSetting, set: s}) }
-
-	section("scrolling")
-	add(&setting{
-		key: "scrolling.content_shift_mode", label: "shift detection",
-		help:    "which detector, if any, decides a redraw is a uniform scroll worth gliding instead of snapping: \"content\" diffs the terminal grid's text (a heuristic still being hardened against real-world editor/TUI output — switch back to \"off\" if it wobbles or drags a status bar on some particular app); \"image\" diffs the actually-rendered pixels on the GPU instead (experimental, no keyboard/mouse hints yet); \"off\" always snaps",
-		choices: func() []string { return contentShiftModeNames },
-		get:     func(c *config.Config) string { return c.Scrolling.ContentShiftMode },
-		applyStep: func(c *config.Config, d int) bool {
-			c.Scrolling.ContentShiftMode = cycleName(contentShiftModeNames, c.Scrolling.ContentShiftMode, d)
-			return false
-		},
-	})
-
-	section("shell")
-	add(newToggle("shell.use_tmux", "use tmux",
-		"launch into a persistent tmux session named \"home\" (attaching if it's already running) instead of a plain login shell; only applies when tmux is actually installed and no --shell override is passed, otherwise falls back to the plain shell",
-		func(c *config.Config) bool { return c.Shell.UseTmux },
-		func(c *config.Config, v bool) { c.Shell.UseTmux = v }))
 
 	return list
 }
@@ -1180,8 +1210,6 @@ func tabTitle(tab int) string {
 	switch tab {
 	case 1:
 		return "visual effects"
-	case 2:
-		return "experimental"
 	default:
 		return "general"
 	}

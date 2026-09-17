@@ -45,8 +45,8 @@ func TestPtyCoordinatorSetsCloseRequestedOnShellExit(t *testing.T) {
 }
 
 // TestPtyCoordinatorRespawnsInsteadOfClosing locks in the tmux-integration
-// behavior: when respawn is non-nil (config.Shell.UseTmux launched into
-// tmux — see main's own gating), the pty's root process exiting must not
+// behavior: when respawn is non-nil (config.Shell.Program == "tmux"
+// launched into tmux — see main's own gating), the pty's root process exiting must not
 // close the window outright the way a plain shell exiting does. It's
 // exactly what happens on `tmux kill-server` (or the last tmux session
 // ending normally) — respawn is tried first, and only once it also

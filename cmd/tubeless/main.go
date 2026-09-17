@@ -178,7 +178,7 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	sess := startShell(*shell, cfg.Shell.UseTmux)
+	sess := startShell(*shell, cfg.Shell.Program)
 	ref := newSessionRef(sess)
 	defer ref.Close()
 	// log.Fatalf calls os.Exit internally, which would skip the deferred
@@ -198,7 +198,7 @@ func main() {
 	// on tmuxSessionName instead of closing the window — see
 	// ptyCoordinator's own doc comment.
 	var respawn func(cols, rows int) (*ptyio.Session, bool)
-	if *shell == "" && cfg.Shell.UseTmux {
+	if *shell == "" && cfg.Shell.Program == "tmux" {
 		respawn = func(cols, rows int) (*ptyio.Session, bool) {
 			name, args, ok := tmuxCommand()
 			if !ok {
@@ -547,8 +547,8 @@ func loadFontFaces(family string) font.FaceBytes {
 // is idle (no PTY output pending) must still take effect immediately, not
 // wait for the next byte to arrive on a blocking Read.
 //
-// respawn is non-nil only when config.Shell.UseTmux launched into tmux
-// (see main's own gating on it, which built this closure) — when the
+// respawn is non-nil only when config.Shell.Program == "tmux" launched
+// into tmux (see main's own gating on it, which built this closure) — when the
 // pty's root process exits (readCh's EOF below), respawn(cols, rows) is
 // tried before giving up: a `tmux kill-server`, or the last tmux session
 // ending normally, looks identical to ptyCoordinator (its child just
@@ -595,14 +595,11 @@ func ptyCoordinator(ref *sessionRef, shared *atomic.Pointer[screen.Screen], resi
 			// pager or editor repainting one line at a time, tmux relaying
 			// a pane's redraw through its own pty) — publishing after every
 			// one of those doesn't just risk a frame landing mid-redraw, it
-			// publishes each intermediate line as its own complete Screen,
-			// so a scroll that only reads as one once it's finished instead
-			// renders as a rapid sequence of one-line jumps the content-shift
-			// detector (see pkg/screen's DetectContentShift, consumed in
-			// runLoop) would have to diff frame by frame instead of once.
-			// Draining whatever's already queued, then waiting a short
-			// quiet window for more before publishing, coalesces a burst
-			// back into the single complete frame it actually is.
+			// also means rendering a rapid sequence of intermediate,
+			// half-finished Screens instead of the single complete frame
+			// the redraw actually settles into. Draining whatever's already
+			// queued, then waiting a short quiet window for more before
+			// publishing, coalesces a burst back into that one frame.
 			drainPending(readCh, parser)
 			for _, resp := range work.DrainResponses() {
 				ref.Write(resp)
@@ -733,8 +730,8 @@ func windowTitle(appTitle string) string {
 	return "tubeless"
 }
 
-func startShell(shell string, useTmux bool) *ptyio.Session {
-	name, args := shellCommand(shell, useTmux)
+func startShell(shell, shellProgram string) *ptyio.Session {
+	name, args := shellCommand(shell, shellProgram)
 	if name == "" {
 		name = "/bin/sh"
 	}
@@ -748,25 +745,36 @@ func startShell(shell string, useTmux bool) *ptyio.Session {
 // shellCommand resolves the program+args startShell should launch. An
 // explicit --shell override (e.g. tektest for run-green) always wins and
 // gets exactly the program named, no injected flag it may not accept.
-// Otherwise, when useTmux is on and tmux is actually installed, it wins
-// over the plain shell. The plain $SHELL path gets -l (login shell) so
-// .zprofile/.bash_profile PATH setup runs, matching every other terminal
-// emulator's default (Terminal.app, iTerm, kitty, Alacritty).
-func shellCommand(shell string, useTmux bool) (string, []string) {
+// Otherwise shellProgram (config.Shell.Program) picks: "" (or "auto")
+// follows $SHELL; "tmux" attaches to (or creates) the fixed tmux session,
+// falling back to $SHELL if tmux isn't actually on PATH; anything else
+// names a shell resolved via PATH (see cmd/tubeless-config's
+// shellChoiceNames for what populates that list), falling back to
+// $SHELL if it's no longer found there. The plain $SHELL/resolved path
+// gets -l (login shell) so .zprofile/.bash_profile PATH setup runs,
+// matching every other terminal emulator's default (Terminal.app,
+// iTerm, kitty, Alacritty).
+func shellCommand(shell, shellProgram string) (string, []string) {
 	if shell != "" {
 		return shell, nil
 	}
-	if useTmux {
+	switch shellProgram {
+	case "", "auto":
+	case "tmux":
 		if name, args, ok := tmuxCommand(); ok {
 			return name, args
+		}
+	default:
+		if path, err := exec.LookPath(shellProgram); err == nil {
+			return path, []string{"-l"}
 		}
 	}
 	return os.Getenv("SHELL"), []string{"-l"}
 }
 
-// tmuxSessionName is the fixed session config.Shell.UseTmux always
-// attaches to or creates — one persistent session per machine, not a
-// fresh one per window.
+// tmuxSessionName is the fixed session config.Shell.Program == "tmux"
+// always attaches to or creates — one persistent session per machine,
+// not a fresh one per window.
 const tmuxSessionName = "home"
 
 // tmuxCommand resolves the tmux invocation for tmuxSessionName, or
@@ -1018,24 +1026,6 @@ func (w *cfgWatch) changed(now time.Time) bool {
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
-//
-// contentShiftMaxRows/contentShiftMaxCols bound how many rows/columns of
-// shift screen.DetectContentShift/DetectHorizontalContentShift consider
-// per axis. Set high enough to never actually constrain a real shift —
-// a full PageUp/PageDown jumps by a whole page (the terminal's entire
-// height), which a small cap (e.g. 25) would miss on any reasonably
-// tall window, falling back to an unanimated snap. detectShift clamps
-// this to the axis's own actual length internally, so passing a large
-// sentinel here costs nothing on a small/typical terminal and simply
-// means "search the whole axis" on a large one — even at that clamped
-// worst case (a very tall/wide terminal), the search stays O(n²) in
-// rows or columns alone, still microseconds, nowhere near a frame
-// budget (see detectShift's own doc for the per-candidate cost shape).
-const (
-	contentShiftMaxRows = 1 << 20
-	contentShiftMaxCols = 1 << 20
-)
-
 func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config], req chan fontBuildReq, res chan fontBuildResult, load *fontLoad) {
 	r := renderer
 	var lastScr *screen.Screen
@@ -1235,66 +1225,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 				lastTitle = title
 			}
 		}
-		if scr != lastScr && w == lastW && h == lastH && scrollLine == 0 {
-			// A genuinely new screen at the same size — diff it against
-			// the previous one so any uniform content shift, however the
-			// app actually redrew it (a real scroll-region op, or a TUI
-			// framework repainting by repositioning the cursor and
-			// overwriting cells directly), glides instead of cutting
-			// straight to the new state. This is the sole source of the
-			// content-scroll glide — pkg/screen no longer records scroll
-			// ops itself. Both axes are checked independently, so a
-			// region shifting vertically and a different region shifting
-			// horizontally in the same frame both animate.
-			//
-			// Which detector runs (if any) is cfg.Scrolling.ContentShiftMode:
-			// "content" is screen.DetectContentShift/
-			// DetectHorizontalContentShift, a bounded rune-hash scan
-			// cheap enough to run unconditionally; "image" is
-			// Renderer.DetectImageRowShift/DetectImageColShift (see
-			// pkg/render/imagediff.go), a GPU pixel diff of the
-			// actually-rendered frame instead — experimental. "off" runs
-			// neither. Live-reloadable from config.toml/the config TUI —
-			// the escape hatch for a misdetected shift on either detector
-			// is switching this back to "off", since neither is a
-			// guaranteed-exact signal.
-			//
-			// scrollLine == 0 additionally requires the viewport to be at
-			// the live tail. DetectContentShift/DetectHorizontalContentShift
-			// diff scr.Grid directly — always live-screen row/column
-			// indices — but BuildInstances applies the resulting glide
-			// offset against scr.VisibleWindow(scrollLine)'s row indices,
-			// which only coincide with scr.Grid's when scrollLine is 0.
-			// Detecting (and animating) while scrolled back into
-			// scrollback would apply a shift computed from live-screen
-			// content onto whatever unrelated scrollback rows currently
-			// occupy those same row numbers in the view — nudging content
-			// that was never touched. This was a real bug in the previous
-			// version of this feature, not just a theoretical one — see
-			// git history on this file. Scrolled-back viewing simply snaps
-			// like an ordinary redraw; the glide resumes once the user
-			// returns to the live tail.
-			switch cfg.Scrolling.ContentShiftMode {
-			case "content":
-				if shift, ok := screen.DetectContentShift(lastScr, scr, contentShiftMaxRows); ok {
-					r.ApplyDetectedRowShift(shift, cs.h)
-				}
-				if shift, ok := screen.DetectHorizontalContentShift(lastScr, scr, contentShiftMaxCols); ok {
-					r.ApplyDetectedColShift(shift, cs.w)
-				}
-			case "image":
-				if shift, ok := r.DetectImageRowShift(lastScr, scr, cfg, cs.w, cs.h, contentShiftMaxRows); ok {
-					r.ApplyDetectedRowShift(shift, cs.h)
-				}
-				if shift, ok := r.DetectImageColShift(lastScr, scr, cfg, cs.w, cs.h, contentShiftMaxCols); ok {
-					r.ApplyDetectedColShift(shift, cs.w)
-				}
-			}
-		}
-		r.UpdateContentScroll(dt)
-		r.UpdateContentScrollCols(dt)
-
-		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload || r.ContentScrollActive() || r.ContentScrollColsActive()
+		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
 		reload = false
 
 		if dirty {

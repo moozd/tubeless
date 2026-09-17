@@ -52,62 +52,24 @@ type Config struct {
 	Face          Face       `toml:"face"`
 	Contrast      Contrast   `toml:"contrast"`
 	Scrollback    Scrollback `toml:"scrollback"`
-	Scrolling     Scrolling  `toml:"scrolling"`
 	Shell         Shell      `toml:"shell"`
 	CRT           CRT        `toml:"crt"`
 }
 
 // Shell controls how the pty's child process is launched. Lives on the
-// config TUI's "experimental" tab, like Scrolling.
+// config TUI's general settings.
 type Shell struct {
-	// UseTmux launches into a fixed tmux session named "home" (attaching
-	// if it already exists, creating it otherwise — see cmd/tubeless's
-	// tmuxCommand) instead of a plain login shell. Only takes effect on
-	// the $SHELL auto-detect path (an explicit --shell override always
-	// wins) and only when tmux is actually on PATH; falls back to the
-	// plain shell otherwise.
-	UseTmux bool `toml:"use_tmux"`
-}
-
-// Scrolling controls scroll-related behavior beyond the raw scrollback
-// buffer size (see Scrollback). Lives on the config TUI's own
-// "experimental" tab, not seeded or reset by either the Theme or Preset
-// axis — it's a heuristic feature under active development, not a
-// finished visual effect.
-type Scrolling struct {
-	// ContentShiftMode selects which detector, if any, decides whether a
-	// redraw is a uniform content shift worth gliding in like Neovide
-	// instead of snapping — gating both axes (row and column) together,
-	// since both detectors of either mode reject the same class of
-	// adversarial false positives (columnar lookalikes, a
-	// repeated-rule/separator run), so there's no meaningfully weaker
-	// axis to gate separately. A single string field rather than
-	// multiple bools makes "only one detector active at a time"
-	// structural, not a rule to remember.
-	//
-	// "off" (default): never glide, always snap. "content": pkg/screen's
-	// rune-hash/fuzzy diff of the terminal grid (DetectContentShift/
-	// DetectHorizontalContentShift) — a heuristic still being hardened
-	// against real-world editor/TUI output; the escape hatch for a
-	// misdetected shift wobbling or dragging a status bar on some
-	// particular app is switching this back to "off". "image":
-	// pkg/render's GPU pixel diff of the actually-rendered frame instead
-	// of the grid's rune content (see pkg/render/imagediff.go) —
-	// experimental, and without any corroborating signal (no keyboard/
-	// mouse/escape-sequence hints), just the raw pixel comparison.
-	//
-	// Parked as of this writing: real-world testing against nvim
-	// (splits, cursor movement near a window edge, scrolling near
-	// end-of-buffer's repeated "~" placeholder lines) surfaced repeated
-	// false positives/negatives that several rounds of fixes — attribute
-	// stripping, per-band split search, background-sample skipping,
-	// tier-1-over-self-match precedence (a shared-engine fix that also
-	// helped "content") — didn't fully resolve, and no further
-	// corroborating signal was in scope for this pass. Left in place,
-	// opt-in only, for a future attempt rather than ripped out; see git
-	// log on this file/pkg/render/imagediff.go for what was already
-	// tried before reaching for the same ideas again.
-	ContentShiftMode string `toml:"content_shift_mode"`
+	// Program selects which installed shell to launch into. Empty (the
+	// default, shown as "auto" in the config TUI) follows $SHELL. "tmux"
+	// attaches to (or creates) a fixed session named "home" (see
+	// cmd/tubeless's tmuxCommand) instead of a plain login shell, only
+	// when tmux is actually on PATH. Any other value names a shell
+	// resolved via PATH at launch time (see cmd/tubeless-config's
+	// shellChoiceNames for what populates the config TUI's list) —
+	// falls back to $SHELL if it's no longer found there. Only takes
+	// effect on the auto-detect path; an explicit --shell override
+	// always wins.
+	Program string `toml:"program"`
 }
 
 // Scrollback controls how much scrolled-off history is retained above the
