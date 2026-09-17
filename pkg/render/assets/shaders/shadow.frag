@@ -6,6 +6,7 @@ out vec4 fragColor;
 uniform sampler2D uScene;
 uniform vec2 uTexel;
 uniform float uShadow; // 0..1 dreamy drop shadow strength, cast down-right
+uniform float uRadius; // surface.frag's own corner radius, in pixels
 
 // uScene here is surface.frag's already rounded (radius+gradient applied)
 // output, not the raw rectangle — so the opaque test below sees the true
@@ -13,6 +14,22 @@ uniform float uShadow; // 0..1 dreamy drop shadow strength, cast down-right
 // instead of the sharp corner underneath it.
 
 const float MAX_REACH = 40.0;
+
+// reach scales how far the shadow searches/fades with the surface's own
+// radius instead of always using MAX_REACH flat — a fixed 40-texel reach
+// on a small/thin surface (a one-row selection bar with radius 5, say)
+// read as wildly out of proportion: a shadow spreading much farther than
+// the rounding it's supposedly cast by, clashing with it rather than
+// reading as the same surface's depth. MIN_REACH keeps a sharp-cornered
+// block (radius 0) still casting a modest shadow instead of none at all —
+// a drop shadow under a rectangle is still meaningful, it just isn't
+// following any corner curve.
+const float MIN_REACH = 10.0;
+const float REACH_PER_RADIUS = 3.0;
+
+float shadowReach(float radius) {
+	return clamp(MIN_REACH + radius * REACH_PER_RADIUS, MIN_REACH, MAX_REACH);
+}
 
 // Marches from a transparent point toward dir looking for the nearest
 // opaque (real surface) pixel, up to maxDist texels. Step size grows
@@ -70,12 +87,13 @@ void main() {
 	// back toward a down-right-casting block, and a real cast shadow only
 	// ever darkens (rgb == 0), never tints — it's an absence of light, not
 	// a color from the casting surface.
-	float dUp = distToOpaque(vec2(0.0, -1.0), MAX_REACH);
-	float dLeft = distToOpaque(vec2(-1.0, 0.0), MAX_REACH);
-	float dCorner = distToOpaque(normalize(vec2(-1.0, -1.0)), MAX_REACH);
+	float reach = shadowReach(uRadius);
+	float dUp = distToOpaque(vec2(0.0, -1.0), reach);
+	float dLeft = distToOpaque(vec2(-1.0, 0.0), reach);
+	float dCorner = distToOpaque(normalize(vec2(-1.0, -1.0)), reach);
 
-	float a = max(dreamyFalloff(dUp, MAX_REACH), dreamyFalloff(dLeft, MAX_REACH));
-	a = max(a, dreamyFalloff(dCorner, MAX_REACH));
+	float a = max(dreamyFalloff(dUp, reach), dreamyFalloff(dLeft, reach));
+	a = max(a, dreamyFalloff(dCorner, reach));
 	a *= uShadow;
 
 	fragColor = a <= 0.001 ? vec4(0.0) : vec4(0.0, 0.0, 0.0, a);

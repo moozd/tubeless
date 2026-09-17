@@ -239,7 +239,7 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 		surfaceTex = r.surfaceFBO.tex
 	}
 	if cfg.Surface.Shadow > 0.001 {
-		r.shadowPass.Draw(surfaceTex, r.shadowFBO, outW, outH, cfg.Surface.Shadow)
+		r.shadowPass.Draw(surfaceTex, r.shadowFBO, outW, outH, cfg.Surface.Shadow, cfg.Surface.Radius)
 		surfaceTex = r.shadowFBO.tex
 	}
 	r.copyPass.DrawOver(surfaceTex, scene, outW, outH)
