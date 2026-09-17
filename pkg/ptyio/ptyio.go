@@ -21,19 +21,25 @@ type Session struct {
 // Start launches name(args...) attached to a new PTY sized cols x rows.
 func Start(name string, args []string, cols, rows int) (*Session, error) {
 	cmd := exec.Command(name, args...)
-	// xterm-256color, not something VT340-accurate: the terminfo for a
-	// real VT340 declares only what a genuine 1980s serial terminal
-	// could do — no alternate screen buffer, no 256/true color, and
-	// (concretely, this is what broke modern TUI apps here) real
-	// padding-delay directives like flash's "$<200/>", meant for a slow
-	// physical terminal that needs literal wait time between writes.
-	// ncurses-based apps (neovim, lazygit) honor whatever the terminfo
-	// for the declared TERM says, so they were emitting that padding
-	// syntax as real output, and avoiding capabilities (alt-screen
-	// among them) the entry doesn't advertise — independent of what the
-	// emulator itself actually implements. xterm-256color is the
-	// universally-supported baseline every terminfo database has.
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	// xterm-256color as a base, not something VT340-accurate: the
+	// terminfo for a real VT340 declares only what a genuine 1980s
+	// serial terminal could do — no alternate screen buffer, no 256/true
+	// color, and (concretely, this is what broke modern TUI apps here)
+	// real padding-delay directives like flash's "$<200/>", meant for a
+	// slow physical terminal that needs literal wait time between
+	// writes. ncurses-based apps (neovim, lazygit) honor whatever the
+	// terminfo for the declared TERM says, so they were emitting that
+	// padding syntax as real output, and avoiding capabilities
+	// (alt-screen among them) the entry doesn't advertise — independent
+	// of what the emulator itself actually implements. xterm-256color is
+	// the universally-supported baseline every terminfo database has —
+	// see setupTerminfo for the entry actually used, which extends it
+	// with the two capabilities its own terminfo lacks (undercurl style
+	// and an independent underline color) rather than leaving every app
+	// to guess or need its own manual override for those.
+	term, extraEnv := setupTerminfo()
+	cmd.Env = append(os.Environ(), "TERM="+term)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	// Every terminal emulator starts a fresh shell in $HOME by default,
 	// not wherever the emulator's own process happened to be cwd'd —
 	// which matters here because a macOS GUI app launched from
