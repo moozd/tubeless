@@ -76,7 +76,7 @@ void main() {
 		// good the antialiasing is. A fixed pixel wavelength instead
 		// always gets enough pixels per cycle to look like an actual
 		// smooth, slow curl, at any font size.
-		float wavelengthPx = 18.0;
+		float wavelengthPx = 12.0;
 		// The underline instance is a single one-cell-tall quad (see
 		// cell_underline.vert) — anything the wave (plus the AA band's
 		// own halfBand reach around it) pushes past vLocal.y 0 or 1 isn't
