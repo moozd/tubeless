@@ -489,6 +489,24 @@ func (cp *CellPass) DrawAmbientBG(fbo *FBO, outW, outH int, color [3]float32) {
 	fbo.Unbind()
 }
 
+// gridOffset centers a cols x rows grid of cw x ch cells within a
+// screenW x screenH canvas, floored to a whole pixel. cw/ch are always
+// whole-pixel sizes (see physicalCellSize), so the leftover margin
+// (screenW/H minus the grid's own exact pixel size) is always a whole
+// pixel too — but splitting it evenly with plain division still lands on
+// a half pixel whenever that leftover is odd. A glyph rasterized at a
+// half-pixel offset can't land on a single texel row/column, so the GPU
+// blends across the boundary — every glyph shares this same offset, so
+// this reads as text-wide blur that flips on and off with each 1px
+// resize as the leftover parity flips. Flooring instead keeps every
+// glyph pixel-aligned; the cost is an up-to-1px uneven margin between
+// the two sides, invisible next to a blurred grid.
+func gridOffset(screenW, screenH float32, cols, rows int, cw, ch float32) (float32, float32) {
+	offsetX := float32(int32(screenW-float32(cols)*cw) / 2)
+	offsetY := float32(int32(screenH-float32(rows)*ch) / 2)
+	return offsetX, offsetY
+}
+
 // DrawRects renders background color fills, then solid block glyphs on top,
 // directly onto the literal scene. No clear and no neighbor-aware geometry:
 // cosmetic effects run later as post-processing over the finished image.
@@ -506,8 +524,7 @@ func (cp *CellPass) DrawRects(fbo *FBO, cw, ch float32) {
 	// window size evenly; centering means that leftover lands as equal
 	// padding on every edge instead of being dumped entirely on the
 	// right/bottom, which reads as a stray margin rather than padding.
-	offsetX := (screenW - float32(cp.cols)*cw) / 2
-	offsetY := (screenH - float32(cp.rows)*ch) / 2
+	offsetX, offsetY := gridOffset(screenW, screenH, cp.cols, cp.rows, cw, ch)
 
 	if len(cp.bgScratch) > 0 {
 		cp.drawRects(cp.bgScratch, cw, ch, screenW, screenH, offsetX, offsetY)
@@ -533,8 +550,7 @@ func (cp *CellPass) DrawLineArt(fbo *FBO, cw, ch float32) {
 	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 
 	screenW, screenH := float32(fbo.W), float32(fbo.H)
-	offsetX := (screenW - float32(cp.cols)*cw) / 2
-	offsetY := (screenH - float32(cp.rows)*ch) / 2
+	offsetX, offsetY := gridOffset(screenW, screenH, cp.cols, cp.rows, cw, ch)
 	cp.drawGlyphs(cp.shapeScratch, cw, ch, screenW, screenH, offsetX, offsetY)
 
 	gl.Disable(gl.BLEND)
@@ -556,8 +572,7 @@ func (cp *CellPass) DrawText(fbo *FBO, cw, ch float32) {
 	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 
 	screenW, screenH := float32(fbo.W), float32(fbo.H)
-	offsetX := (screenW - float32(cp.cols)*cw) / 2
-	offsetY := (screenH - float32(cp.rows)*ch) / 2
+	offsetX, offsetY := gridOffset(screenW, screenH, cp.cols, cp.rows, cw, ch)
 	cp.drawGlyphs(cp.textScratch, cw, ch, screenW, screenH, offsetX, offsetY)
 
 	gl.Disable(gl.BLEND)
@@ -579,8 +594,7 @@ func (cp *CellPass) DrawUnderline(fbo *FBO, cw, ch float32) {
 	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 
 	screenW, screenH := float32(fbo.W), float32(fbo.H)
-	offsetX := (screenW - float32(cp.cols)*cw) / 2
-	offsetY := (screenH - float32(cp.rows)*ch) / 2
+	offsetX, offsetY := gridOffset(screenW, screenH, cp.cols, cp.rows, cw, ch)
 	gl.UseProgram(cp.progUnderline)
 	setCommonUniforms(cp.progUnderline, cw, ch, screenW, screenH, offsetX, offsetY)
 	uploadAndDrawInstances(cp.underlineVAO, cp.underlineInstVBO, cp.underlineScratch, underlineInstanceFloats)
