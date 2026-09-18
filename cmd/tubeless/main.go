@@ -268,7 +268,11 @@ func main() {
 		dpiX: dpiX,
 		dpiY: dpiY,
 	}
-	wireResize(win, resizeCh, cs, &cfgRef)
+	// wireResize itself is registered inside runLoop, once its per-frame
+	// renderFrame closure exists for the callback to invoke — see
+	// wireResize's own doc comment on why that matters during a live
+	// resize drag.
+	//
 	// GLFW's framebuffer-size callback only fires on a later, real resize
 	// — never for the window's initial creation — so without this, cols
 	// and rows stay at their fixed startup guess (which the actual
@@ -696,13 +700,28 @@ func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
 // read fresh on every callback (see cellSize) so a content-scale change
 // between resizes is picked up automatically, not just at wireResize's
 // call time.
-func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config]) {
+//
+// renderFrame is called after every single callback invocation, not just
+// once the resize settles — on macOS, dragging a window's edge runs
+// inside a native tracking loop that GLFW's own PollEvents doesn't
+// return from until the drag ends, but it still dispatches this
+// callback synchronously throughout the drag (see the debug resize log
+// this once drove: many fb= lines land within the same second). Without
+// a real render+SwapBuffers on each of those, the GPU-visible content
+// never changes for the whole drag, so the WindowServer falls back to
+// visually stretching the last real frame to match the live window size
+// — which is what read as "content stretches, then snaps back" once the
+// drag ends and the main loop finally redraws at the settled size.
+// Rendering here too means every intermediate size gets a real,
+// correctly-proportioned frame instead.
+func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config], renderFrame func()) {
 	win.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
 		lw, lh := win.GetSize()
 		sx, sy := win.CurrentMonitorContentScale()
 		log.Printf("debug resize: fb=%dx%d logical=%dx%d contentScale=%.4fx%.4f cellPx=%.4fx%.4f", width, height, lw, lh, sx, sy, cs.w, cs.h)
 		c := cfgRef.Load()
 		pushResizeSize(resizeCh, cs, width, height, c.CRT.AspectRatio, c.Padding.Size)
+		renderFrame()
 	})
 }
 
@@ -1089,6 +1108,76 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	// whatever the file resolves to.
 	fontZoomSteps := 0
 
+	// renderFrame renders and presents exactly one frame against whatever
+	// scr/cfg/cs/r currently are. Pulled out of the loop body below so
+	// wireResize's callback can call it directly on every intermediate
+	// size during a live macOS resize drag (see wireResize's own doc
+	// comment) — the main loop below calls it too, once per iteration,
+	// so there is exactly one place that draws a frame.
+	renderFrame := func() {
+		now := time.Now()
+		// dt drives the cursor glide; clamp it so a scheduling stall or
+		// compositor hiccup doesn't teleport the cursor across the screen.
+		dt := now.Sub(lastFrame).Seconds()
+		lastFrame = now
+		if dt < 0 {
+			dt = 0
+		} else if dt > 0.5 {
+			dt = 0.5
+		}
+
+		w, h := win.FramebufferPixelSize()
+		scr := shared.Load()
+		if scr.InAltScreen() {
+			// A full-screen app took over — viewing scrollback, or a
+			// stale local selection from before it started, doesn't
+			// make sense under its own live redraws.
+			scroll.target = 0
+			*sel = render.Selection{}
+		}
+		r.UpdateScroll(scroll.target, dt)
+		scrollLine := r.CurrentScrollLine()
+		if scr != lastScr {
+			// A yank in tmux (with set-clipboard on) or an OSC52-aware
+			// app relaying a copy out of a nested session — see
+			// Screen.PendingClipboard — lands here as plain text to
+			// forward to the real system clipboard. Gated on scr !=
+			// lastScr (not size, unlike the shift detectors below) since
+			// a clipboard set has nothing to do with grid geometry and
+			// should never be missed just because a resize also landed
+			// this frame.
+			if sets := scr.PendingClipboard(); len(sets) > 0 {
+				writeClipboard(win, sets[len(sets)-1])
+			}
+			if title := windowTitle(scr.Title); title != lastTitle {
+				win.SetTitle(title)
+				lastTitle = title
+			}
+		}
+		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
+		reload = false
+
+		// Computed every frame, not just when dirty — RenderEffects below
+		// needs it every frame (the cursor glow and phosphor persistence
+		// FBOs must stay sized to this box, matching the scene texture,
+		// even on a frame that only re-presents an unchanged scene) to
+		// keep that texture composited at 1:1, never resampled to a
+		// different size (see RenderEffects's own doc comment on boxW/
+		// boxH — that resample is what used to read as blurry text
+		// whenever the aspect ratio didn't match the window's own shape).
+		_, _, bw, bh := render.LetterboxBox(cfg.CRT.AspectRatio, w, h)
+		if dirty {
+			r.PrepareFrame(scr, cfg, cs.w, cs.h, scrollLine, *sel)
+			r.RenderScene(bw, bh, cs.w, cs.h, cfg)
+		}
+		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt)
+		r.SetLoading(load.snapshot())
+		r.RenderEffects(bw, bh, w, h, cfg, dt)
+		win.SwapBuffers()
+		lastScr, lastW, lastH, lastScrollLine, lastSel = scr, w, h, scrollLine, *sel
+	}
+	wireResize(win, resizeCh, cs, cfgRef, renderFrame)
+
 	for !win.ShouldClose() && !closeRequested.Load() {
 		if win.GetAttrib(glfw.Iconified) == glfw.True {
 			// Truly minimized windows must not burn GPU presenting frames
@@ -1217,64 +1306,6 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			}
 		default:
 		}
-		// dt drives the cursor glide; clamp it so a scheduling stall or
-		// compositor hiccup doesn't teleport the cursor across the screen.
-		dt := now.Sub(lastFrame).Seconds()
-		lastFrame = now
-		if dt < 0 {
-			dt = 0
-		} else if dt > 0.5 {
-			dt = 0.5
-		}
-
-		w, h := win.FramebufferPixelSize()
-		scr := shared.Load()
-		if scr.InAltScreen() {
-			// A full-screen app took over — viewing scrollback, or a
-			// stale local selection from before it started, doesn't
-			// make sense under its own live redraws.
-			scroll.target = 0
-			*sel = render.Selection{}
-		}
-		r.UpdateScroll(scroll.target, dt)
-		scrollLine := r.CurrentScrollLine()
-		if scr != lastScr {
-			// A yank in tmux (with set-clipboard on) or an OSC52-aware
-			// app relaying a copy out of a nested session — see
-			// Screen.PendingClipboard — lands here as plain text to
-			// forward to the real system clipboard. Gated on scr !=
-			// lastScr (not size, unlike the shift detectors below) since
-			// a clipboard set has nothing to do with grid geometry and
-			// should never be missed just because a resize also landed
-			// this frame.
-			if sets := scr.PendingClipboard(); len(sets) > 0 {
-				writeClipboard(win, sets[len(sets)-1])
-			}
-			if title := windowTitle(scr.Title); title != lastTitle {
-				win.SetTitle(title)
-				lastTitle = title
-			}
-		}
-		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
-		reload = false
-
-		// Computed every frame, not just when dirty — RenderEffects below
-		// needs it every frame (the cursor glow and phosphor persistence
-		// FBOs must stay sized to this box, matching the scene texture,
-		// even on a frame that only re-presents an unchanged scene) to
-		// keep that texture composited at 1:1, never resampled to a
-		// different size (see RenderEffects's own doc comment on boxW/
-		// boxH — that resample is what used to read as blurry text
-		// whenever the aspect ratio didn't match the window's own shape).
-		_, _, bw, bh := render.LetterboxBox(cfg.CRT.AspectRatio, w, h)
-		if dirty {
-			r.PrepareFrame(scr, cfg, cs.w, cs.h, scrollLine, *sel)
-			r.RenderScene(bw, bh, cs.w, cs.h, cfg)
-		}
-		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt)
-		r.SetLoading(load.snapshot())
-		r.RenderEffects(bw, bh, w, h, cfg, dt)
-		win.SwapBuffers()
-		lastScr, lastW, lastH, lastScrollLine, lastSel = scr, w, h, scrollLine, *sel
+		renderFrame()
 	}
 }
