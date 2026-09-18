@@ -48,9 +48,12 @@ void main() {
 	// apparent width stretches wherever the sine is sloped rather than
 	// flat at a peak — worst right around its zero-crossings, where the
 	// slope is steepest. Needs a noticeably thinner base thickness than
-	// even plain underline to end up looking thin once drawn.
+	// even plain underline to end up looking thin once drawn. The 0.85px
+	// floor (below plain underline's 1.0px) is only reachable because
+	// the amplitude clamp below keeps the wave's own reach from ever
+	// pushing this outside the cell regardless of how thin it gets.
 	if (vStyle == STYLE_CURLY) {
-		thicknessPx = max(1.0, chPx * 0.022);
+		thicknessPx = max(0.85, chPx * 0.016);
 	}
 	float thickness = thicknessPx / chPx;
 	float halfBand = thickness * 0.6;
@@ -74,7 +77,23 @@ void main() {
 		// always gets enough pixels per cycle to look like an actual
 		// smooth, slow curl, at any font size.
 		float wavelengthPx = 18.0;
-		float amp = thickness * 1.3;
+		// The underline instance is a single one-cell-tall quad (see
+		// cell_underline.vert) — anything the wave (plus the AA band's
+		// own halfBand reach around it) pushes past vLocal.y 0 or 1 isn't
+		// resampled or wrapped, it's just never rasterized at all, which
+		// crops the wave's peaks/troughs into flat-topped/flat-bottomed
+		// shapes right at the cell edge. baseline sits close to the
+		// bottom edge (1.0) on purpose, for descender clearance above
+		// it, which leaves very little room below it before that edge —
+		// far less than thickness * 1.3 reaches at ordinary font sizes.
+		// Clamping the amplitude to the smaller of the room above and
+		// below baseline (each minus halfBand's own extra reach) keeps
+		// the whole band inside the cell always, at any font size,
+		// instead of relying on the thickness tuning above to happen to
+		// leave enough room by coincidence.
+		float roomBelow = (1.0 - baseline) - halfBand;
+		float roomAbove = baseline - halfBand;
+		float amp = min(thickness * 1.3, max(min(roomBelow, roomAbove), 0.0));
 		float twoPi = 6.2831853;
 		// globalX is this pixel's distance, in screen pixels, from the
 		// start of the underlined run — vCellPos.x (this cell's own pixel
