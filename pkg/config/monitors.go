@@ -86,10 +86,11 @@ func modernEffects() Effects {
 			Glow: 1.5, PulsePeriod: 0.9, Radius: 0.35,
 			Shape: "block", BlinkStyle: "ease",
 			Glass: Glass{Tint: 0.35, Blur: 1.5, Refract: 2.0, Opacity: 0.55},
-			// Values match the constants this replaced (see git history)
-			// — a real jump across the buffer morphs into a ball+tail,
-			// ordinary typing never does. See Trail's own doc comment.
-			Trail: Trail{Enabled: true, SpeedLow: 45, SpeedHigh: 150, Ease: 9.0, MaxCells: 2.2},
+			// Length 0.13 matches Neovide's own default animation
+			// length; Size 0.5 lands the tail at the same reach the
+			// constants this replaced drew (see git history). See
+			// Trail's own doc comment.
+			Trail: Trail{Enabled: true, Size: 0.5, Length: 0.13},
 		},
 		Face:     Face{BgTint: 0.04, InsetShadow: 0.3},
 		Contrast: Contrast{MinDelta: 0.35},

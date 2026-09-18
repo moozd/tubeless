@@ -6,7 +6,7 @@ import (
 	"github.com/moozd/tubeless/pkg/config"
 )
 
-var testTrail = config.Trail{Enabled: true, SpeedLow: 45, SpeedHigh: 150, Ease: 9.0, MaxCells: 2.2}
+var testTrail = config.Trail{Enabled: true, Size: 0.5, Length: 0.13}
 
 // TestUpdateCursorTypingStaysBelowMorphThreshold exercises UpdateCursor's
 // speed/morph tracking without a GL context: advancing one cell per
@@ -42,8 +42,8 @@ func TestUpdateCursorBigJumpRampsMorphUpAndDown(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		r.UpdateCursor(30, 0, true, dt, testTrail)
 	}
-	if r.cursorMorph < 0.5 {
-		t.Fatalf("cursorMorph = %v shortly after a 30-cell jump, want >= 0.5", r.cursorMorph)
+	if r.cursorMorph < 0.45 {
+		t.Fatalf("cursorMorph = %v shortly after a 30-cell jump, want >= 0.45", r.cursorMorph)
 	}
 
 	for i := 0; i < 90; i++ {

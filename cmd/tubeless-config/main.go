@@ -933,21 +933,15 @@ func (u *ui) buildPresetsList() []panelRow {
 
 	section("cursor — trail (ball/tail morph)")
 	add(asEffect(newToggle("cursor.trail.enabled", "enabled",
-		"morphs the cursor into a ball with a tail during a fast glide (a jump across the buffer, not ordinary typing), then eases back to its at-rest shape",
+		"morphs the cursor into a ball with a tail during a fast glide (a jump across the buffer, not ordinary typing), then eases back to its at-rest shape — mirrors neovide's cursor trail",
 		func(c *config.Config) bool { return c.Cursor.Trail.Enabled },
 		func(c *config.Config, v bool) { c.Cursor.Trail.Enabled = v })))
-	add(asEffect(newSlider("cursor.trail.speed_low", "speed low", "glide speed at/below which the cursor stays its plain at-rest shape", "c/s", 0, 5, 0, 300,
-		func(c *config.Config) float64 { return float64(c.Cursor.Trail.SpeedLow) },
-		func(c *config.Config, v float64) { c.Cursor.Trail.SpeedLow = float32(v) })))
-	add(asEffect(newSlider("cursor.trail.speed_high", "speed high", "glide speed at/above which the cursor is fully the ball+tail", "c/s", 0, 5, 0, 400,
-		func(c *config.Config) float64 { return float64(c.Cursor.Trail.SpeedHigh) },
-		func(c *config.Config, v float64) { c.Cursor.Trail.SpeedHigh = float32(v) })))
-	add(asEffect(newSlider("cursor.trail.ease", "ease", "how fast the morph itself catches up to its target shape", "/s", 1, 0.5, 0.5, 30,
-		func(c *config.Config) float64 { return float64(c.Cursor.Trail.Ease) },
-		func(c *config.Config, v float64) { c.Cursor.Trail.Ease = float32(v) })))
-	add(asEffect(newSlider("cursor.trail.max_cells", "max tail length", "how far the tail can stretch behind the ball at full speed", "cells", 2, 0.1, 0, 8,
-		func(c *config.Config) float64 { return float64(c.Cursor.Trail.MaxCells) },
-		func(c *config.Config, v float64) { c.Cursor.Trail.MaxCells = float32(v) })))
+	add(asEffect(newSlider("cursor.trail.size", "size", "how far the tail reaches at full speed, 0 (no tail) .. 1 (longest) — like neovide's cursor_trail_size", "", 2, 0.05, 0, 1,
+		func(c *config.Config) float64 { return float64(c.Cursor.Trail.Size) },
+		func(c *config.Config, v float64) { c.Cursor.Trail.Size = float32(v) })))
+	add(asEffect(newSlider("cursor.trail.length", "length", "how long the morph itself takes to catch up to its shape — like neovide's cursor_animation_length", "s", 2, 0.01, 0.01, 1,
+		func(c *config.Config) float64 { return float64(c.Cursor.Trail.Length) },
+		func(c *config.Config, v float64) { c.Cursor.Trail.Length = float32(v) })))
 
 	section("cursor — glass mode (experimental)")
 	add(asEffect(newToggle("cursor.glass.enabled", "enabled",

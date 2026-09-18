@@ -190,23 +190,24 @@ type Cursor struct {
 // glide (a jump across the buffer, not ordinary typing), then eases back
 // to its at-rest Shape once it settles — see Renderer.UpdateCursor.
 // Forced off whenever Glass.Enabled is on, regardless of Enabled here.
+//
+// Mirrors Neovide's own cursor trail settings (cursor_trail_size,
+// cursor_animation_length) rather than exposing this pipeline's own
+// speed-threshold internals — Size/Length are the two knobs that
+// actually change what you see; the glide speed a jump needs to clear
+// before it morphs at all is tuned once (see cursorMorphSpeedLow/High)
+// specifically so ordinary typing never triggers it, and isn't something
+// a Size/Length change should accidentally undo.
 type Trail struct {
 	Enabled bool `toml:"enabled"`
-	// SpeedLow/SpeedHigh are the glide speed range, in cells/sec, the
-	// morph ramps across: at or below SpeedLow the cursor stays its
-	// plain at-rest Shape; at or above SpeedHigh it's fully the ball+
-	// tail. Ordinary typing and held-key repeat should stay well under
-	// SpeedLow so they never morph — only a real jump (a search result,
-	// :, gg/G, a click) clears it.
-	SpeedLow  float32 `toml:"speed_low"`
-	SpeedHigh float32 `toml:"speed_high"`
-	// Ease is how quickly the morph itself catches up to that target, an
-	// exponential-approach rate per second — higher snaps into/out of the
-	// shape faster, lower reads as a slower, softer transition.
-	Ease float32 `toml:"ease"`
-	// MaxCells caps how far the tail can stretch behind the ball at full
-	// speed, in cell widths.
-	MaxCells float32 `toml:"max_cells"`
+	// Size is the tail's reach at full speed, 0 (no tail — just the
+	// morphed ball head) .. 1 (the longest tail this pipeline draws).
+	Size float32 `toml:"size"`
+	// Length is roughly how long, in seconds, the morph itself takes to
+	// catch up to its target shape (both growing into the ball+tail on a
+	// fast jump, and easing back to the plain shape once it settles) —
+	// shorter reads as snappier, longer as a softer, slower transition.
+	Length float32 `toml:"length"`
 }
 
 // Glass is the experimental macOS-style frosted-glass cursor: instead of

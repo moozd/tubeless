@@ -117,19 +117,32 @@ const (
 	cursorGlideSpeed = 40.0
 
 	// cursorSpeedSmooth smooths the glide's own frame-to-frame speed
-	// (cells/sec), which config.Trail's SpeedLow/SpeedHigh then map into
-	// a 0..1 "how ball-like" target (see UpdateCursor) — so the shape
-	// change itself reads as a morph in both directions (speeding into a
-	// ball, slowing back into the plain block) rather than a cut.
-	//
-	// Trail's own SpeedLow default sits well above ordinary typing and
-	// held-key repeat: at a steady 60fps, one frame's glide covers
-	// roughly distance*29 cells/sec (cursorGlideSpeed's k, divided by
-	// dt) — so advancing one cell per retarget (typing, arrow-key
-	// repeat, even a fast ~50cps key-repeat rate) tops out well under 45
-	// and never morphs, while a real jump of several cells or more in
-	// one frame clears it easily and heads straight for the ball.
+	// (cells/sec), which cursorMorphSpeedLow/High then map into a 0..1
+	// "how ball-like" target (see UpdateCursor) — so the shape change
+	// itself reads as a morph in both directions (speeding into a ball,
+	// slowing back into the plain block) rather than a cut.
 	cursorSpeedSmooth = 20.0
+
+	// cursorMorphSpeedLow/High gate config.Trail's morph on the glide's
+	// own speed (cells/sec), not exposed directly (see Trail's own doc
+	// comment on why) — deliberately tuned, not a Size/Length concern:
+	// at or below Low the cursor stays its plain at-rest Shape, at or
+	// above High it's fully the ball+tail. Low sits well above ordinary
+	// typing and held-key repeat: at a steady 60fps, one frame's glide
+	// covers roughly distance*29 cells/sec (cursorGlideSpeed's k,
+	// divided by dt) — so advancing one cell per retarget (typing,
+	// arrow-key repeat, even a fast ~50cps key-repeat rate) tops out
+	// well under 45 and never morphs, while a real jump of several
+	// cells or more in one frame clears it easily and heads straight
+	// for the ball.
+	cursorMorphSpeedLow  = 45.0
+	cursorMorphSpeedHigh = 150.0
+
+	// cursorTrailMaxCells is the tail's reach, in cell widths, at
+	// config.Trail's Size == 1 (full speed) — Size 0..1 just scales this.
+	// 4.4 keeps Size's own default of 0.5 landing at the same 2.2-cell
+	// reach this pipeline drew before Size/Length existed.
+	cursorTrailMaxCells = 4.4
 )
 
 func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
@@ -293,8 +306,13 @@ func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64, trail config
 		r.cursorMorph = 0
 		return
 	}
-	target := smoothstep32(trail.SpeedLow, trail.SpeedHigh, r.cursorSpeed)
-	km := 1.0 - float32(math.Exp(-float64(trail.Ease)*dt))
+	target := smoothstep32(cursorMorphSpeedLow, cursorMorphSpeedHigh, r.cursorSpeed)
+	// Length is a duration, not a rate — 0 (or negative, from a bad
+	// config) reads as "instant" rather than a divide-by-zero.
+	km := float32(1)
+	if trail.Length > 0 {
+		km = 1.0 - float32(math.Exp(-dt/float64(trail.Length)))
+	}
 	r.cursorMorph += (target - r.cursorMorph) * km
 }
 
@@ -423,7 +441,7 @@ func (r *Renderer) RenderEffects(boxW, boxH, outW, outH int, cfg config.Config, 
 	if tailPxLen := float32(math.Hypot(float64(tailPxX), float64(tailPxY))); tailPxLen > 1e-4 {
 		tailPxX, tailPxY = tailPxX/tailPxLen, tailPxY/tailPxLen
 	}
-	tailLenPx := morph * cfg.Cursor.Trail.MaxCells * (r.cellW + r.cellH) * 0.5
+	tailLenPx := morph * cfg.Cursor.Trail.Size * cursorTrailMaxCells * (r.cellW + r.cellH) * 0.5
 
 	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, boxW, boxH, bright, morph, tailPxX, tailPxY, tailLenPx, r.sceneFBO.tex, cfg)
 
