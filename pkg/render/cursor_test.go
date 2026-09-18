@@ -1,6 +1,12 @@
 package render
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/moozd/tubeless/pkg/config"
+)
+
+var testTrail = config.Trail{Enabled: true, SpeedLow: 45, SpeedHigh: 150, Ease: 9.0, MaxCells: 2.2}
 
 // TestUpdateCursorTypingStaysBelowMorphThreshold exercises UpdateCursor's
 // speed/morph tracking without a GL context: advancing one cell per
@@ -14,7 +20,7 @@ func TestUpdateCursorTypingStaysBelowMorphThreshold(t *testing.T) {
 
 	for i := 0; i < 60; i++ {
 		col++
-		r.UpdateCursor(col, 0, true, dt)
+		r.UpdateCursor(col, 0, true, dt, testTrail)
 		if r.cursorMorph > 0.05 {
 			t.Fatalf("cursorMorph = %v after %d single-cell steps, want <= 0.05 (typing shouldn't morph)", r.cursorMorph, i+1)
 		}
@@ -31,17 +37,17 @@ func TestUpdateCursorTypingStaysBelowMorphThreshold(t *testing.T) {
 func TestUpdateCursorBigJumpRampsMorphUpAndDown(t *testing.T) {
 	r := &Renderer{}
 	const dt = 1.0 / 60.0
-	r.UpdateCursor(0, 0, true, dt)
+	r.UpdateCursor(0, 0, true, dt, testTrail)
 
 	for i := 0; i < 5; i++ {
-		r.UpdateCursor(30, 0, true, dt)
+		r.UpdateCursor(30, 0, true, dt, testTrail)
 	}
 	if r.cursorMorph < 0.5 {
 		t.Fatalf("cursorMorph = %v shortly after a 30-cell jump, want >= 0.5", r.cursorMorph)
 	}
 
 	for i := 0; i < 90; i++ {
-		r.UpdateCursor(30, 0, true, dt)
+		r.UpdateCursor(30, 0, true, dt, testTrail)
 	}
 	if r.cursorMorph > 0.05 {
 		t.Fatalf("cursorMorph = %v after the glide settled, want <= 0.05", r.cursorMorph)

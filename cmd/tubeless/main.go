@@ -1170,7 +1170,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			r.PrepareFrame(scr, cfg, cs.w, cs.h, scrollLine, *sel)
 			r.RenderScene(bw, bh, cs.w, cs.h, cfg)
 		}
-		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt)
+		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt, cfg.Cursor.Trail)
 		r.SetLoading(load.snapshot())
 		r.RenderEffects(bw, bh, w, h, cfg, dt)
 		win.SwapBuffers()

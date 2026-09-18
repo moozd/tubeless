@@ -86,6 +86,10 @@ func modernEffects() Effects {
 			Glow: 1.5, PulsePeriod: 0.9, Radius: 0.35,
 			Shape: "block", BlinkStyle: "ease",
 			Glass: Glass{Tint: 0.35, Blur: 1.5, Refract: 2.0, Opacity: 0.55},
+			// Values match the constants this replaced (see git history)
+			// — a real jump across the buffer morphs into a ball+tail,
+			// ordinary typing never does. See Trail's own doc comment.
+			Trail: Trail{Enabled: true, SpeedLow: 45, SpeedHigh: 150, Ease: 9.0, MaxCells: 2.2},
 		},
 		Face:     Face{BgTint: 0.04, InsetShadow: 0.3},
 		Contrast: Contrast{MinDelta: 0.35},

@@ -116,28 +116,20 @@ const (
 	// arrow press, a click) a visible glide instead of a snap.
 	cursorGlideSpeed = 40.0
 
-	// Ball+tail morph tuning. UpdateCursor smooths the glide's own
-	// frame-to-frame speed (cells/sec) with cursorSpeedSmooth, then maps
-	// it through cursorMorphSpeedLow..High into a 0..1 "how ball-like"
-	// target that cursorMorph eases toward at cursorMorphEase — so the
-	// shape change itself reads as a morph in both directions (speeding
-	// into a ball, slowing back into the plain block) rather than a cut.
-	// cursorTailMaxCells caps how far the tail can stretch behind the
-	// ball at full speed.
+	// cursorSpeedSmooth smooths the glide's own frame-to-frame speed
+	// (cells/sec), which config.Trail's SpeedLow/SpeedHigh then map into
+	// a 0..1 "how ball-like" target (see UpdateCursor) — so the shape
+	// change itself reads as a morph in both directions (speeding into a
+	// ball, slowing back into the plain block) rather than a cut.
 	//
-	// Low/High sit well above ordinary typing and held-key repeat: at a
-	// steady 60fps, one frame's glide covers roughly distance*29 cells/sec
-	// (cursorGlideSpeed's k, divided by dt) — so advancing one cell per
-	// retarget (typing, arrow-key repeat, even a fast ~50cps key-repeat
-	// rate) tops out well under 45 and never morphs, while a real jump of
-	// several cells or more in one frame clears it easily and heads
-	// straight for the ball. Typing stays visually consistent; jumps get
-	// the effect.
-	cursorSpeedSmooth    = 20.0
-	cursorMorphSpeedLow  = 45.0
-	cursorMorphSpeedHigh = 150.0
-	cursorMorphEase      = 9.0
-	cursorTailMaxCells   = 2.2
+	// Trail's own SpeedLow default sits well above ordinary typing and
+	// held-key repeat: at a steady 60fps, one frame's glide covers
+	// roughly distance*29 cells/sec (cursorGlideSpeed's k, divided by
+	// dt) — so advancing one cell per retarget (typing, arrow-key
+	// repeat, even a fast ~50cps key-repeat rate) tops out well under 45
+	// and never morphs, while a real jump of several cells or more in
+	// one frame clears it easily and heads straight for the ball.
+	cursorSpeedSmooth = 20.0
 )
 
 func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
@@ -263,12 +255,14 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 // fixed percentage of the remaining gap per unit time, not a fixed
 // distance), so a big jump still settles quickly — it just does so while
 // visibly flying across the intervening cells, by design (see
-// cursorMorphSpeedLow/High below). Alongside the position, this also
+// trail's SpeedLow/SpeedHigh below). Alongside the position, this also
 // tracks the glide's own frame-to-frame speed and eases cursorMorph
 // toward the ball/tail shape it drives (see CursorPass.Draw /
 // cursor.frag) — an animation layered entirely on top of the existing
-// glide, using no state the glide didn't already have.
-func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
+// glide, using no state the glide didn't already have. trail.Enabled ==
+// false skips the morph entirely, snapping cursorMorph straight to 0 so
+// the cursor stays its plain at-rest Shape regardless of glide speed.
+func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64, trail config.Trail) {
 	tx, ty := float32(x), float32(y)
 	r.cursorVisible = visible
 	r.cursorPhase += dt
@@ -295,8 +289,12 @@ func (r *Renderer) UpdateCursor(x, y int, visible bool, dt float64) {
 		r.cursorDirX, r.cursorDirY = moveCol/dist, moveRow/dist
 	}
 
-	target := smoothstep32(cursorMorphSpeedLow, cursorMorphSpeedHigh, r.cursorSpeed)
-	km := 1.0 - float32(math.Exp(-cursorMorphEase*dt))
+	if !trail.Enabled {
+		r.cursorMorph = 0
+		return
+	}
+	target := smoothstep32(trail.SpeedLow, trail.SpeedHigh, r.cursorSpeed)
+	km := 1.0 - float32(math.Exp(-float64(trail.Ease)*dt))
 	r.cursorMorph += (target - r.cursorMorph) * km
 }
 
@@ -425,7 +423,7 @@ func (r *Renderer) RenderEffects(boxW, boxH, outW, outH int, cfg config.Config, 
 	if tailPxLen := float32(math.Hypot(float64(tailPxX), float64(tailPxY))); tailPxLen > 1e-4 {
 		tailPxX, tailPxY = tailPxX/tailPxLen, tailPxY/tailPxLen
 	}
-	tailLenPx := morph * cursorTailMaxCells * (r.cellW + r.cellH) * 0.5
+	tailLenPx := morph * cfg.Cursor.Trail.MaxCells * (r.cellW + r.cellH) * 0.5
 
 	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, boxW, boxH, bright, morph, tailPxX, tailPxY, tailLenPx, r.sceneFBO.tex, cfg)
 

@@ -182,6 +182,31 @@ type Cursor struct {
 	// "static" whenever Glass.Enabled is on, regardless of this setting.
 	BlinkStyle string `toml:"blink_style"`
 	Glass      Glass  `toml:"glass"`
+	Trail      Trail  `toml:"trail"`
+}
+
+// Trail is the speed-reactive ball/tail morph: the cursor stretches into
+// a bullet-shaped head with a tail streaming behind it during a fast
+// glide (a jump across the buffer, not ordinary typing), then eases back
+// to its at-rest Shape once it settles — see Renderer.UpdateCursor.
+// Forced off whenever Glass.Enabled is on, regardless of Enabled here.
+type Trail struct {
+	Enabled bool `toml:"enabled"`
+	// SpeedLow/SpeedHigh are the glide speed range, in cells/sec, the
+	// morph ramps across: at or below SpeedLow the cursor stays its
+	// plain at-rest Shape; at or above SpeedHigh it's fully the ball+
+	// tail. Ordinary typing and held-key repeat should stay well under
+	// SpeedLow so they never morph — only a real jump (a search result,
+	// :, gg/G, a click) clears it.
+	SpeedLow  float32 `toml:"speed_low"`
+	SpeedHigh float32 `toml:"speed_high"`
+	// Ease is how quickly the morph itself catches up to that target, an
+	// exponential-approach rate per second — higher snaps into/out of the
+	// shape faster, lower reads as a slower, softer transition.
+	Ease float32 `toml:"ease"`
+	// MaxCells caps how far the tail can stretch behind the ball at full
+	// speed, in cell widths.
+	MaxCells float32 `toml:"max_cells"`
 }
 
 // Glass is the experimental macOS-style frosted-glass cursor: instead of
