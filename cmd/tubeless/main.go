@@ -1255,20 +1255,22 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
 		reload = false
 
+		// Computed every frame, not just when dirty — RenderEffects below
+		// needs it every frame (the cursor glow and phosphor persistence
+		// FBOs must stay sized to this box, matching the scene texture,
+		// even on a frame that only re-presents an unchanged scene) to
+		// keep that texture composited at 1:1, never resampled to a
+		// different size (see RenderEffects's own doc comment on boxW/
+		// boxH — that resample is what used to read as blurry text
+		// whenever the aspect ratio didn't match the window's own shape).
+		_, _, bw, bh := render.LetterboxBox(cfg.CRT.AspectRatio, w, h)
 		if dirty {
-			// Rendered at the letterboxed content box's own pixel size
-			// (matching exactly what pushResizeSize computed cols/rows
-			// against — see its doc comment), not the raw window size w,h
-			// — RenderEffects below composites this scene into that same
-			// box at 1:1, so nothing here ever gets resampled/stretched
-			// to a different aspect.
-			_, _, bw, bh := render.LetterboxBox(cfg.CRT.AspectRatio, w, h)
 			r.PrepareFrame(scr, cfg, cs.w, cs.h, scrollLine, *sel)
 			r.RenderScene(bw, bh, cs.w, cs.h, cfg)
 		}
 		r.UpdateCursor(scr.CursorX, scr.CursorY, scr.CursorVisible, dt)
 		r.SetLoading(load.snapshot())
-		r.RenderEffects(w, h, cfg, dt)
+		r.RenderEffects(bw, bh, w, h, cfg, dt)
 		win.SwapBuffers()
 		lastScr, lastW, lastH, lastScrollLine, lastSel = scr, w, h, scrollLine, *sel
 	}

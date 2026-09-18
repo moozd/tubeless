@@ -367,9 +367,24 @@ func (r *Renderer) CurrentScrollLine() int {
 // needed for the CRT noise/flicker effects' time uniform and the phosphor
 // decay pass's dt-scaled decay factor, both of which must keep progressing
 // at real time regardless of the scene's own dirty/idle state.
-func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config, dt float64) {
-	offsetX := (float32(outW) - float32(r.cols)*r.cellW) / 2
-	offsetY := (float32(outH) - float32(r.rows)*r.cellH) / 2
+//
+// boxW/boxH is the letterboxed content box RenderScene rendered the scene
+// texture at (see cmd/tubeless's LetterboxBox call) — every FBO here that
+// samples or accumulates that scene texture (the cursor glow FBO, the
+// phosphor persistence accumulator) must be sized to match it exactly,
+// not outW/outH. Sizing them to the raw window instead silently resamples
+// the box-sized scene up to the window size and back down again in
+// InsetPass.Draw below, which reads as blurry text — but only once the
+// letterbox box stops matching the window (an aspect ratio that doesn't
+// match the window's own shape), which is exactly why this bug tracked
+// with aspect ratio and stayed invisible at a matching fullscreen size.
+// outW/outH stays the true window size only for InsetPass.Draw and
+// drawOverlay, since those two draw straight to the real default
+// framebuffer and need to know its real dimensions to place the
+// letterbox bars/modal correctly.
+func (r *Renderer) RenderEffects(boxW, boxH, outW, outH int, cfg config.Config, dt float64) {
+	offsetX := (float32(boxW) - float32(r.cols)*r.cellW) / 2
+	offsetY := (float32(boxH) - float32(r.rows)*r.cellH) / 2
 
 	// Wrapped at an arbitrary round period (1 day) rather than a
 	// meaningful one — unlike cursorPhase, nothing here is periodic on a
@@ -413,12 +428,12 @@ func (r *Renderer) RenderEffects(outW, outH int, cfg config.Config, dt float64) 
 	}
 	tailLenPx := morph * cursorTailMaxCells * (r.cellW + r.cellH) * 0.5
 
-	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, outW, outH, bright, morph, tailPxX, tailPxY, tailLenPx, r.sceneFBO.tex, cfg)
+	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, boxW, boxH, bright, morph, tailPxX, tailPxY, tailLenPx, r.sceneFBO.tex, cfg)
 
 	sceneTex := r.sceneFBO.tex
 	if decaySeconds := cfg.CRT.PhosphorDecay.DecaySeconds; decaySeconds > 0 {
 		var tex uint32
-		r.persistIdx, tex = r.persistPass.StepTex(sceneTex, &r.persistFBO, r.persistIdx, decaySeconds, dt, outW, outH)
+		r.persistIdx, tex = r.persistPass.StepTex(sceneTex, &r.persistFBO, r.persistIdx, decaySeconds, dt, boxW, boxH)
 		sceneTex = tex
 	}
 	r.insetPass.Draw(sceneTex, r.cursorFBO.tex, cfg, outW, outH, r.effectsTime)
