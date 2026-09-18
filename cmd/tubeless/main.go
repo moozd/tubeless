@@ -698,6 +698,9 @@ func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
 // call time.
 func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config]) {
 	win.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
+		lw, lh := win.GetSize()
+		sx, sy := win.CurrentMonitorContentScale()
+		log.Printf("debug resize: fb=%dx%d logical=%dx%d contentScale=%.4fx%.4f cellPx=%.4fx%.4f", width, height, lw, lh, sx, sy, cs.w, cs.h)
 		c := cfgRef.Load()
 		pushResizeSize(resizeCh, cs, width, height, c.CRT.AspectRatio, c.Padding.Size)
 	})
