@@ -286,7 +286,8 @@ func main() {
 
 	sel := &render.Selection{}
 	fontZoom := make(chan int, 16)
-	wireInput(win, ref, &shared, sel, fontZoom)
+	fsState := &fullscreenState{}
+	wireInput(win, ref, &shared, sel, fontZoom, fsState)
 	scroll := &scrollState{}
 	wireMouse(win, ref, &shared, scroll, cs, &cfgRef, sel)
 

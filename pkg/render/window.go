@@ -133,20 +133,11 @@ func ProbeMaxTextureSize() (int, error) {
 	return MaxTextureSize(), nil
 }
 
-// CurrentMonitorContentScale reports the content scale of whichever
-// monitor currently contains the window, found by checking the window's
-// centre point against every connected monitor's bounds — unlike the
-// window's own GetContentScale (embedded from glfw.Window), which on
-// macOS can keep reporting a stale scale after the window is dragged
-// from one monitor to another with a different backing scale until some
-// unrelated event (a real resize, entering fullscreen) happens to
-// refresh GLFW's cached value. Querying the monitor directly sidesteps
-// that staleness entirely — this is what runLoop's per-frame
-// content-scale check and newRendererFor should use instead of the
-// window's own GetContentScale. Falls back to the window's own
-// GetContentScale if no monitor's bounds contain it (briefly possible
-// mid-drag, or if GetVideoMode fails).
-func (w *Window) CurrentMonitorContentScale() (float32, float32) {
+// CurrentMonitor reports whichever connected monitor currently contains
+// the window, found by checking the window's centre point against every
+// connected monitor's bounds. Returns nil if none matches (briefly
+// possible mid-drag, or if a monitor's GetVideoMode fails).
+func (w *Window) CurrentMonitor() *glfw.Monitor {
 	wx, wy := w.GetPos()
 	ww, wh := w.GetSize()
 	cx, cy := wx+ww/2, wy+wh/2
@@ -157,8 +148,25 @@ func (w *Window) CurrentMonitorContentScale() (float32, float32) {
 			continue
 		}
 		if cx >= mx && cx < mx+mode.Width && cy >= my && cy < my+mode.Height {
-			return m.GetContentScale()
+			return m
 		}
+	}
+	return nil
+}
+
+// CurrentMonitorContentScale reports the content scale of
+// CurrentMonitor — unlike the window's own GetContentScale (embedded
+// from glfw.Window), which on macOS can keep reporting a stale scale
+// after the window is dragged from one monitor to another with a
+// different backing scale until some unrelated event (a real resize,
+// entering fullscreen) happens to refresh GLFW's cached value. Querying
+// the monitor directly sidesteps that staleness entirely — this is what
+// runLoop's per-frame content-scale check and newRendererFor should use
+// instead of the window's own GetContentScale. Falls back to the
+// window's own GetContentScale when CurrentMonitor finds no match.
+func (w *Window) CurrentMonitorContentScale() (float32, float32) {
+	if m := w.CurrentMonitor(); m != nil {
+		return m.GetContentScale()
 	}
 	return w.GetContentScale()
 }

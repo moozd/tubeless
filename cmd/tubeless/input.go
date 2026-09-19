@@ -87,14 +87,22 @@ func keyboardModeOf(scr *screen.Screen) keyboardMode {
 	return keyboardMode{modifyOtherKeys: scr.ModifyOtherKeys, kittyFlags: scr.KittyFlags()}
 }
 
-func wireInput(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], sel *render.Selection, fontZoom chan<- int) {
+func wireInput(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], sel *render.Selection, fontZoom chan<- int, fs *fullscreenState) {
 	win.SetCharModsCallback(func(_ *glfw.Window, r rune, mods glfw.ModifierKey) {
+		win.SetInputMode(glfw.CursorMode, glfw.CursorHidden)
 		handleChar(sess, r, mods, keyboardModeOf(shared.Load()))
 	})
 	win.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, _ int, action glfw.Action, mods glfw.ModifierKey) {
+		if action == glfw.Press || action == glfw.Repeat {
+			win.SetInputMode(glfw.CursorMode, glfw.CursorHidden)
+		}
 		scr := shared.Load()
 		mode := keyboardModeOf(scr)
 		if action == glfw.Press {
+			if isFullscreenShortcut(key, mods) {
+				toggleFullscreen(win, fs)
+				return
+			}
 			if isPasteShortcut(key, mods) {
 				pasteFromClipboard(win, sess, shared)
 				return

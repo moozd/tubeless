@@ -123,6 +123,11 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 	})
 
 	win.SetCursorPosCallback(func(_ *glfw.Window, xpos, ypos float64) {
+		// Undoes the key callback's CursorHidden (see wireInput) the
+		// moment the mouse actually moves — real movement, not the
+		// dedup below, since a still mouse re-entering the same cell
+		// shouldn't need to move first to reappear.
+		win.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
 		x, y := cellFromPixels(win, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio)
 		scr := shared.Load()
 		x, y = clampCell(scr, x, y)
