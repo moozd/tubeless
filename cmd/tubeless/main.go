@@ -540,11 +540,13 @@ func loadFontBytes(family string) []byte {
 // loadFontFaces resolves all four style variants for family. Regular is
 // loadFontBytes unchanged. Bold always ends up with something real: a
 // system family's own Bold cut if fontconfig genuinely has one (see
-// font.ResolveStyle), otherwise the bundled Bold cut — never a
-// brightness-only fake. Italic/BoldItalic are left nil unless a system
-// family genuinely has that cut; CellPass falls back to a synthetic
-// slant of Regular/Bold in that case rather than these holding a
-// fontconfig substitute that isn't actually italic.
+// font.ResolveStyle), otherwise that same family's Regular cut — falling
+// back to an unrelated bundled font's Bold would render text in the
+// wrong typeface entirely, which reads worse than a non-bold weight in
+// the right one. Italic/BoldItalic are left nil unless a system family
+// genuinely has that cut; CellPass falls back to a synthetic slant of
+// Regular/Bold in that case rather than these holding a fontconfig
+// substitute that isn't actually italic.
 func loadFontFaces(family string) font.FaceBytes {
 	readStyle := func(style string) []byte {
 		if family == "" {
@@ -561,12 +563,13 @@ func loadFontFaces(family string) font.FaceBytes {
 		}
 		return data
 	}
+	regular := loadFontBytes(family)
 	bold := readStyle("Bold")
 	if bold == nil {
-		bold = font.DefaultBoldFontBytes()
+		bold = regular
 	}
 	return font.FaceBytes{
-		Regular:    loadFontBytes(family),
+		Regular:    regular,
 		Bold:       bold,
 		Italic:     readStyle("Italic"),
 		BoldItalic: readStyle("Bold Italic"),
