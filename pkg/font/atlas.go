@@ -447,10 +447,11 @@ func applyLineHeight(cellH, ascender int, lineHeight float64) (newCellH, newAsce
 // FaceBytes is the raw font file bytes for the four style variants a cell
 // can be drawn in. Regular and Bold are always populated (see
 // cmd/tubeless's loadFontFaces — Bold always resolves to something real,
-// falling back to DefaultBoldFontBytes). Italic/BoldItalic are nil when no
-// real italic/bold-italic face was found for the configured family — the
-// renderer falls back to a synthetic slant of Regular/Bold in that case
-// rather than these being populated with something else.
+// falling back to the same family's Regular cut when no real Bold exists).
+// Italic/BoldItalic are nil when no real italic/bold-italic face was found
+// for the configured family — the renderer falls back to a synthetic
+// slant of Regular/Bold in that case rather than these being populated
+// with something else.
 type FaceBytes struct {
 	Regular, Bold, Italic, BoldItalic []byte
 }
