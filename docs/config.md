@@ -60,7 +60,7 @@ accurate.
 
 ### Built-in presets
 
-`modern` (default, every CRT effect off) · `ibm-5151` · `ibm-5153` ·
+`modern` (every CRT effect off) · `ibm-5151` · `ibm-5153` ·
 `zenith-zvm-1220` · `apple-monitor-iii` · `commodore-1084s` ·
 `princeton-hx12` · `cyberpunk` (also every CRT effect off — a sharp,
 modern digital feel, not a real monitor)

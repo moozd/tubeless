@@ -45,13 +45,13 @@ func TestLoadMissingFileReturnsPreset(t *testing.T) {
 	if cfg.Theme != "rosepine" {
 		t.Fatalf("default theme = %q, want rosepine", cfg.Theme)
 	}
-	if cfg.Preset != "modern" {
-		t.Fatalf("default preset = %q, want modern", cfg.Preset)
+	if cfg.Preset != "custom" {
+		t.Fatalf("default preset = %q, want custom", cfg.Preset)
 	}
 	if !cfg.TrueColor {
 		t.Fatalf("default theme should be TrueColor")
 	}
-	if cfg.Font.Size != 14 || cfg.Atlas.Scale != 4 {
+	if cfg.Font.Size != 14 || cfg.Atlas.Scale != 1 {
 		t.Fatalf("unexpected defaults: %+v", cfg.Font)
 	}
 }
@@ -98,9 +98,10 @@ func TestLoadFileOverridesPresetPerField(t *testing.T) {
 	if cfg.Blur.Radius != 1.25 {
 		t.Fatalf("radius = %v, want 1.25", cfg.Blur.Radius)
 	}
-	// Unmentioned field stays the modern preset's.
-	if cfg.Blur.Strength != 0.5 {
-		t.Fatalf("strength = %v, want modern 0.5", cfg.Blur.Strength)
+	// Unmentioned field stays Default()'s own (no preset named in the
+	// file, so it's never reseeded away from the custom default).
+	if cfg.Blur.Strength != 0.4 {
+		t.Fatalf("strength = %v, want default 0.4", cfg.Blur.Strength)
 	}
 }
 

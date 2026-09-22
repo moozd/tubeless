@@ -663,13 +663,17 @@ func Load(path, flagTheme string) (Config, error) {
 }
 
 // Default is the Config a fresh install (or a file-not-found Load) gets:
-// the rosepine theme over the modern effects preset — see Config's own
-// doc comment on the two axes this seeds.
+// the rosepine theme over MO's own tuned effects — see Config's own doc
+// comment on the two axes this seeds. The effects axis is seeded as
+// "custom" (literal field values, not a named EffectsPreset) since this
+// isn't one of the built-in presets in monitors.go.
 func Default() Config {
 	cfg := Config{
-		Font:       Font{Family: "", Size: 14, LineHeight: 1, Ligatures: true},
-		Atlas:      Atlas{Scale: 4, Gamma: 1.0},
+		Font:       Font{Family: "", Size: 14, LineHeight: 1.2, Ligatures: false},
+		Atlas:      Atlas{Scale: 1, Gamma: 0.8},
+		Padding:    Padding{Size: 15.0},
 		Scrollback: Scrollback{Lines: DefaultScrollbackLines},
+		Shell:      Shell{Program: "tmux"},
 		// HueWeight/Amount's zero value (0) is each a valid explicit
 		// choice ("luminance only" / "stay on the ramp" — see their own
 		// doc comments), so neither can double as "unset" the way
@@ -680,7 +684,21 @@ func Default() Config {
 		Monochrome: Monochrome{HueWeight: -1, Amount: -1},
 	}
 	applyTheme(&cfg, "rosepine")
-	applyEffectsPreset(&cfg, "modern")
+	cfg.Preset = "custom"
+	cfg.Surface = Surface{Radius: 5.0, Gradient: 0.25, Shadow: 0.46}
+	cfg.Blur = Blur{Radius: 1.1, Strength: 0.4}
+	cfg.Cursor = Cursor{
+		Glow: 1.4, PulsePeriod: 0.45, Shape: "block", BlinkStyle: "static",
+		Glass: Glass{Tint: 0.23, Blur: 0.2, Refract: 0.2, Opacity: 0.57},
+		Trail: Trail{Enabled: true, Size: 0.8, Length: 0.13},
+	}
+	cfg.Face = Face{BgTint: 0.33, InsetShadow: 0.45}
+	cfg.Contrast = Contrast{MinDelta: 0.42}
+	cfg.CRT = CRT{
+		Scanlines:  Scanlines{Period: 4.0},
+		ShadowMask: ShadowMask{CellSize: 1.0},
+		Flicker:    Flicker{Speed: 0.5},
+	}
 	return cfg
 }
 
