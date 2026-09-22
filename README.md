@@ -1,4 +1,8 @@
-# tubeless
+<p align="center">
+  <img src="packaging/icon.svg" width="64" height="64">
+</p>
+
+<h1 align="center">tubeless</h1>
 
 A GPU-rendered terminal emulator written in Go, on top of GLFW and
 OpenGL.
