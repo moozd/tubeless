@@ -4,33 +4,31 @@ A GPU-rendered terminal emulator written in Go, on top of GLFW and
 OpenGL.
 
 Built to look good, not to emulate a VT100 down to the pixel: a cursor
-that glides and morphs instead of snapping between cells, rounded
-corners and a soft drop shadow on every block and border, background
-blur on floating windows.
+that glides and morphs instead of snapping between cells, and rounded
+corners, a soft drop shadow, and a bloom glow on every block and
+border.
 
 ## What it looks like in daily use
 
 ![Claude Code running inside tubeless, tmux status line at the bottom](assets/screenshots/daily-driver.png)
 
-![Neovim with a Harpoon popup — rounded corners and background blur over the live buffer](assets/screenshots/neovim-harpoon.png)
+![Neovim with a Harpoon popup — rounded corners and a soft drop shadow over the live buffer](assets/screenshots/neovim-harpoon.png)
 
-Floating windows get rounded corners and background blur (the
-`surface` and `blur` config sections) — computed over whatever is
-actually behind the popup, not a fixed overlay image.
+Floating windows get rounded corners, a soft drop shadow, and a bloom
+glow (the `surface` and `blur` config sections) — a filter over the
+block's own rendered pixels, not a fixed overlay image.
 
 ![Neovim's Telescope find-files picker, Nerd Font icons per file type](assets/screenshots/neovim-telescope.png)
-
-Nerd Font icons render at full fidelity, including automatic
-upscaling for undersized glyphs, so file-tree and fuzzy-finder icons
-look right instead of clipped or blurry.
 
 ## Features
 
 - A cursor that glides and morphs into a ball-and-tail shape on fast
   jumps, with a rounded-rect glow and a breathing pulse, instead of a
   static block
-- Rounded corners, a soft drop shadow, and background blur on every
-  block/border surface and floating window
+- Rounded corners, a soft drop shadow, and a bloom glow on every
+  block/border surface
+- An experimental frosted-glass cursor that refracts and blurs the
+  scene behind it (`cursor.glass`)
 - Real italic/bold glyphs and ligatures shaped by HarfBuzz straight
   from the loaded font's own GSUB table
 - Native Wayland and X11 backends on Linux; native Cocoa on macOS
