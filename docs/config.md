@@ -50,23 +50,26 @@ preset = "modern"
 
 `rosepine` (default) · `rosepine-moon` · `gruvbox-dark-hard` · `nord` ·
 `dracula` · `catppuccin-mocha` · `tokyo-night` · `one-dark` · `green` ·
-`amber` · `green-p39` · `white-p4` · `cga`
+`amber` · `green-p39` · `white-p4` · `cga` · `cyberpunk`
 
-The last five (`green`, `amber`, `green-p39`, `white-p4`, `cga`) are
-monochrome or fixed-palette themes — period-accurate companions to the
-CRT presets below, rather than independent color schemes.
+The last six (`green`, `amber`, `green-p39`, `white-p4`, `cga`,
+`cyberpunk`) are monochrome or fixed-palette themes — companions to the
+CRT/effects presets below rather than independent color schemes;
+`cyberpunk` (neon cyan) is a fictional companion, the rest period-
+accurate.
 
 ### Built-in presets
 
 `modern` (default, every CRT effect off) · `ibm-5151` · `ibm-5153` ·
 `zenith-zvm-1220` · `apple-monitor-iii` · `commodore-1084s` ·
-`princeton-hx12`
+`princeton-hx12` · `cyberpunk` (also every CRT effect off — a sharp,
+modern digital feel, not a real monitor)
 
-Each non-`modern` preset models one real 1980s monitor's curvature,
-phosphor persistence, noise, and (where applicable) shadow-mask
-convergence error, tuned from that display's own service manual. Four
-of them have one historically-correct theme pairing (selecting the
-preset in `tubeless config` switches the theme too):
+Each `ibm-*`/`zenith-*`/`apple-*`/`commodore-*`/`princeton-*` preset
+models one real 1980s monitor's curvature, phosphor persistence, noise,
+and (where applicable) shadow-mask convergence error, tuned from that
+display's own service manual. Five of them have one theme pairing
+(selecting the preset in `tubeless config` switches the theme too):
 
 | Preset              | Paired theme |
 | ------------------- | ------------ |
@@ -74,6 +77,7 @@ preset in `tubeless config` switches the theme too):
 | `ibm-5153`          | `cga`        |
 | `zenith-zvm-1220`   | `amber`      |
 | `apple-monitor-iii` | `white-p4`   |
+| `cyberpunk`         | `cyberpunk`  |
 
 (`commodore-1084s` and `princeton-hx12` have no fixed native palette —
 real analog RGB monitors that just rendered whatever the host sent
@@ -126,6 +130,18 @@ RGB triples `[r, g, b]` in `0.0-1.0`, not raw hex.
 | `colors.default_fg` / `colors.default_bg` | Color for a cell with no explicit SGR color. |
 | `colors.palette`    | The 16-entry ANSI table (0-7 normal, 8-15 bright) indexed SGR colors resolve against. |
 | `phosphor.low` / `phosphor.high` | The monochrome intensity ramp's dim/bright ends. On a true-color theme, still drives the CRT chrome tint and cursor accent even though cell colors come from `[colors]`. |
+
+### `[monochrome]`
+
+Only affects cells when `true_color = false`. Sits outside both the theme
+and preset axes — a rendering preference the user sets once, not reseeded
+by switching theme or preset.
+
+| Key          | Type   | Default    | Meaning                                                              |
+| ------------ | ------ | ---------- | ------------------------------------------------------------------------ |
+| `mode`       | string | `"binary"` | `"binary"`: a cell whose real fg/bg colors land too close together once collapsed onto the ramp (see `[contrast].min_delta`) hard-inverts to solid black/phosphor-peak — always legible, but flattens syntax highlighting to on/off blocks (the common case under an app like Neovim with `termguicolors`, which paints an explicit background on nearly every cell). `"shades"`: real colors quantize onto a small number of discrete accent-color brightness levels instead (see `steps`/`hue_weight`), so syntax highlighting keeps reading as relative brightness while any two adjacent levels stay legible stacked as fg-on-bg. |
+| `steps`      | int    | `0` (→ 16) | `"shades"` only: how many discrete brightness levels real colors quantize onto, evenly spaced in perceived lightness across the ramp. `0` uses the built-in default (16 — see pkg/render's `defaultShadeSteps` for why this many). |
+| `hue_weight` | float  | `-1` (→ 0.6) | `"shades"` only: how much brightness leans on a color's closeness to the theme's own accent hue, on top of its real luminance — `0` is luminance only, `1` is hue-closeness only. Negative uses the built-in default (0.6 — luminance alone is usually too compressed a range to separate real syntax-highlight colors on its own, but a too-high weight can override a genuine luminance difference like a comment being dimmer than body text; see pkg/render's `defaultShadeHueWeight`); `0` is itself a valid explicit choice. |
 
 ### Preset axis: effects
 

@@ -21,11 +21,13 @@ type Effects struct {
 // range: a sharp monochrome data display, a shadow-mask digital RGB
 // monitor, a soft composite monochrome monitor, a long-persistence white
 // monochrome monitor, and two shadow-mask analog RGB monitors at
-// different quality tiers.
+// different quality tiers — then cyberpunk, a fictional look rather than
+// a real monitor (see cyberpunkEffects' own doc comment).
 func EffectsPresetNames() []string {
 	return []string{
 		"modern", "ibm-5151", "ibm-5153", "zenith-zvm-1220",
 		"apple-monitor-iii", "commodore-1084s", "princeton-hx12",
+		"cyberpunk",
 	}
 }
 
@@ -45,20 +47,22 @@ func EffectsPreset(name string) Effects {
 		return commodore1084SEffects()
 	case "princeton-hx12":
 		return princetonHX12Effects()
+	case "cyberpunk":
+		return cyberpunkEffects()
 	default:
 		return modernEffects()
 	}
 }
 
 // MonitorTheme reports the color theme a named effects preset is
-// authentic with, when one exists — a monochrome monitor's phosphor
-// color (or a fixed-palette digital monitor's native palette) is as much
-// a part of "being that monitor" as its scanlines, so selecting one of
-// these in the config TUI switches Theme the same moment it switches
-// Preset. An analog RGB monitor with no fixed native palette
-// (commodore-1084s, princeton-hx12) reports ok=false and leaves the
-// active theme alone — it rendered whatever the host computer sent it,
-// same as any TrueColor theme does today.
+// authentic (or, for cyberpunk, matched) with, when one exists — a
+// monochrome monitor's phosphor color (or a fixed-palette digital
+// monitor's native palette) is as much a part of "being that monitor" as
+// its scanlines, so selecting one of these in the config TUI switches
+// Theme the same moment it switches Preset. An analog RGB monitor with
+// no fixed native palette (commodore-1084s, princeton-hx12) reports
+// ok=false and leaves the active theme alone — it rendered whatever the
+// host computer sent it, same as any TrueColor theme does today.
 func MonitorTheme(presetName string) (theme string, ok bool) {
 	switch presetName {
 	case "ibm-5151":
@@ -69,6 +73,8 @@ func MonitorTheme(presetName string) (theme string, ok bool) {
 		return "amber", true
 	case "apple-monitor-iii":
 		return "white-p4", true
+	case "cyberpunk":
+		return "cyberpunk", true
 	default:
 		return "", false
 	}
@@ -239,6 +245,43 @@ func princetonHX12Effects() Effects {
 		Flicker:       Flicker{Amount: 0.05, Speed: 60},
 		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.04},
 	}
+	return e
+}
+
+// cyberpunkEffects is a fictional neon-terminal look, not a real
+// monitor — no CRT emulation at all (CRT stays at its zero value, the
+// same "off" convention modernEffects uses), the sharpest and most
+// modern digital feel of any preset here. Only Surface/Blur/Face/Cursor
+// are tuned, for a neon monochrome look, paired with cyberpunkTheme's
+// neon cyan (see MonitorTheme).
+//
+// Blur.Strength is deliberately much lower than every preset above
+// (0.12, vs. modern's 0.5): those presets were tuned against a
+// TrueColor theme, where bloom only glows around isolated bright UI
+// elements on an otherwise-black backdrop. On a monochrome theme
+// combined with an app that paints an explicit background on nearly
+// every cell (Neovim with termguicolors, most of a real screen, not
+// just isolated highlights), that background is itself a lit,
+// screen-filling surface — bloom then compounds across virtually the
+// whole frame instead of just around a few bright spots, washing
+// everything toward the same uniform bright color and destroying the
+// very fg/bg and inter-token contrast the color ramp computed
+// correctly in the first place. Confirmed by A/B screenshots: modern's
+// Blur.Strength (~0.41-0.5) over a Neovim buffer with an explicit dark
+// background raised the rendered background from where the color math
+// actually puts it (a dark shade near true black — see pkg/render's
+// cellColors, which floors an explicit background at black, not
+// Phosphor.Low) to a uniformly bright wash most of the way to
+// Phosphor.High; dropping Blur.Strength alone (nothing else, in an
+// otherwise-identical config) restored the correct dark background. A
+// low but nonzero strength here still lets bright, genuinely isolated
+// content (the cursor, a bold highlight) glow.
+func cyberpunkEffects() Effects {
+	e := modernEffects()
+	e.Surface = Surface{Radius: 2.0, Gradient: 0.15, Shadow: 0.12}
+	e.Blur = Blur{Radius: 1.2, Strength: 0.12}
+	e.Face = Face{BgTint: 0.05, InsetShadow: 0.35}
+	e.Cursor.Glow = 2.0
 	return e
 }
 

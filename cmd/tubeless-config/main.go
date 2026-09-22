@@ -688,6 +688,9 @@ func (u *ui) dirty() {
 var (
 	cursorShapeNames      = []string{"block", "bar", "underline"}
 	cursorBlinkStyleNames = []string{"ease", "static", "hard"}
+	// monochromeModeNames backs the monochrome.mode cycler row — see
+	// config.Monochrome's own doc comment for what each name means.
+	monochromeModeNames = []string{"binary", "shades"}
 )
 
 func cycleName(names []string, current string, d int) string {
@@ -1158,6 +1161,77 @@ func (u *ui) buildFontsThemeList() []panelRow {
 	role("bg", "background", func(c *config.Config) *[3]float32 { return &c.Colors.DefaultBg })
 	role("accent", "accent", func(c *config.Config) *[3]float32 { return &c.Phosphor.High })
 	role("glow", "glow", func(c *config.Config) *[3]float32 { return &c.Phosphor.Low })
+
+	section("monochrome (only affects true_color = off themes)")
+	add(&setting{
+		key: "monochrome.mode", label: "mode",
+		help:    "binary = a cell whose real colors land too close together always hard-inverts to solid black/phosphor-peak, guaranteed legible but flattens syntax highlighting to on/off blocks. shades = real colors quantize onto a handful of discrete accent-color brightness steps (see steps/hue weight below) instead, so syntax highlighting keeps reading as relative brightness while adjacent steps stay legible.",
+		choices: func() []string { return monochromeModeNames },
+		get: func(c *config.Config) string {
+			if c.Monochrome.Mode == "" {
+				return "binary"
+			}
+			return c.Monochrome.Mode
+		},
+		applyStep: func(c *config.Config, d int) bool {
+			current := c.Monochrome.Mode
+			if current == "" {
+				current = "binary"
+			}
+			c.Monochrome.Mode = cycleName(monochromeModeNames, current, d)
+			return false
+		},
+	})
+	add(&setting{
+		key: "monochrome.steps", label: "shades steps",
+		help: "shades mode only: how many discrete accent-color brightness levels real colors quantize onto — more steps keep finer distinctions but pack levels closer together.",
+		get: func(c *config.Config) string {
+			if c.Monochrome.Steps <= 0 {
+				return "auto (16)"
+			}
+			return fmt.Sprintf("%d", c.Monochrome.Steps)
+		},
+		applyStep: func(c *config.Config, d int) bool {
+			cur := c.Monochrome.Steps
+			if cur <= 0 {
+				cur = 16
+			}
+			c.Monochrome.Steps = clampInt(cur+d, 2, 24)
+			return false
+		},
+		rangeOf: func(c *config.Config) (float64, float64, float64) {
+			cur := c.Monochrome.Steps
+			if cur <= 0 {
+				cur = 16
+			}
+			return float64(cur), 2, 24
+		},
+	})
+	add(&setting{
+		key: "monochrome.hue_weight", label: "shades hue weight",
+		help: "shades mode only: how much brightness leans on a color's closeness to the theme's own accent hue, on top of its real luminance — 0 is luminance only, 1 is hue-closeness only.",
+		get: func(c *config.Config) string {
+			if c.Monochrome.HueWeight < 0 {
+				return "auto (0.6)"
+			}
+			return trimFloat(float64(c.Monochrome.HueWeight), 2)
+		},
+		applyStep: func(c *config.Config, d int) bool {
+			cur := float64(c.Monochrome.HueWeight)
+			if cur < 0 {
+				cur = 0.6
+			}
+			c.Monochrome.HueWeight = float32(roundFloat(clampFloat(cur+0.05*float64(d), 0, 1), 2))
+			return false
+		},
+		rangeOf: func(c *config.Config) (float64, float64, float64) {
+			cur := float64(c.Monochrome.HueWeight)
+			if cur < 0 {
+				cur = 0.6
+			}
+			return cur, 0, 1
+		},
+	})
 
 	return list
 }

@@ -27,9 +27,10 @@ import (
 //
 //   - Theme governs color: TrueColor, Colors, Phosphor.
 //   - Preset governs every other visual effect: Surface, Blur, Cursor,
-//     Face, Contrast, CRT. Font/Atlas/Padding/Scrolling sit outside both
-//     axes — always user-set directly, never reseeded by either (see
-//     the config TUI's "experimental" tab for Scrolling specifically).
+//     Face, Contrast, CRT. Font/Atlas/Padding/Scrolling/Monochrome sit
+//     outside both axes — always user-set directly, never reseeded by
+//     either (see the config TUI's "experimental" tab for Scrolling
+//     specifically).
 type Config struct {
 	Theme  string `toml:"theme"`
 	Preset string `toml:"preset"`
@@ -45,6 +46,7 @@ type Config struct {
 	Atlas         Atlas      `toml:"atlas"`
 	Padding       Padding    `toml:"padding"`
 	Phosphor      Phosphor   `toml:"phosphor"`
+	Monochrome    Monochrome `toml:"monochrome"`
 	Colors        Colors     `toml:"colors"`
 	Surface       Surface    `toml:"surface"`
 	Blur          Blur       `toml:"blur"`
@@ -127,6 +129,56 @@ type Padding struct {
 type Phosphor struct {
 	Low  [3]float32 `toml:"low"`
 	High [3]float32 `toml:"high"`
+}
+
+// Monochrome controls how a cell's real fg/bg color is chosen along the
+// Phosphor ramp — meaningless when TrueColor is on (see cellColors' own
+// TrueColor branch, which never consults this at all). Sits outside both
+// the Theme and Preset axes, like Font/Atlas/Padding: a rendering
+// preference the user sets once, not something a theme or preset switch
+// should silently reset.
+type Monochrome struct {
+	// Mode is "binary" (default, including the zero value "") or
+	// "shades". Under "binary", a cell whose real fg/bg colors land too
+	// close together once collapsed onto the ramp (see Contrast.MinDelta)
+	// snaps to a hard full-invert: pure black text on pure phosphor-peak,
+	// or vice versa — the classic terminal reverse-video block, always
+	// legible, but every such cell reads identically regardless of what
+	// its actual color was (a git status color, a syntax highlight —
+	// this is the "everything looks binary in nvim" complaint termguicolors
+	// apps trigger by painting an explicit background on nearly every
+	// cell). Under "shades" (experimental), Contrast.MinDelta isn't
+	// enforced at all — fg and bg are each translated independently from
+	// their own real luminance, the same "trust the app already chose a
+	// readable pair" tradeoff TrueColor themes already make (see
+	// trueColorCell). An earlier attempt instead pushed a too-close pair
+	// apart to still clear MinDelta, but MinDelta (0.35) is larger than
+	// any shipped theme's actual ramp span (~0.22 in OKLab lightness), so
+	// enforcing it against a bg that's nearly constant across a whole
+	// buffer (nvim paints its own background on almost every cell) clipped
+	// nearly every foreground to the same Phosphor.High — uniformly
+	// overbright, and no longer a stable function of a cell's own color
+	// since the result depended on whatever bg it was paired with.
+	Mode string `toml:"mode"`
+	// Steps is how many discrete brightness levels "shades" mode
+	// quantizes fg/bg onto, evenly spaced in OKLab lightness across the
+	// ramp's own span, instead of shades' old continuous mapping —
+	// guarantees every two distinct steps stay at least
+	// (ramp span)/(Steps-1) apart in perceived lightness, large enough
+	// that any two adjacent steps stay legible stacked as fg-on-bg no
+	// matter which two a given app's colors land on. Only consulted
+	// when Mode is "shades"; 0 (the zero value) falls back to a
+	// built-in default (see pkg/render's defaultShadeSteps).
+	Steps int `toml:"steps"`
+	// HueWeight is how much "shades" mode's brightness mapping is
+	// pulled toward a cell's closeness to the theme's own accent hue,
+	// on top of its real luminance — 0 is luminance only (this mode's
+	// original behavior), 1 is hue-closeness only. Only consulted when
+	// Mode is "shades". Negative (the zero-adjacent sentinel, since 0
+	// is itself a valid explicit choice) falls back to a built-in
+	// default (see pkg/render's defaultShadeHueWeight); the config TUI
+	// and TOML default to that sentinel via -1.
+	HueWeight float32 `toml:"hue_weight"`
 }
 
 // Colors is a TrueColor theme's color set: DefaultFg/DefaultBg paint a
@@ -288,14 +340,15 @@ func ThemeNames() []string {
 	return []string{
 		"rosepine", "rosepine-moon", "gruvbox-dark-hard", "nord", "dracula",
 		"catppuccin-mocha", "tokyo-night", "one-dark", "green", "amber",
-		"green-p39", "white-p4", "cga",
+		"green-p39", "white-p4", "cga", "cyberpunk",
 	}
 }
 
 // Theme returns the color values a named theme seeds. Unknown or empty
 // names fall back to rosepine, the default. green-p39/white-p4/cga are
 // period-accurate companions to the monochrome/CGA entries in
-// EffectsPresetNames (see monitors.go and MonitorTheme).
+// EffectsPresetNames (see monitors.go and MonitorTheme); cyberpunk is
+// its own companion to the "cyberpunk" effects preset there.
 func Theme(name string) ThemeColors {
 	switch name {
 	case "amber":
@@ -308,6 +361,8 @@ func Theme(name string) ThemeColors {
 		return whiteP4Theme()
 	case "cga":
 		return cgaTheme()
+	case "cyberpunk":
+		return cyberpunkTheme()
 	case "rosepine-moon":
 		return rosepineMoonTheme()
 	case "gruvbox-dark-hard":
@@ -368,6 +423,34 @@ func amberTheme() ThemeColors {
 func greenTheme() ThemeColors {
 	peak := phosphorColor(0.21, 0.71)
 	return ThemeColors{Phosphor: Phosphor{Low: scale3(peak, 0.42), High: peak}}
+}
+
+// cyberpunkTheme is a monochrome ramp built around a vivid neon cyan,
+// the companion color to the "cyberpunk" effects preset (see
+// monitors.go). Unlike amber/green/green-p39/white-p4 above, this isn't
+// phosphorColor(x, y) from a real or dominant-wavelength chromaticity —
+// this saturated a cyan sits well outside sRGB's own gamut mapping for
+// any real phosphor's dominant wavelength, so, same as any TrueColor
+// theme's hand-picked accent hex, it's a direct aesthetic pick rather
+// than a physically-modeled one.
+// Low sits much closer to black than amber/green/etc's ~0.35-0.45 (35-
+// 45% of peak): those ratios model real phosphor afterglow, but this is
+// a fictional theme free of that constraint, and "shades" mode
+// specifically needs the dynamic range — verified against two unrelated
+// real syntax-highlighted palettes (rose-pine and catppuccin-mocha, see
+// pkg/render's shadeContrastStretch doc comment for the same
+// investigation): at Low=0.35*peak, a dozen real tokens' shades only
+// spanned sRGB 172-255 (~33% of the 0-255 range) even with hue
+// proximity fully weighted in, because that's already most of the way
+// to peak — barely any room left below it. At 0.05, the same tokens
+// spread over sRGB 83-255 (~67%), each real color landing on a clearly
+// distinct shade rather than merely a technically-different one, while
+// staying comfortably above the literal-black floor bg-set cells
+// render against (see cellColors' own doc comment) so dim text never
+// risks blending into the background.
+func cyberpunkTheme() ThemeColors {
+	peak := srgb3(0x00, 0xf6, 0xff) // vivid neon cyan
+	return ThemeColors{Phosphor: Phosphor{Low: scale3(peak, 0.05), High: peak}}
 }
 
 // scale3 multiplies every channel of a linear-RGB triple by k — used to
@@ -562,6 +645,13 @@ func Default() Config {
 		Font:       Font{Family: "", Size: 14, LineHeight: 1, Ligatures: true},
 		Atlas:      Atlas{Scale: 4, Gamma: 1.0},
 		Scrollback: Scrollback{Lines: DefaultScrollbackLines},
+		// HueWeight's zero value (0) is a valid explicit "luminance
+		// only" choice (see its own doc comment), so it can't double as
+		// "unset" the way Mode/Steps' zero values do — seed the -1
+		// sentinel here so a fresh install (or any config.toml that
+		// never mentions hue_weight) actually gets the built-in default
+		// instead of silently behaving as if hue_weight were 0.
+		Monochrome: Monochrome{HueWeight: -1},
 	}
 	applyTheme(&cfg, "rosepine")
 	applyEffectsPreset(&cfg, "modern")

@@ -15,6 +15,18 @@ func themedConfig(theme string) Config {
 	return cfg
 }
 
+// TestDefaultSeedsHueWeightSentinel guards a real footgun: HueWeight's
+// Go zero value (0) is itself a valid explicit "luminance only" choice
+// (see Monochrome's own doc comment), so it can't double as "unset" —
+// Default() must seed the -1 sentinel explicitly, or every fresh
+// install would silently behave as if hue_weight were pinned to 0
+// instead of getting the built-in default.
+func TestDefaultSeedsHueWeightSentinel(t *testing.T) {
+	if got := Default().Monochrome.HueWeight; got != -1 {
+		t.Fatalf("Default().Monochrome.HueWeight = %v, want -1 (unset sentinel)", got)
+	}
+}
+
 func TestLoadMissingFileReturnsPreset(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "nope.toml"), "")
 	if err != nil {
@@ -126,7 +138,7 @@ func TestFilePresetOverridesEffectsPerField(t *testing.T) {
 // because a hex triple was dropped while transcribing the theme's
 // published palette.
 func TestThemesPopulated(t *testing.T) {
-	monochrome := map[string]bool{"green": true, "amber": true, "green-p39": true, "white-p4": true}
+	monochrome := map[string]bool{"green": true, "amber": true, "green-p39": true, "white-p4": true, "cyberpunk": true}
 	for _, name := range ThemeNames() {
 		tc := Theme(name)
 		if monochrome[name] {

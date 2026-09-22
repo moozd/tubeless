@@ -62,6 +62,19 @@ func ansi16RGBValue(n int) [3]float32 {
 	return rgbTriple(c[0], c[1], c[2])
 }
 
+// IndexedRGB is ansi16RGBValue exported for pkg/render: a stable,
+// theme-independent reference RGB for an indexed (0-15) SGR color. Attr
+// deliberately doesn't carry a resolved RGB for indexed colors (see its
+// own doc comment — it's resolved against the *active* theme's palette
+// instead, so a live theme switch recolors correctly), but a monochrome
+// theme's "shades" mode needs some real RGB to compare a cell's hue
+// against the theme's accent color, and Colors.Palette is meaningless
+// there anyway (see pkg/config's Colors doc comment) — this is only a
+// hue *hint* for that comparison, never the rendered color itself.
+func IndexedRGB(idx int8) [3]float32 {
+	return ansi16RGBValue(int(idx))
+}
+
 // palette256Value covers the standard xterm 256-color palette: 0-15 are
 // the ANSI/bright colors above, 16-231 a 6x6x6 RGB cube, 232-255 a
 // grayscale ramp.
