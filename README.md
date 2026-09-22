@@ -1,65 +1,48 @@
 # tubeless
 
-A GPU-rendered terminal emulator, written in Go on top of GLFW/OpenGL —
-built to be a terminal you enjoy looking at, not a strict emulation
-exercise.
+A GPU-rendered terminal emulator written in Go, on top of GLFW and
+OpenGL.
 
-![tubeless rendering true-color text with bold, italic, and a curly underline](assets/screenshots/hero.png)
+Built to look good, not to emulate a VT100 down to the pixel: a cursor
+that glides and morphs instead of snapping between cells, rounded
+corners and a soft drop shadow on every block and border, background
+blur on floating windows.
 
-Every glyph — including bold, italic, ligatures, and the cursor glow —
-is drawn on the GPU, not blitted from a bitmap font cache. That's what
-lets a few things most terminals don't bother with:
+## What it looks like in daily use
 
-### Real programming ligatures, from the font's own GSUB tables
+![Claude Code running inside tubeless, tmux status line at the bottom](assets/screenshots/daily-driver.png)
 
-`=>`, `!=`, `<-`, `>=` and friends are shaped by HarfBuzz straight from
-whatever font is loaded — including fonts (FiraCode, Cascadia Code,
-JetBrains Mono) that implement a ligature by reshaping two glyphs to
-visually connect rather than merging them into one, a case worth
-getting right on its own.
+![Neovim with a Harpoon popup — rounded corners and background blur over the live buffer](assets/screenshots/neovim-harpoon.png)
 
-![Go code rendered with real FiraCode ligatures: arrows, ≠, ≥, ≤](assets/screenshots/ligatures.png)
+Floating windows get rounded corners and background blur (the
+`surface` and `blur` config sections) — computed over whatever is
+actually behind the popup, not a fixed overlay image.
 
-### A GPU icon atlas wide enough for the full Nerd Font set
+![Neovim's Telescope find-files picker, Nerd Font icons per file type](assets/screenshots/neovim-telescope.png)
 
-Powerline separators, devicons, and Nerd Font glyphs render at full
-fidelity — including automatic upscaling for undersized icons — so
-prompts, statuslines, and file-tree glyphs look right instead of
-clipped or blurry.
-
-![Nerd Font icons, powerline segments, and a git-branch prompt](assets/screenshots/icons.png)
-
-### Period-accurate CRT emulation, not a generic scanline filter
-
-Six monitor presets (IBM 5151/5153, Zenith ZVM-1220, Apple Monitor III,
-Commodore 1084S, Princeton HX-12), plus a modern flat default, each
-modeling one real display's curvature, phosphor persistence, and
-convergence error from its actual service manual — tuned against
-reference photos of the real hardware.
-
-![The Zenith ZVM-1220 CRT preset rendering an oscilloscope screen in amber phosphor](assets/screenshots/crt.jpg)
-
-### A GPU-rendered settings UI, live inside your own terminal
-
-`tubeless config` runs as a normal VT program — it edits and previews
-every setting (theme, font, cursor, CRT effects) rendered through the
-same pipeline your shell uses, with a live preview strip, no separate
-GUI window or restart required.
-
-![The in-terminal config UI's Fonts & Theme tab with a live preview](assets/screenshots/config-ui.png)
+Nerd Font icons render at full fidelity, including automatic
+upscaling for undersized glyphs, so file-tree and fuzzy-finder icons
+look right instead of clipped or blurry.
 
 ## Features
 
-- GPU-rendered text with real italic/bold glyphs, curly underlines, and
-  a rounded-rect glow cursor that glides smoothly between cells
+- A cursor that glides and morphs into a ball-and-tail shape on fast
+  jumps, with a rounded-rect glow and a breathing pulse, instead of a
+  static block
+- Rounded corners, a soft drop shadow, and background blur on every
+  block/border surface and floating window
+- Real italic/bold glyphs and ligatures shaped by HarfBuzz straight
+  from the loaded font's own GSUB table
 - Native Wayland and X11 backends on Linux; native Cocoa on macOS
-- True-color rendering with 13 built-in themes (rosepine, rosepine-moon,
-  gruvbox-dark-hard, nord, dracula, catppuccin-mocha, tokyo-night,
-  one-dark, green, amber, green-p39, white-p4, cga) plus a custom theme
-  editor, and a set of period-accurate 80s monitor effect presets (IBM
-  5151/5153, Zenith ZVM-1220, Apple Monitor III, Commodore 1084S,
-  Princeton HX-12) — all in a tabbed, in-terminal config UI
-  (`tubeless config`)
+- True-color rendering with 14 built-in themes (rosepine,
+  rosepine-moon, gruvbox-dark-hard, nord, dracula, catppuccin-mocha,
+  tokyo-night, one-dark, green, amber, green-p39, white-p4, cga,
+  cyberpunk) plus a custom theme editor
+- Period-accurate 80s monitor effect presets (IBM 5151/5153, Zenith
+  ZVM-1220, Apple Monitor III, Commodore 1084S, Princeton HX-12) for
+  curvature, phosphor persistence, and scanlines — off by default
+- A tabbed, in-terminal config UI (`tubeless config`) with a live
+  preview, covering every setting above
 - Scrollback, fast scroll/insert-line/delete-line, sixel image output
 - Mouse selection and clipboard copy/paste (Cmd+C/V on macOS,
   Ctrl+Shift+C/V on Linux), aware of apps that request their own mouse
@@ -67,6 +50,15 @@ GUI window or restart required.
 - Config-file driven: `~/.config/tubeless/config.toml` (same path on
   every platform, including macOS; respects `$XDG_CONFIG_HOME`) — see
   [docs/config.md](docs/config.md) for the full reference
+
+## In-terminal config UI
+
+`tubeless config` runs as a normal VT program: it edits and previews
+every setting (theme, font, cursor, CRT effects) through the same
+rendering pipeline your shell uses, with a live preview strip — no
+separate GUI window, no restart required.
+
+![The in-terminal config UI's Fonts & Theme tab with a live preview](assets/screenshots/config-ui.png)
 
 ## Install
 
