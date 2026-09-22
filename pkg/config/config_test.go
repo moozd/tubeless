@@ -27,6 +27,16 @@ func TestDefaultSeedsHueWeightSentinel(t *testing.T) {
 	}
 }
 
+// TestDefaultSeedsAmountSentinel is Amount's counterpart to the guard
+// above: its Go zero value (0) is itself a valid explicit "stay on the
+// ramp" choice (see Monochrome's own doc comment), so Default() must
+// seed the -1 sentinel explicitly too.
+func TestDefaultSeedsAmountSentinel(t *testing.T) {
+	if got := Default().Monochrome.Amount; got != -1 {
+		t.Fatalf("Default().Monochrome.Amount = %v, want -1 (unset sentinel)", got)
+	}
+}
+
 func TestLoadMissingFileReturnsPreset(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "nope.toml"), "")
 	if err != nil {

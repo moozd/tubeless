@@ -690,7 +690,7 @@ var (
 	cursorBlinkStyleNames = []string{"ease", "static", "hard"}
 	// monochromeModeNames backs the monochrome.mode cycler row — see
 	// config.Monochrome's own doc comment for what each name means.
-	monochromeModeNames = []string{"binary", "shades"}
+	monochromeModeNames = []string{"binary", "shades", "spectrum"}
 )
 
 func cycleName(names []string, current string, d int) string {
@@ -1165,7 +1165,7 @@ func (u *ui) buildFontsThemeList() []panelRow {
 	section("monochrome (only affects true_color = off themes)")
 	add(&setting{
 		key: "monochrome.mode", label: "mode",
-		help:    "binary = a cell whose real colors land too close together always hard-inverts to solid black/phosphor-peak, guaranteed legible but flattens syntax highlighting to on/off blocks. shades = real colors quantize onto a handful of discrete accent-color brightness steps (see steps/hue weight below) instead, so syntax highlighting keeps reading as relative brightness while adjacent steps stay legible.",
+		help:    "binary = a cell whose real colors land too close together always hard-inverts to solid black/phosphor-peak, guaranteed legible but flattens syntax highlighting to on/off blocks. shades = real colors quantize onto a handful of discrete accent-color brightness steps (see steps/hue weight below) instead, so syntax highlighting keeps reading as relative brightness while adjacent steps stay legible. spectrum = shades' brightness ladder mixed toward each cell's own real color (see amount below) — 0 is the plain ramp, 1 is the real color unmodified, so different colors read as genuinely different colors, not just different brightnesses.",
 		choices: func() []string { return monochromeModeNames },
 		get: func(c *config.Config) string {
 			if c.Monochrome.Mode == "" {
@@ -1183,8 +1183,8 @@ func (u *ui) buildFontsThemeList() []panelRow {
 		},
 	})
 	add(&setting{
-		key: "monochrome.steps", label: "shades steps",
-		help: "shades mode only: how many discrete accent-color brightness levels real colors quantize onto — more steps keep finer distinctions but pack levels closer together.",
+		key: "monochrome.steps", label: "shades/spectrum steps",
+		help: "shades and spectrum modes only: how many discrete accent-color brightness levels real colors quantize onto — more steps keep finer distinctions but pack levels closer together.",
 		get: func(c *config.Config) string {
 			if c.Monochrome.Steps <= 0 {
 				return "auto (16)"
@@ -1228,6 +1228,31 @@ func (u *ui) buildFontsThemeList() []panelRow {
 			cur := float64(c.Monochrome.HueWeight)
 			if cur < 0 {
 				cur = 0.6
+			}
+			return cur, 0, 1
+		},
+	})
+	add(&setting{
+		key: "monochrome.amount", label: "spectrum amount",
+		help: "spectrum mode only: how much a cell's rendered color mixes toward its own real color — 0 stays on the plain phosphor ramp (same as shades), 1 is the real color unmodified, same as true color.",
+		get: func(c *config.Config) string {
+			if c.Monochrome.Amount < 0 {
+				return "auto (0.4)"
+			}
+			return trimFloat(float64(c.Monochrome.Amount), 2)
+		},
+		applyStep: func(c *config.Config, d int) bool {
+			cur := float64(c.Monochrome.Amount)
+			if cur < 0 {
+				cur = 0.4
+			}
+			c.Monochrome.Amount = float32(roundFloat(clampFloat(cur+0.05*float64(d), 0, 1), 2))
+			return false
+		},
+		rangeOf: func(c *config.Config) (float64, float64, float64) {
+			cur := float64(c.Monochrome.Amount)
+			if cur < 0 {
+				cur = 0.4
 			}
 			return cur, 0, 1
 		},

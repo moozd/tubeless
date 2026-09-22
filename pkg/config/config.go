@@ -138,47 +138,72 @@ type Phosphor struct {
 // preference the user sets once, not something a theme or preset switch
 // should silently reset.
 type Monochrome struct {
-	// Mode is "binary" (default, including the zero value "") or
-	// "shades". Under "binary", a cell whose real fg/bg colors land too
-	// close together once collapsed onto the ramp (see Contrast.MinDelta)
-	// snaps to a hard full-invert: pure black text on pure phosphor-peak,
-	// or vice versa — the classic terminal reverse-video block, always
-	// legible, but every such cell reads identically regardless of what
-	// its actual color was (a git status color, a syntax highlight —
-	// this is the "everything looks binary in nvim" complaint termguicolors
-	// apps trigger by painting an explicit background on nearly every
-	// cell). Under "shades" (experimental), Contrast.MinDelta isn't
-	// enforced at all — fg and bg are each translated independently from
-	// their own real luminance, the same "trust the app already chose a
-	// readable pair" tradeoff TrueColor themes already make (see
-	// trueColorCell). An earlier attempt instead pushed a too-close pair
-	// apart to still clear MinDelta, but MinDelta (0.35) is larger than
-	// any shipped theme's actual ramp span (~0.22 in OKLab lightness), so
-	// enforcing it against a bg that's nearly constant across a whole
-	// buffer (nvim paints its own background on almost every cell) clipped
-	// nearly every foreground to the same Phosphor.High — uniformly
-	// overbright, and no longer a stable function of a cell's own color
-	// since the result depended on whatever bg it was paired with.
+	// Mode is "binary" (default, including the zero value ""), "shades",
+	// or "spectrum". Under "binary", a cell whose real fg/bg colors land
+	// too close together once collapsed onto the ramp (see
+	// Contrast.MinDelta) snaps to a hard full-invert: pure black text on
+	// pure phosphor-peak, or vice versa — the classic terminal
+	// reverse-video block, always legible, but every such cell reads
+	// identically regardless of what its actual color was (a git status
+	// color, a syntax highlight — this is the "everything looks binary
+	// in nvim" complaint termguicolors apps trigger by painting an
+	// explicit background on nearly every cell). Under "shades"
+	// (experimental), Contrast.MinDelta isn't enforced at all — fg and
+	// bg are each translated independently from their own real
+	// luminance, the same "trust the app already chose a readable pair"
+	// tradeoff TrueColor themes already make (see trueColorCell). An
+	// earlier attempt instead pushed a too-close pair apart to still
+	// clear MinDelta, but MinDelta (0.35) is larger than any shipped
+	// theme's actual ramp span (~0.22 in OKLab lightness), so enforcing
+	// it against a bg that's nearly constant across a whole buffer (nvim
+	// paints its own background on almost every cell) clipped nearly
+	// every foreground to the same Phosphor.High — uniformly overbright,
+	// and no longer a stable function of a cell's own color since the
+	// result depended on whatever bg it was paired with. "spectrum"
+	// (experimental) is "shades"' own quantized brightness ladder
+	// (hue-closeness blend off — real hue comes from the cell's own
+	// color now, not smuggled into brightness) linearly mixed toward
+	// the cell's actual real color by Amount: 0 is the plain phosphor
+	// ramp, identical to "shades" with hue_weight pinned to 0; 1 is the
+	// cell's real color unmodified, the same passthrough TrueColor
+	// itself uses (see trueColorCell). An earlier version instead
+	// rotated the rendered hue within a bounded arc around the accent,
+	// keeping every color pinned to the ramp's own chroma — replaced
+	// because that couldn't express "let the real color all the way
+	// through" at all, only a hue-shifted-but-still-phosphor-saturated
+	// version of it; a straight mix can sweep the whole range from one
+	// endpoint to the other with a single, immediately legible knob.
 	Mode string `toml:"mode"`
-	// Steps is how many discrete brightness levels "shades" mode
-	// quantizes fg/bg onto, evenly spaced in OKLab lightness across the
-	// ramp's own span, instead of shades' old continuous mapping —
+	// Steps is how many discrete brightness levels "shades" and
+	// "spectrum" quantize fg/bg onto, evenly spaced in OKLab lightness
+	// across the ramp's own span, instead of a continuous mapping —
 	// guarantees every two distinct steps stay at least
 	// (ramp span)/(Steps-1) apart in perceived lightness, large enough
 	// that any two adjacent steps stay legible stacked as fg-on-bg no
 	// matter which two a given app's colors land on. Only consulted
-	// when Mode is "shades"; 0 (the zero value) falls back to a
-	// built-in default (see pkg/render's defaultShadeSteps).
+	// when Mode is "shades" or "spectrum"; 0 (the zero value) falls back
+	// to a built-in default (see pkg/render's defaultShadeSteps).
 	Steps int `toml:"steps"`
 	// HueWeight is how much "shades" mode's brightness mapping is
 	// pulled toward a cell's closeness to the theme's own accent hue,
 	// on top of its real luminance — 0 is luminance only (this mode's
 	// original behavior), 1 is hue-closeness only. Only consulted when
-	// Mode is "shades". Negative (the zero-adjacent sentinel, since 0
+	// Mode is "shades" — "spectrum" mixes in the cell's real color
+	// directly (see Amount), not through brightness, so it ignores this
+	// field entirely. Negative (the zero-adjacent sentinel, since 0
 	// is itself a valid explicit choice) falls back to a built-in
 	// default (see pkg/render's defaultShadeHueWeight); the config TUI
 	// and TOML default to that sentinel via -1.
 	HueWeight float32 `toml:"hue_weight"`
+	// Amount is how far "spectrum" mode mixes a cell's rendered color
+	// from the plain phosphor ramp (0) toward its own real color (1) —
+	// see Mode's own doc comment for the two endpoints. Only consulted
+	// when Mode is "spectrum". Negative (the zero-adjacent sentinel,
+	// since 0 is itself a valid explicit "stay on the ramp" choice)
+	// falls back to a built-in default (see pkg/render's
+	// defaultSpectrumAmount); the config TUI and TOML default to that
+	// sentinel via -1.
+	Amount float32 `toml:"amount"`
 }
 
 // Colors is a TrueColor theme's color set: DefaultFg/DefaultBg paint a
@@ -645,13 +670,14 @@ func Default() Config {
 		Font:       Font{Family: "", Size: 14, LineHeight: 1, Ligatures: true},
 		Atlas:      Atlas{Scale: 4, Gamma: 1.0},
 		Scrollback: Scrollback{Lines: DefaultScrollbackLines},
-		// HueWeight's zero value (0) is a valid explicit "luminance
-		// only" choice (see its own doc comment), so it can't double as
-		// "unset" the way Mode/Steps' zero values do — seed the -1
-		// sentinel here so a fresh install (or any config.toml that
-		// never mentions hue_weight) actually gets the built-in default
-		// instead of silently behaving as if hue_weight were 0.
-		Monochrome: Monochrome{HueWeight: -1},
+		// HueWeight/Amount's zero value (0) is each a valid explicit
+		// choice ("luminance only" / "stay on the ramp" — see their own
+		// doc comments), so neither can double as "unset" the way
+		// Mode/Steps' zero values do — seed the -1 sentinel here so a
+		// fresh install (or any config.toml that never mentions
+		// hue_weight/amount) actually gets the built-in default instead
+		// of silently behaving as if it were pinned to 0.
+		Monochrome: Monochrome{HueWeight: -1, Amount: -1},
 	}
 	applyTheme(&cfg, "rosepine")
 	applyEffectsPreset(&cfg, "modern")

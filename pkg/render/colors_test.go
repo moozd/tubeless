@@ -113,6 +113,56 @@ func TestCellColorsShadesModeQuantizes(t *testing.T) {
 	}
 }
 
+// TestCellColorsShadesModeAppliesWithoutExplicitBackground is a
+// regression guard for a real bug found live: MO's actual nvim setup
+// uses a transparent colorscheme, which leaves Normal/Comment/Keyword/
+// String/etc. all fg-only (BgSet=false) — only a handful of highlight
+// groups like Visual/CursorLine ever set bg. cellColors used to
+// early-return the !BgSet case straight to plain single-hue
+// lerpPhosphor with no Mode check at all, so "shades" (and "spectrum")
+// silently never engaged for the vast majority of a real buffer's
+// cells — everything rendered on one flat brightness ramp regardless
+// of Mode. This must now quantize fgI here too, exactly like the
+// bg-set branch already does.
+func TestCellColorsShadesModeAppliesWithoutExplicitBackground(t *testing.T) {
+	amber := config.Theme("amber")
+	cfg := config.Config{
+		Phosphor:   amber.Phosphor,
+		Monochrome: config.Monochrome{Mode: "shades"},
+	}
+
+	attr := screen.Attr{FgSet: true, Fg: 0.5}
+	fg, bg := cellColors(attr, cfg)
+
+	want := lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, quantizeShade(shadeContrastStretch(scaleIntensity(attr.Fg)), defaultShadeSteps))
+	if fg != want {
+		t.Fatalf("fg-only cell under shades mode = %v, want quantized %v (Mode was ignored)", fg, want)
+	}
+	if bg != ([3]float32{0, 0, 0}) {
+		t.Fatalf("fg-only cell's bg = %v, want ambient black", bg)
+	}
+}
+
+// TestCellColorsSpectrumModeAppliesWithoutExplicitBackground is
+// "spectrum"'s counterpart to the regression guard above: a fg-only,
+// hue-distant source color must still rotate off the accent hue, not
+// silently fall back to plain lerpPhosphor just because there's no
+// explicit background on the cell.
+func TestCellColorsSpectrumModeAppliesWithoutExplicitBackground(t *testing.T) {
+	cyberpunk := config.Theme("cyberpunk") // neon cyan accent
+	cfg := config.Config{
+		Phosphor:   cyberpunk.Phosphor,
+		Monochrome: config.Monochrome{Mode: "spectrum", Amount: 1},
+	}
+
+	attr := screen.Attr{FgSet: true, Fg: 0.708, FgRGB: [3]float32{1, 0, 0}} // saturated red, no bg
+	fg, _ := cellColors(attr, cfg)
+
+	if fg != attr.FgRGB {
+		t.Fatalf("fg-only cell under spectrum mode with amount=1 = %v, want the real source color %v unmodified (Mode was ignored)", fg, attr.FgRGB)
+	}
+}
+
 // TestCellColorsBackgroundFloorsAtTrueBlack pins down the fix for a real
 // bug: an explicit background used to ramp from Phosphor.Low, which for
 // a saturated ramp (cyberpunk's, say) is a visibly lit, tinted color —
@@ -171,6 +221,102 @@ func TestCellColorsShadesModeConsistentAcrossBackgrounds(t *testing.T) {
 	fg2, _ := cellColors(screen.Attr{FgSet: true, Fg: 0.5, BgSet: true, Bg: 0.4}, cfg)
 	if fg1 != fg2 {
 		t.Fatalf("same fg luminance rendered differently depending on bg: %v vs %v", fg1, fg2)
+	}
+}
+
+// TestCellColorsSpectrumModeZeroAmountMatchesShades pins down
+// Monochrome.Mode == "spectrum" at Amount=0: it must render exactly
+// the plain phosphor ramp (equivalent to "shades" with hue_weight
+// pinned to 0), the mix's "stay fully monochrome" endpoint.
+func TestCellColorsSpectrumModeZeroAmountMatchesShades(t *testing.T) {
+	amber := config.Theme("amber")
+	cfg := config.Config{
+		Phosphor:   amber.Phosphor,
+		Contrast:   config.Contrast{MinDelta: 0.35},
+		Monochrome: config.Monochrome{Mode: "spectrum", Amount: 0},
+	}
+
+	attr := screen.Attr{
+		FgSet: true, Fg: 0.708, FgRGB: [3]float32{1, 0, 0},
+		BgSet: true, Bg: 0.159,
+	}
+	fg, bg := cellColors(attr, cfg)
+
+	wantFg := lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, quantizeShade(shadeContrastStretch(scaleIntensity(attr.Fg)), defaultShadeSteps))
+	wantBg := lerpPhosphor([3]float32{0, 0, 0}, cfg.Phosphor.High, quantizeShade(shadeContrastStretch(attr.Bg), defaultShadeSteps))
+	if fg != wantFg || bg != wantBg {
+		t.Fatalf("spectrum amount=0 diverged from the plain ramp: got fg=%v bg=%v, want fg=%v bg=%v", fg, bg, wantFg, wantBg)
+	}
+}
+
+// TestCellColorsSpectrumModeOneAmountIsRealColor pins down the mix's
+// other endpoint: Amount=1 must render the cell's own real fg/bg color
+// unmodified, the same passthrough TrueColor itself uses — regardless
+// of how hue-distant that color is from the theme's accent.
+func TestCellColorsSpectrumModeOneAmountIsRealColor(t *testing.T) {
+	cyberpunk := config.Theme("cyberpunk") // neon cyan accent
+	cfg := config.Config{
+		Phosphor:   cyberpunk.Phosphor,
+		Contrast:   config.Contrast{MinDelta: 0.35},
+		Monochrome: config.Monochrome{Mode: "spectrum", Amount: 1},
+	}
+
+	attr := screen.Attr{
+		FgSet: true, Fg: 0.708, FgRGB: [3]float32{1, 0, 0}, // saturated red
+		BgSet: true, Bg: 0.159, BgRGB: [3]float32{0, 0, 1}, // saturated blue
+	}
+	fg, bg := cellColors(attr, cfg)
+	if fg != attr.FgRGB || bg != attr.BgRGB {
+		t.Fatalf("spectrum amount=1 = fg=%v bg=%v, want the real source colors fg=%v bg=%v unmodified", fg, bg, attr.FgRGB, attr.BgRGB)
+	}
+}
+
+// TestMixRGBInterpolatesLinearly checks mixRGB's own contract: t=0 is
+// exactly a, t=1 is exactly b, and an interior t lands on the plain
+// per-channel linear interpolation — the "spectrum" mode's whole blend
+// step reduces to this one function, so its correctness matters
+// independent of any particular theme/color.
+func TestMixRGBInterpolatesLinearly(t *testing.T) {
+	a, b := [3]float32{0, 0.2, 0.8}, [3]float32{1, 0.6, 0}
+	if got := mixRGB(a, b, 0); got != a {
+		t.Fatalf("mixRGB(a, b, 0) = %v, want a = %v", got, a)
+	}
+	if got := mixRGB(a, b, 1); got != b {
+		t.Fatalf("mixRGB(a, b, 1) = %v, want b = %v", got, b)
+	}
+	want := [3]float32{0.5, 0.4, 0.4}
+	got := mixRGB(a, b, 0.5)
+	const eps = 1e-6
+	for i := range got {
+		if d := got[i] - want[i]; d > eps || d < -eps {
+			t.Fatalf("mixRGB(a, b, 0.5) = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestSpectrumAmountResolvesSentinelAndClamps checks spectrumAmount
+// falls back to defaultSpectrumAmount for any negative (unset
+// sentinel) value, passes an explicit in-range value through
+// unchanged, and clamps an out-of-range hand-edited TOML value above 1
+// into mixRGB's own 0-1 contract instead of overshooting past the real
+// endpoint.
+func TestSpectrumAmountResolvesSentinelAndClamps(t *testing.T) {
+	cases := []struct {
+		amount float32
+		want   float32
+	}{
+		{-1, defaultSpectrumAmount},
+		{-0.5, defaultSpectrumAmount}, // any negative is the unset sentinel, not just -1
+		{0, 0},
+		{0.7, 0.7},
+		{1, 1},
+		{1.5, 1},
+	}
+	for _, c := range cases {
+		cfg := config.Config{Monochrome: config.Monochrome{Amount: c.amount}}
+		if got := spectrumAmount(cfg); got != c.want {
+			t.Errorf("spectrumAmount(Amount=%v) = %v, want %v", c.amount, got, c.want)
+		}
 	}
 }
 

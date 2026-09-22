@@ -41,7 +41,28 @@ func cellColors(attr screen.Attr, cfg config.Config) (fg, bg [3]float32) {
 		if attr.Invisible {
 			return bg, bg
 		}
-		return lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, fgI), bg
+		// A real app very often colors text this way — fg-only, no
+		// explicit bg — for its *plain* body text specifically (a
+		// transparent-background colorscheme, e.g., leaves Normal/
+		// Comment/Keyword/String all fg-only, only a handful of
+		// highlight groups like Visual/CursorLine ever set bg) — the
+		// bulk of a real buffer, not a rare case. "shades"/"spectrum"
+		// must still apply here, or they only ever engage on the
+		// minority of cells that happen to carry an explicit
+		// background, which is exactly the bug this branch used to
+		// have: every fg-only cell silently fell back to plain single-
+		// hue lerpPhosphor no matter what Mode was set to.
+		switch cfg.Monochrome.Mode {
+		case "shades":
+			fgI = quantizeShade(shadeContrastStretch(shadeIntensity(fgSrcRGB, fgI, cfg.Phosphor.High, shadeHueWeight(cfg))), shadeSteps(cfg))
+			return lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, fgI), bg
+		case "spectrum":
+			fgI = quantizeShade(shadeContrastStretch(fgI), shadeSteps(cfg))
+			mono := lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, fgI)
+			return mixRGB(mono, fgSrcRGB, spectrumAmount(cfg)), bg
+		default:
+			return lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, fgI), bg
+		}
 	}
 
 	// Unlike fgI, bgI is NOT run through scaleIntensity's floor: that
@@ -108,18 +129,32 @@ func cellColors(attr screen.Attr, cfg config.Config) (fg, bg [3]float32) {
 		// step ladder so any two distinct shades stay at least one
 		// step apart in perceived lightness, never collapsing all the
 		// way back to binary's 2-level hard invert.
-		steps := cfg.Monochrome.Steps
-		if steps <= 0 {
-			steps = defaultShadeSteps
-		}
-		hueWeight := cfg.Monochrome.HueWeight
-		if hueWeight < 0 {
-			hueWeight = defaultShadeHueWeight
-		}
+		steps := shadeSteps(cfg)
+		hueWeight := shadeHueWeight(cfg)
 		fgI = quantizeShade(shadeContrastStretch(shadeIntensity(fgSrcRGB, fgI, cfg.Phosphor.High, hueWeight)), steps)
 		bgI = quantizeShade(shadeContrastStretch(shadeIntensity(bgSrcRGB, bgI, cfg.Phosphor.High, hueWeight)), steps)
 		return lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, fgI),
 			lerpPhosphor(bgFloor, cfg.Phosphor.High, bgI)
+	}
+	if cfg.Monochrome.Mode == "spectrum" {
+		// Same discrete-lightness-ladder structure as "shades" above,
+		// but with no shadeIntensity hue blend — fgI/bgI are plain
+		// luminance-derived (shadeContrastStretch + quantizeShade only)
+		// — because hue now comes from mixing in the cell's own real
+		// color directly (see mixRGB/spectrumAmount), not from folding
+		// hue-closeness into brightness. Blending hue into brightness
+		// here too would double-count it and reopen exactly the tension
+		// defaultShadeHueWeight's own doc comment describes: pulling a
+		// hue-close-but-dimmer color's brightness up undoes the
+		// luminance hierarchy real syntax highlighting relies on (a
+		// comment reading dimmer than body text).
+		steps := shadeSteps(cfg)
+		amount := spectrumAmount(cfg)
+		fgI = quantizeShade(shadeContrastStretch(fgI), steps)
+		bgI = quantizeShade(shadeContrastStretch(bgI), steps)
+		monoFg := lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, fgI)
+		monoBg := lerpPhosphor(bgFloor, cfg.Phosphor.High, bgI)
+		return mixRGB(monoFg, fgSrcRGB, amount), mixRGB(monoBg, bgSrcRGB, amount)
 	}
 	// Compared in OKLab lightness, not the raw fgI/bgI scalars: a
 	// saturated phosphor color's Low endpoint sits well above true black,
@@ -328,6 +363,64 @@ func ensurePhosphorRampCache(low, high [3]float32) {
 func rampLightness(low, high [3]float32, t float32) float32 {
 	ensurePhosphorRampCache(low, high)
 	return phosphorRampLowLab[0] + (phosphorRampHighLab[0]-phosphorRampLowLab[0])*t
+}
+
+// mixRGB linearly interpolates two linear-RGB triples by t (0-1) —
+// "spectrum" mode's own blend space, deliberately plain linear RGB
+// rather than lerpPhosphor's OKLab lightness space: the two endpoints
+// here are two independently-meaningful *real* colors (the phosphor
+// ramp's own translation, and the cell's actual color), not a single
+// ramp's dim-to-bright progression, so there's no shared perceptual
+// axis to blend along the way lerpPhosphor's Low/High share one hue.
+func mixRGB(a, b [3]float32, t float32) [3]float32 {
+	return [3]float32{
+		a[0] + (b[0]-a[0])*t,
+		a[1] + (b[1]-a[1])*t,
+		a[2] + (b[2]-a[2])*t,
+	}
+}
+
+// defaultSpectrumAmount is "spectrum" mode's built-in mix amount — see
+// Monochrome.Amount's own doc comment. Unlike defaultShadeSteps/
+// defaultShadeHueWeight below, this hasn't been tuned against a real
+// syntax-highlighted buffer yet; it's a first-cut estimate meant to
+// still read as "mostly the phosphor ramp, real color showing through"
+// rather than "mostly true color", pending the same kind of screenshot
+// verification those constants went through.
+const defaultSpectrumAmount = 0.4
+
+// shadeSteps resolves Monochrome.Steps' unset sentinel (<=0 — 0 is the
+// Go zero value, and a negative step count is meaningless) to
+// defaultShadeSteps. Shared by "shades" and "spectrum", both of which
+// use it for the same thing: how many rungs their lightness ladder has.
+func shadeSteps(cfg config.Config) int {
+	if cfg.Monochrome.Steps <= 0 {
+		return defaultShadeSteps
+	}
+	return cfg.Monochrome.Steps
+}
+
+// shadeHueWeight resolves Monochrome.HueWeight's unset sentinel
+// (negative — see its own doc comment) to defaultShadeHueWeight. Only
+// "shades" consults this; "spectrum" mixes in real color directly
+// instead (see spectrumAmount).
+func shadeHueWeight(cfg config.Config) float32 {
+	if cfg.Monochrome.HueWeight < 0 {
+		return defaultShadeHueWeight
+	}
+	return cfg.Monochrome.HueWeight
+}
+
+// spectrumAmount resolves Monochrome.Amount's unset sentinel (negative
+// — see its own doc comment) to defaultSpectrumAmount, and clamps to
+// 0-1 — mixRGB's own contract, so a stray out-of-range config value
+// (hand-edited TOML) can't push the mix past either real endpoint.
+func spectrumAmount(cfg config.Config) float32 {
+	amount := cfg.Monochrome.Amount
+	if amount < 0 {
+		amount = defaultSpectrumAmount
+	}
+	return clamp01(amount)
 }
 
 // defaultShadeSteps/defaultShadeHueWeight are "shades" mode's built-in
