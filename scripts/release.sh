@@ -25,7 +25,7 @@ command -v git-cliff >/dev/null || die "git-cliff not installed"
 current=$(git rev-parse --abbrev-ref HEAD)
 [ "$current" = "$BRANCH" ] || die "on '$current', expected '$BRANCH'"
 
-git fetch --quiet origin "$BRANCH" --tags
+git fetch origin "$BRANCH" --tags || die "fetch failed"
 [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$BRANCH")" ] ||
   die "local $BRANCH is out of sync with origin"
 
