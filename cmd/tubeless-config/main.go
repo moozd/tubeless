@@ -1044,7 +1044,7 @@ func (u *ui) buildFontsThemeList() []panelRow {
 		key: "font.size", label: "size", help: "logical pixel height (rebuilds the atlas)",
 		get: func(c *config.Config) string { return fmt.Sprintf("%d px", c.Font.Size) },
 		applyStep: func(c *config.Config, d int) bool {
-			c.Font.Size = clampInt(c.Font.Size+2*d, 10, 96)
+			c.Font.Size = clampInt(c.Font.Size+d, 10, 96)
 			return true
 		},
 		rangeOf: func(c *config.Config) (float64, float64, float64) { return float64(c.Font.Size), 10, 96 },
