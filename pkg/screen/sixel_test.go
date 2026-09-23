@@ -79,6 +79,20 @@ func TestErasePartialKeepsOutsideImages(t *testing.T) {
 	}
 }
 
+// TestEraseLineClearsImageOnRow covers what a bare EraseInDisplay test
+// wouldn't: tmux redraws a pane with per-line EL, never a whole-screen ED
+// (that would blank other panes sharing the physical terminal), so this is
+// the path that actually fires when `clear` is run inside tmux.
+func TestEraseLineClearsImageOnRow(t *testing.T) {
+	s := New(5, 5)
+	s.CursorY = 1
+	s.Images = []PlacedImage{placedImage(1), placedImage(3)}
+	s.EraseInLine(EraseAll)
+	if !eqRows(rowsOf(s.Images), 3) {
+		t.Fatalf("EraseInLine(EraseAll) kept %v, want [3]", rowsOf(s.Images))
+	}
+}
+
 func TestAltScreenClearsImages(t *testing.T) {
 	s := New(5, 5)
 	s.Images = []PlacedImage{placedImage(0)}

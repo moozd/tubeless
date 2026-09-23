@@ -16,6 +16,21 @@ func (s *Screen) EraseInLine(mode EraseMode) {
 	for x := from; x <= to; x++ {
 		row[x] = erasedCell(s.CurAttr)
 	}
+	// A sixel image anchored on this row is tracked only by row (see
+	// PlacedImage), not by the columns it covers, so any erase touching
+	// the row drops it rather than leaving it ghosting over whatever
+	// replaces the line. This is what makes `clear` work inside tmux:
+	// tmux never emits a bare full-screen ED to the outer terminal (that
+	// would also blank any other pane sharing the physical screen), so a
+	// pane-wide clear reaches here as a run of per-line EL instead of the
+	// EraseInDisplay this row would otherwise need to hit.
+	kept := s.Images[:0]
+	for _, im := range s.Images {
+		if im.Row != s.CursorY {
+			kept = append(kept, im)
+		}
+	}
+	s.Images = kept
 }
 
 func (s *Screen) EraseInDisplay(mode EraseMode) {
