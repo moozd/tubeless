@@ -338,7 +338,7 @@ func cursorBrightness(style string, phase, period float64, visible bool) float32
 	}
 	pulse := math.Sin(2 * math.Pi * phase / period)
 	bright := 0.6 + 0.4*pulse
-	return float32(0.35 + 0.65*bright)
+	return float32(0.0 + 0.65*bright)
 }
 
 // smoothstep32 mirrors GLSL's smoothstep: a hermite curve that maps x into
