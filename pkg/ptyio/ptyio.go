@@ -60,9 +60,19 @@ func Start(name string, args []string, cols, rows int) (*Session, error) {
 	return &Session{Master: master, cmd: cmd}, nil
 }
 
-// Resize updates the PTY's reported window size.
-func (s *Session) Resize(cols, rows int) error {
-	return pty.Setsize(s.Master, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
+// Resize updates the PTY's reported window size, cell grid and pixel
+// dimensions both — xpixel/ypixel is the total pixel size of the grid
+// (cols*cellWidth, rows*cellHeight), not a per-cell size. Without it,
+// TIOCGWINSZ reports 0x0 pixels to every reader of this pty, which is
+// what a sixel-aware program (tmux included) uses to compute how many
+// pixels a cell is, so sixel scaling silently breaks — most visibly
+// inside tmux, since tmux itself relies on this to size sixel images
+// it relays from a pane.
+func (s *Session) Resize(cols, rows, xpixel, ypixel int) error {
+	return pty.Setsize(s.Master, &pty.Winsize{
+		Cols: uint16(cols), Rows: uint16(rows),
+		X: uint16(xpixel), Y: uint16(ypixel),
+	})
 }
 
 // Write sends bytes to the child (e.g. keyboard input).

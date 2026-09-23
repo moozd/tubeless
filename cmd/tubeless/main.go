@@ -59,7 +59,7 @@ const (
 	windowScale = 1
 )
 
-type resizeReq struct{ cols, rows int }
+type resizeReq struct{ cols, rows, xpixel, ypixel int }
 
 // sessionRef holds the live *ptyio.Session behind an atomic pointer.
 // wireInput/wireMouse register their GLFW callbacks once at startup and
@@ -78,8 +78,10 @@ func newSessionRef(sess *ptyio.Session) *sessionRef {
 }
 
 func (r *sessionRef) Write(p []byte) (int, error) { return r.p.Load().Write(p) }
-func (r *sessionRef) Resize(cols, rows int) error { return r.p.Load().Resize(cols, rows) }
-func (r *sessionRef) Close() error                { return r.p.Load().Close() }
+func (r *sessionRef) Resize(cols, rows, xpixel, ypixel int) error {
+	return r.p.Load().Resize(cols, rows, xpixel, ypixel)
+}
+func (r *sessionRef) Close() error { return r.p.Load().Close() }
 
 // version is baked in at build time via -ldflags "-X main.version=..."
 // (see the Makefile's LDFLAGS) — "dev" for a plain `go build` outside it.
@@ -197,6 +199,13 @@ func main() {
 	// or the last tmux session ending normally) to bring up a fresh tmux
 	// on tmuxSessionName instead of closing the window — see
 	// ptyCoordinator's own doc comment.
+	// cs is assigned below, once the window (and its real DPI) exists —
+	// respawn only ever runs later, asynchronously from ptyCoordinator,
+	// by which point it's long since set. Captured now so respawn can
+	// give the freshly-started tmux its pixel dimensions immediately,
+	// the same way the resizeCh path does for the original session (see
+	// ptyio.Resize).
+	var cs *cellSize
 	var respawn func(cols, rows int) (*ptyio.Session, bool)
 	if *shell == "" && cfg.Shell.Program == "tmux" {
 		respawn = func(cols, rows int) (*ptyio.Session, bool) {
@@ -208,6 +217,9 @@ func main() {
 			if err != nil {
 				log.Printf("restart tmux: %v", err)
 				return nil, false
+			}
+			if err := s.Resize(cols, rows, int(float32(cols)*cs.w), int(float32(rows)*cs.h)); err != nil {
+				log.Printf("size restarted tmux: %v", err)
 			}
 			return s, true
 		}
@@ -262,7 +274,7 @@ func main() {
 			faces, effectiveScale, renderer = newFaces, newScale, newRenderer
 		}
 	}
-	cs := &cellSize{
+	cs = &cellSize{
 		w:    physicalCellSize(faces.Regular.CellWidth, effectiveScale, dpiX),
 		h:    physicalCellSize(faces.Regular.CellHeight, effectiveScale, dpiY),
 		dpiX: dpiX,
@@ -642,15 +654,18 @@ func ptyCoordinator(ref *sessionRef, shared *atomic.Pointer[screen.Screen], resi
 			shared.Store(work.Clone())
 			work.ClearPendingClipboard()
 		case req := <-resizeCh:
-			if req.cols == work.Cols && req.rows == work.Rows {
-				continue
+			if req.cols != work.Cols || req.rows != work.Rows {
+				work.Resize(req.cols, req.rows)
+				shared.Store(work.Clone())
+				work.ClearPendingClipboard()
 			}
-			work.Resize(req.cols, req.rows)
-			if err := ref.Resize(req.cols, req.rows); err != nil {
+			// Sent even when cols/rows are unchanged: a DPI-only change
+			// (e.g. a display swap) moves cs.w/h without moving the grid,
+			// and the pty's reported pixel size (see ptyio.Resize) still
+			// needs to track that.
+			if err := ref.Resize(req.cols, req.rows, req.xpixel, req.ypixel); err != nil {
 				log.Printf("pty resize: %v", err)
 			}
-			shared.Store(work.Clone())
-			work.ClearPendingClipboard()
 		}
 	}
 }
@@ -758,7 +773,8 @@ func pushResizeSize(resizeCh chan resizeReq, cs *cellSize, w, h int, ar config.A
 	_, _, bw, bh := render.LetterboxBox(ar, w, h)
 	availW := max(0, float32(bw)-2*padding)
 	availH := max(0, float32(bh)-2*padding)
-	req := resizeReq{cols: max(1, int(availW/cs.w)), rows: max(1, int(availH/cs.h))}
+	c, r := max(1, int(availW/cs.w)), max(1, int(availH/cs.h))
+	req := resizeReq{cols: c, rows: r, xpixel: int(float32(c) * cs.w), ypixel: int(float32(r) * cs.h)}
 	select {
 	case resizeCh <- req:
 	default:
