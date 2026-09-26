@@ -1240,22 +1240,39 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			mode := mon.GetVideoMode()
 			fbw, fbh := win.FramebufferPixelSize()
 			if (fbw != mode.Width || fbh != mode.Height) && nearMonitorSize(fbw, fbh, mode.Width, mode.Height) {
-				win.SetMonitor(mon, 0, 0, mode.Width, mode.Height, mode.RefreshRate)
 				// SetMonitor only sends the request; the compositor's
-				// confirming configure (which is what actually drives
-				// wireResize's callback, wired just above) is its own
-				// round trip, same as CurrentMonitorContentScale below —
-				// without pumping events here, the loop's first frame
-				// renders before that configure ever arrives and the
-				// shortfall this block exists to fix goes uncorrected
-				// until something else (e.g. a manual F11) forces a
-				// fresh one.
+				// confirming configure is its own round trip, same as
+				// CurrentMonitorContentScale below — without pumping
+				// events here, the loop's first frame renders before
+				// that configure ever arrives and the shortfall this
+				// block exists to fix goes uncorrected until something
+				// else (e.g. a manual F11) forces a fresh one.
+				//
+				// wireResize's real callback (just above) calls
+				// renderFrame() on every resize, which is fine once the
+				// main loop below is running but not here: the first
+				// call it would trigger during this pump landed before
+				// the loop's own steady state existed, rendered once
+				// against a not-yet-settled scene, and its bookkeeping
+				// (lastW/lastH/lastScr) then never saw the state as
+				// "changed" again — glyphs silently never drew again for
+				// the rest of the session (2026-09-26), while the
+				// cursor pass, unaffected by that bookkeeping, kept
+				// rendering fine. Swapping in a callback that only
+				// tracks the resize — no render — avoids that, and the
+				// real one goes back right after.
+				win.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
+					c := cfgRef.Load()
+					pushResizeSize(resizeCh, cs, width, height, c.CRT.AspectRatio, c.Padding.Size)
+				})
+				win.SetMonitor(mon, 0, 0, mode.Width, mode.Height, mode.RefreshRate)
 				for i := 0; i < 20; i++ {
 					glfw.WaitEventsTimeout(0.05)
 					if w, h := win.FramebufferPixelSize(); w == mode.Width && h == mode.Height {
 						break
 					}
 				}
+				wireResize(win, resizeCh, cs, cfgRef, renderFrame)
 			}
 		}
 	}
