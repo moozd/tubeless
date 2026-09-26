@@ -34,13 +34,16 @@ type scrollState struct {
 // mouse reporting instead (see Screen.MouseMode) — decided once at press
 // time and remembered for the matching release, so a mode change
 // mid-drag (unusual, but possible) can't send a press without a matching
-// release or vice versa.
+// release or vice versa. reportButton remembers which button that press
+// was, so a held-button drag motion report (below) names the actual
+// button instead of always claiming the left one.
 type mouseState struct {
-	sel       *render.Selection
-	dragging  bool
-	reporting bool
-	lastX     int
-	lastY     int
+	sel          *render.Selection
+	dragging     bool
+	reporting    bool
+	reportButton screen.MouseButton
+	lastX        int
+	lastY        int
 }
 
 // wireMouse wires wheel-scroll, click/drag selection + clipboard copy, and
@@ -86,8 +89,9 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 		if action == glfw.Press {
 			ms.reporting = scr.MouseMode != screen.MouseOff
 			if ms.reporting {
+				ms.reportButton = sgrButton(button)
 				shift, alt, ctrl := currentMods(win)
-				sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, sgrButton(button), screen.MousePress, x, y, shift, alt, ctrl))
+				sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, ms.reportButton, screen.MousePress, x, y, shift, alt, ctrl))
 				return
 			}
 			if button != glfw.MouseButtonLeft {
@@ -138,11 +142,41 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 
 		switch {
 		case scr.MouseMode == screen.MouseAny:
+			// MouseAny (1003) reports every motion, held button or not —
+			// the button field must still say which one is down mid-drag
+			// (ms.reportButton), not a bare "none": an app reading motion
+			// reports to decide whether to extend a drag-selection (vim's
+			// visual mode included) treats a "none" button as a plain
+			// hover and won't grow the selection, which reads exactly
+			// like "dragging doesn't select further" even though reports
+			// are still arriving.
+			btn := screen.MouseButtonNone
+			if ms.reporting {
+				btn = ms.reportButton
+			}
 			shift, alt, ctrl := currentMods(win)
-			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, screen.MouseButtonNone, screen.MouseMotion, x, y, shift, alt, ctrl))
-		case ms.reporting && scr.MouseMode == screen.MouseDrag:
+			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, btn, screen.MouseMotion, x, y, shift, alt, ctrl))
+		case ms.reporting && scr.MouseMode != screen.MouseOff:
+			// Checked against "not Off" rather than requiring exactly
+			// MouseDrag: an app in the middle of a pane — tmux relaying
+			// mouse mode to whatever the focused pane's own program (vim)
+			// asked for, is the common case here — can retoggle its
+			// requested mode between Drag/Any/Click on essentially every
+			// redraw without ever meaning to stop tracking. Since
+			// ms.reporting already confirms our own button is down and
+			// being forwarded, requiring an exact MouseDrag match on top
+			// of that meant one single event where the live mode read
+			// back as something else (Click, most commonly) silently
+			// dropped that motion report with no way to resume until the
+			// mode happened to read back as MouseDrag/MouseAny again —
+			// which, for a mode that toggles quickly, might not land on
+			// another cursor-pos event before the drag ends, reading as a
+			// selection that "stops after a couple of characters and
+			// never reaches the next line". Only a real MouseOff — the
+			// app actually disabling mouse tracking outright — should
+			// stop these reports.
 			shift, alt, ctrl := currentMods(win)
-			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, screen.MouseButtonLeft, screen.MouseMotion, x, y, shift, alt, ctrl))
+			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, ms.reportButton, screen.MouseMotion, x, y, shift, alt, ctrl))
 		case ms.dragging:
 			ms.sel.EndX, ms.sel.EndY = x, y
 		}
