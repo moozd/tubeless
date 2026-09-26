@@ -1104,6 +1104,24 @@ func (w *cfgWatch) changed(now time.Time) bool {
 	return false
 }
 
+// pumpEvents runs an event-pump call (glfw.PollEvents, glfw.WaitEvents,
+// glfw.WaitEventsTimeout) with the same kind of panic recovery initGLFW
+// uses around a similar go-gl wrapper gap (pkg/render/window.go): on
+// Wayland, a monitor disconnecting while the window is genuinely
+// fullscreen (F11 — see toggleFullscreen) makes GLFW's own internal
+// monitor-disconnect handling call setWindowPos(), which Wayland doesn't
+// support — go-gl panics instead of returning an error there. Recovering
+// here means that degrades to a log line instead of crashing the whole
+// process.
+func pumpEvents(fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("glfw event pump: recovered panic: %v", r)
+		}
+	}()
+	fn()
+}
+
 // runLoop drives a continuous, vsync-paced render so the cursor can
 // animate in real time. The scene (cell buffers + shape blur) is
 // dirty-gated — it only rebuilds when the published Screen changed or the
@@ -1281,7 +1299,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 				})
 				win.SetSize(mode.Width, mode.Height)
 				for i := 0; i < 20; i++ {
-					glfw.WaitEventsTimeout(0.05)
+					pumpEvents(func() { glfw.WaitEventsTimeout(0.05) })
 					if w, h := win.FramebufferPixelSize(); w == mode.Width && h == mode.Height {
 						break
 					}
@@ -1297,7 +1315,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			// the user can't see at all. WaitEvents blocks (no spin) until
 			// the window comes back; the clock is reset so the cursor
 			// pulse doesn't jump on restore.
-			glfw.WaitEvents()
+			pumpEvents(glfw.WaitEvents)
 			lastFrame = time.Now()
 			continue
 		}
@@ -1331,9 +1349,9 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			lastFocused = *focused
 		}
 		if *focused {
-			glfw.PollEvents()
+			pumpEvents(glfw.PollEvents)
 		} else {
-			glfw.WaitEventsTimeout(1.0 / 30.0)
+			pumpEvents(func() { glfw.WaitEventsTimeout(1.0 / 30.0) })
 		}
 
 		// A one-off content-scale check right after window creation isn't
