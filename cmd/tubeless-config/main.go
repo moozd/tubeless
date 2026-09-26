@@ -76,29 +76,13 @@ type ui struct {
 	fontErr     string   // set when fc-list failed; picker falls back to free text
 	fontMatches []string
 	fontSel     int
-
-	// Profile save/load modals (see openProfileSave/openProfileLoad) —
-	// named full-Config snapshots under ~/.config/tubeless/profiles/.
-	profileSaving  bool
-	profileNameBuf string
-	profileLoading bool
-	profileNames   []string
-	profileErr     string
-	profileSel     int
-
-	// activeProfile is the profile save() keeps in sync once one exists
-	// for the current custom edits — set by loading a profile (o) or by
-	// naming one the first time save() needs to create one (see save()'s
-	// own doc comment). Empty means "no profile associated yet".
-	activeProfile string
 }
 
-// modalOpen reports whether any full-screen modal is currently
-// capturing input — the font picker or either profile dialog — so the
-// normal settings-list key bindings (and CSI-sequence dispatch) know to
-// step aside.
+// modalOpen reports whether any full-screen modal is currently capturing
+// input — currently just the font picker — so the normal settings-list
+// key bindings (and CSI-sequence dispatch) know to step aside.
 func (u *ui) modalOpen() bool {
-	return u.fontPicker || u.profileSaving || u.profileLoading
+	return u.fontPicker
 }
 
 // numTabs is how many top-level tabs the screen has — see listFor/
@@ -135,6 +119,11 @@ type setting struct {
 	fontFamily bool
 	effect     bool
 	themeColor bool
+	// swatch, when set, is a live color this row represents (a palette
+	// slot) — drawSettings paints it as a small color block on the row
+	// itself instead of the plain label/value text alone (see
+	// newPaletteSlot/paneRowRaw).
+	swatch func(*config.Config) [3]float32
 }
 
 // version is baked in at build time via -ldflags "-X main.version=..."
@@ -172,7 +161,7 @@ func main() {
 	}
 	defer raw.restore()
 
-	u := &ui{cfg: cfg, path: path, cols: cols, rows: rows, activeProfile: cfg.ActiveProfile}
+	u := &ui{cfg: cfg, path: path, cols: cols, rows: rows}
 	u.buildLists()
 
 	// Alternate screen + hidden cursor so the UI owns the window and
@@ -232,21 +221,15 @@ func (u *ui) feed(b byte) (quit bool) {
 			if len(s) == 3 && s[0] == 0x1b && s[1] == '[' {
 				switch s[2] {
 				case 'A':
-					switch {
-					case u.fontPicker:
+					if u.fontPicker {
 						u.moveFontSel(-1)
-					case u.profileLoading:
-						u.moveProfileSel(-1)
-					default:
+					} else {
 						u.move(-1)
 					}
 				case 'B':
-					switch {
-					case u.fontPicker:
+					if u.fontPicker {
 						u.moveFontSel(1)
-					case u.profileLoading:
-						u.moveProfileSel(1)
-					default:
+					} else {
 						u.move(1)
 					}
 				case 'C':
@@ -296,27 +279,6 @@ func (u *ui) feed(b byte) (quit bool) {
 		}
 		return false
 	}
-	if u.profileSaving {
-		switch b {
-		case '\r', '\n':
-			u.commitProfileSave()
-		case 0x7f, '\b':
-			if rs := []rune(u.profileNameBuf); len(rs) > 0 {
-				u.profileNameBuf = string(rs[:len(rs)-1])
-			}
-		default:
-			if b >= 0x20 {
-				u.profileNameBuf += string(rune(b))
-			}
-		}
-		return false
-	}
-	if u.profileLoading {
-		if b == '\r' || b == '\n' {
-			u.commitProfileLoad()
-		}
-		return false
-	}
 	switch b {
 	case 'q':
 		return true
@@ -324,10 +286,6 @@ func (u *ui) feed(b byte) (quit bool) {
 		u.save()
 	case 'r':
 		u.resetPreset()
-	case 'p':
-		u.openProfileSave()
-	case 'o':
-		u.openProfileLoad()
 	case '\t':
 		u.switchTab(1)
 	case '\r', '\n':
@@ -484,89 +442,7 @@ func (u *ui) moveFontSel(d int) {
 // them all; at most one is ever open at a time.
 func (u *ui) closeModal(status string) {
 	u.fontPicker = false
-	u.profileSaving = false
-	u.profileLoading = false
 	u.status = status
-}
-
-// setActiveProfile records name as the profile this session is now
-// associated with, in both places that matters: u.activeProfile (what
-// the header shows and save() checks live) and u.cfg.ActiveProfile
-// (what actually persists the association into config.toml/the profile
-// file itself across separate runs of this program — see Config's own
-// doc comment on the field).
-func (u *ui) setActiveProfile(name string) {
-	u.activeProfile = name
-	u.cfg.ActiveProfile = name
-}
-
-// openProfileSave opens the "save profile" name-entry modal — see
-// pkg/config's SaveProfile for where it ends up.
-func (u *ui) openProfileSave() {
-	u.profileSaving = true
-	u.profileNameBuf = ""
-}
-
-// commitProfileSave writes the current in-memory config — including any
-// unsaved edits, same as everything else in this UI — as a named
-// snapshot, independent of whether it's ever been written to the live
-// config.toml via 's'.
-func (u *ui) commitProfileSave() {
-	name := strings.TrimSpace(u.profileNameBuf)
-	u.profileSaving = false
-	if name == "" {
-		u.status = "profile save cancelled — empty name"
-		return
-	}
-	u.setActiveProfile(name)
-	if err := config.SaveProfile(name, u.cfg); err != nil {
-		u.status = "profile save failed: " + err.Error()
-		return
-	}
-	u.status = "saved profile → " + name
-}
-
-// openProfileLoad opens the "load profile" list modal, listing every
-// profile SaveProfile has ever written.
-func (u *ui) openProfileLoad() {
-	names, err := config.ProfileNames()
-	if err != nil {
-		u.profileErr = err.Error()
-	} else {
-		u.profileErr = ""
-	}
-	u.profileNames = names
-	u.profileSel = 0
-	u.profileLoading = true
-}
-
-func (u *ui) moveProfileSel(d int) {
-	n := len(u.profileNames)
-	if n == 0 {
-		return
-	}
-	u.profileSel = clampInt(u.profileSel+d, 0, n-1)
-}
-
-// commitProfileLoad replaces u.cfg wholesale with the selected profile —
-// like every other edit in this UI, this only takes effect in memory
-// until 's' writes it to the live config.toml.
-func (u *ui) commitProfileLoad() {
-	u.profileLoading = false
-	if u.profileSel >= len(u.profileNames) {
-		u.status = "no profile selected"
-		return
-	}
-	name := u.profileNames[u.profileSel]
-	cfg, err := config.LoadProfile(name)
-	if err != nil {
-		u.status = "profile load failed: " + err.Error()
-		return
-	}
-	u.cfg = cfg
-	u.setActiveProfile(name)
-	u.status = "loaded profile → " + name
-	u.dirty()
 }
 
 // refreshFontMatches re-filters fontAll by fontQuery (fuzzyMatch) and
@@ -615,37 +491,16 @@ func fuzzyMatch(query, candidate string) (score int, ok bool) {
 }
 
 // save writes u.cfg to the live config.toml, unconditionally — this is
-// what actually takes edits live (see dirty()'s doc comment). It also
-// keeps a profile in sync:
-//   - a profile currently loaded (activeProfile — see the header, which
-//     always shows it while one's active) gets every save's changes,
-//     full stop, not just ones that happen to touch a "custom"-marking
-//     setting — loading a profile and tweaking anything at all, font
-//     included, means that profile is what you're editing now.
-//   - with no profile loaded, a save is just a save — until the edit is
-//     one that flips Preset or Theme to "custom" (see adjust()), at
-//     which point this opens the same name-entry modal 'p' does, so a
-//     hand-tuned combination is never left with no name to find it by
-//     later.
+// what actually takes edits live (see dirty()'s doc comment). The running
+// tubeless host is always watching this one file, so writing it is the
+// only "activation" step there is — no separate profile/switch step.
 func (u *ui) save() {
 	if err := config.Save(u.path, u.cfg); err != nil {
 		u.status = "save failed: " + err.Error()
 		return
 	}
 	u.unsaved = false
-	switch {
-	case u.activeProfile != "":
-		if err := config.SaveProfile(u.activeProfile, u.cfg); err != nil {
-			u.status = "saved, but profile update failed: " + err.Error()
-			return
-		}
-		u.status = "saved → " + u.path + " · profile \"" + u.activeProfile + "\" updated"
-	case u.cfg.Preset == "custom" || u.cfg.Theme == "custom":
-		u.openProfileSave()
-		u.status = "saved → " + u.path + " — name a profile to keep these custom changes"
-	default:
-		u.status = "saved → " + u.path
-	}
+	u.status = "saved → " + u.path
 }
 
 // resetPreset snaps the active tab's own axis back to its named
@@ -843,6 +698,101 @@ func newThemeColorSlider(role, label string, ch rune, get func(*config.Config) *
 		rangeOf: func(c *config.Config) (float64, float64, float64) {
 			return float64(srgbByte((*get(c))[idx])), 0, 255
 		},
+	}
+}
+
+// ansiColorNames labels the 16 standard ANSI palette slots (0-15) in
+// their conventional order — the same order every theme's
+// Colors.Palette array uses.
+var ansiColorNames = [16]string{
+	"black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+	"br-black", "br-red", "br-green", "br-yellow", "br-blue", "br-magenta", "br-cyan", "br-white",
+}
+
+// paletteChoices lists the distinct colors the built-in themes use at
+// palette slot idx, in config.ThemeNames() order, deduplicated by value —
+// what newPaletteSlot's cycle picker steps through. No new color data to
+// maintain: it's exactly what's already sitting in each theme's own
+// Colors.Palette.
+func paletteChoices(idx int) [][3]float32 {
+	var vals [][3]float32
+	seen := map[[3]float32]bool{}
+	for _, name := range config.ThemeNames() {
+		v := config.Theme(name).Colors.Palette[idx]
+		if !seen[v] {
+			seen[v] = true
+			vals = append(vals, v)
+		}
+	}
+	return vals
+}
+
+// paletteThemeMatch reports which built-in theme (if any) currently
+// supplies slot idx's color unchanged — shown in the row/detail pane so
+// picking a palette color also reads as "this slot = nord's blue" rather
+// than a bare hex code, wherever that's true. Empty means a hand-picked
+// value with no exact match, shown as a hex code instead (see
+// newPaletteSlot's get).
+func paletteThemeMatch(idx int, cur [3]float32) string {
+	for _, name := range config.ThemeNames() {
+		if config.Theme(name).Colors.Palette[idx] == cur {
+			return name
+		}
+	}
+	return ""
+}
+
+// cyclePaletteColor steps slot idx's current color to the next (d>0) or
+// previous (d<0) entry in paletteChoices, wrapping around — same
+// not-currently-a-choice fallback as cycleName (snap to the first entry
+// rather than guessing a direction from an unrelated value).
+func cyclePaletteColor(idx int, cur [3]float32, d int) [3]float32 {
+	vals := paletteChoices(idx)
+	if len(vals) == 0 {
+		return cur
+	}
+	at := -1
+	for i, v := range vals {
+		if v == cur {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		at = 0
+	} else {
+		n := len(vals)
+		at = ((at+d)%n + n) % n
+	}
+	return vals[at]
+}
+
+// newPaletteSlot builds one ANSI palette color's row (see
+// buildFontsThemeList's "palette" section): a cycle picker stepping
+// through every built-in theme's own color for that slot (paletteChoices)
+// — verifying/comparing the whole 16-color table this way needs no new
+// color data — plus a live swatch (drawSettings) so the actual color is
+// visible on the same row instead of only as a hex code. Picking a value
+// that isn't the active theme's own original one flips Theme to "custom"
+// (asThemeColor, same convention as the text/bg/accent/glow sliders).
+func newPaletteSlot(idx int) *setting {
+	return &setting{
+		key:   fmt.Sprintf("colors.palette.%d", idx),
+		label: fmt.Sprintf("%-2d %s", idx, ansiColorNames[idx]),
+		help:  fmt.Sprintf("ANSI color %d — cycles through every built-in theme's own color for this slot", idx),
+		get: func(c *config.Config) string {
+			cur := c.Colors.Palette[idx]
+			if name := paletteThemeMatch(idx, cur); name != "" {
+				return name
+			}
+			return hex3(cur)
+		},
+		applyStep: func(c *config.Config, d int) bool {
+			c.Colors.Palette[idx] = cyclePaletteColor(idx, c.Colors.Palette[idx], d)
+			return false
+		},
+		choices: func() []string { return config.ThemeNames() },
+		swatch:  func(c *config.Config) [3]float32 { return c.Colors.Palette[idx] },
 	}
 }
 
@@ -1162,6 +1112,11 @@ func (u *ui) buildFontsThemeList() []panelRow {
 	role("accent", "accent", func(c *config.Config) *[3]float32 { return &c.Phosphor.High })
 	role("glow", "glow", func(c *config.Config) *[3]float32 { return &c.Phosphor.Low })
 
+	section("palette (ANSI 0-15)")
+	for i := range 16 {
+		add(asThemeColor(newPaletteSlot(i)))
+	}
+
 	section("monochrome (only affects true_color = off themes)")
 	add(&setting{
 		key: "monochrome.mode", label: "mode",
@@ -1359,11 +1314,6 @@ func (u *ui) redraw() {
 	accent := u.accent()
 
 	head := " TUBELESS CONFIG"
-	profileLabel := u.activeProfile
-	if profileLabel == "" {
-		profileLabel = "none — p to save one, o to load one"
-	}
-	head += "  ·  profile: " + profileLabel
 	if u.unsaved {
 		head += "  ·  unsaved changes (s to save)"
 	}
@@ -1382,23 +1332,28 @@ func (u *ui) redraw() {
 	if u.tab == 0 && rows >= 26 {
 		previewH = 6
 	}
+	// The 256-color reference (drawPalette256Reference) is 8 more lines
+	// (title + 6 cube rows + 1 grayscale row) only shown once there's
+	// clearly room to spare beyond the ordinary preview.
+	refH := 0
+	if u.tab == 0 && rows >= 34 {
+		refH = 8
+	}
 	listTop := 3
-	listBottom := max(listTop+2, rows-1-detailH-previewH)
+	listBottom := max(listTop+2, rows-1-detailH-previewH-refH)
 
 	u.drawSettings(b, 1, listTop, cols, listBottom, accent)
 	u.drawDetail(b, listBottom+1, cols)
 	if previewH > 0 {
 		u.drawColorPreview(b, listBottom+1+detailH, cols, accent)
 	}
-	u.footerRow(b, rows, " ⇥ switch tab · ↑↓/jk select · ←→/hl adjust · s save · p profile save · o profile load · r reset · q quit ")
+	if refH > 0 {
+		u.drawPalette256Reference(b, listBottom+1+detailH+previewH)
+	}
+	u.footerRow(b, rows, " ⇥ switch tab · ↑↓/jk select · ←→/hl adjust · s save · r reset · q quit ")
 
-	switch {
-	case u.fontPicker:
+	if u.fontPicker {
 		u.drawFontPicker(b)
-	case u.profileSaving:
-		u.drawProfileSave(b)
-	case u.profileLoading:
-		u.drawProfileLoad(b)
 	}
 	flush(b)
 }
@@ -1483,6 +1438,26 @@ func (u *ui) paneRow(b *strings.Builder, y, x0, w int, content, style string, ac
 	u.at(b, y, x0, edge+"│"+sgrReset+line+edge+"│"+sgrReset)
 }
 
+// paneRowRaw draws one bordered content row from a styledLine — content
+// that may already embed its own ANSI color escapes (a palette swatch)
+// with its true visible width already tracked (sl.w), rather than plain
+// text paneRow can safely colPad/trunc by colLen. When selected, the
+// row's highlight background is re-applied after every embedded reset (a
+// swatch chunk always ends with one, see styledLine.chunk's callers) so a
+// colored block can sit inside the highlighted row instead of that reset
+// silently ending the highlight for the remainder of the line.
+func (u *ui) paneRowRaw(b *strings.Builder, y, x0, w int, sl *styledLine, accent [3]float32, selected bool) {
+	innerW := w - 2
+	pad := max(0, innerW-sl.w)
+	content := sl.buf.String() + strings.Repeat(" ", pad)
+	if selected {
+		style := u.highlightStyle(accent) + sgrBold
+		content = style + strings.ReplaceAll(content, sgrReset, sgrReset+style) + sgrReset
+	}
+	edge := truecolorFg(accent)
+	u.at(b, y, x0, edge+"│"+sgrReset+content+edge+"│"+sgrReset)
+}
+
 // drawFontPicker overlays a centered modal on top of the normal screen (it
 // draws last, after everything else in redraw): a search box, then either
 // the matching family list or — when fc-list wasn't available — a hint
@@ -1544,79 +1519,6 @@ func (u *ui) drawFontPicker(b *strings.Builder) {
 	line(y0+h, trunc(" ↑↓ select · Enter pick · Esc cancel ", cols))
 }
 
-// drawProfileSave overlays a small centered name-entry modal — the
-// counterpart to drawFontPicker's search box, for naming a new profile
-// snapshot (see openProfileSave/commitProfileSave).
-func (u *ui) drawProfileSave(b *strings.Builder) {
-	cols, rows := u.cols, u.rows
-	w := min(cols-4, 50)
-	if w < 20 {
-		return
-	}
-	x0, y0 := (cols-w)/2, (rows-4)/2
-	accent := u.accent()
-	line := func(y int, s string) {
-		fmt.Fprintf(b, "\x1b[%d;%dH%s%s%s", y, x0+1, truecolorFg(accent), s, sgrReset)
-	}
-	line(y0, boxTop("save profile", w))
-	line(y0+1, boxText("name: "+u.profileNameBuf+"_", w))
-	line(y0+2, boxBottom(w))
-	line(y0+3, trunc(" Enter to save · Esc cancel ", cols))
-}
-
-// drawProfileLoad overlays a centered scrollable list of every saved
-// profile (see openProfileLoad/commitProfileLoad) — the same list-modal
-// shape as drawFontPicker's match list, without a search box.
-func (u *ui) drawProfileLoad(b *strings.Builder) {
-	cols, rows := u.cols, u.rows
-	w := min(cols-4, 50)
-	h := min(rows-4, 16)
-	if w < 20 || h < 6 {
-		return
-	}
-	x0, y0 := (cols-w)/2, (rows-h)/2
-	accent := u.accent()
-	line := func(y int, s string) {
-		fmt.Fprintf(b, "\x1b[%d;%dH%s%s%s", y, x0+1, truecolorFg(accent), s, sgrReset)
-	}
-
-	line(y0, boxTop("load profile", w))
-	listY0, listY1 := y0+1, y0+h-2
-	switch {
-	case u.profileErr != "":
-		line(listY0, boxText(trunc("error: "+u.profileErr, w-4), w))
-		for y := listY0 + 1; y <= listY1; y++ {
-			line(y, boxText("", w))
-		}
-	case len(u.profileNames) == 0:
-		line(listY0, boxText("no saved profiles yet — p to save one", w))
-		for y := listY0 + 1; y <= listY1; y++ {
-			line(y, boxText("", w))
-		}
-	default:
-		innerW := w - 2
-		capRows := listY1 - listY0 + 1
-		start := 0
-		if len(u.profileNames) > capRows && u.profileSel >= capRows {
-			start = u.profileSel - capRows + 1
-		}
-		for y := listY0; y <= listY1; y++ {
-			i := start + (y - listY0)
-			content := colPad(strings.Repeat(" ", innerW), innerW)
-			if i < len(u.profileNames) {
-				content = colPad(" "+trunc(u.profileNames[i], innerW-1), innerW)
-			}
-			if i == u.profileSel && i < len(u.profileNames) {
-				line(y, "│"+sgrReverse+content+sgrReset+"│")
-			} else {
-				line(y, "│"+content+"│")
-			}
-		}
-	}
-	line(y0+h-1, boxBottom(w))
-	line(y0+h, trunc(" ↑↓ select · Enter load · Esc cancel ", cols))
-}
-
 // drawSettings renders the active tab's section+setting list inside its
 // own pane — the primary nav surface, spanning the full width. The
 // selected row paints as a solid accent bar (the theme's own color, not
@@ -1643,6 +1545,10 @@ func (u *ui) drawSettings(b *strings.Builder, x0, y0, w, y1 int, accent [3]float
 	for y := innerY0; y <= innerY1; y++ {
 		i := start + (y - innerY0)
 		sel := i < n && i == u.sel
+		if i < n && u.list[i].kind == rowSetting && u.list[i].set.swatch != nil {
+			u.paneSwatchRow(b, y, x0, w, u.list[i].set, accent, sel)
+			continue
+		}
 		plain, style := "", ""
 		if i < n {
 			r := u.list[i]
@@ -1665,6 +1571,32 @@ func (u *ui) drawSettings(b *strings.Builder, x0, y0, w, y1 int, accent [3]float
 		}
 		u.paneRow(b, y, x0, w, plain, style, accent, sel)
 	}
+}
+
+// paneSwatchRow renders one palette-slot row: label, a small live color
+// block (set.swatch), then the value text (a matching built-in theme
+// name, or a hex code — see newPaletteSlot's get). Built through
+// styledLine/paneRowRaw since the swatch embeds its own color escapes
+// that colPad/trunc's colLen-based padding can't see through.
+func (u *ui) paneSwatchRow(b *strings.Builder, y, x0, w int, set *setting, accent [3]float32, sel bool) {
+	innerW := w - 2
+	leadLen := 2
+	if sel {
+		leadLen = 1
+	}
+	value := set.get(&u.cfg)
+	vl := colLen(value)
+	const swatchW = 2
+	label := trunc(set.label, max(0, innerW-leadLen-swatchW-1-vl-1))
+	ll := colLen(label)
+	gap := max(1, innerW-leadLen-ll-swatchW-1-vl)
+	lead := strings.Repeat(" ", leadLen)
+
+	sl := &styledLine{}
+	sl.plain(lead + label + strings.Repeat(" ", gap))
+	sl.chunk(truecolorBg(set.swatch(&u.cfg))+"  "+sgrReset, swatchW)
+	sl.plain(" " + value)
+	u.paneRowRaw(b, y, x0, w, sl, accent, sel)
 }
 
 // choiceChips renders names as a space-separated inline list with the
@@ -1753,6 +1685,35 @@ func (u *ui) drawColorPreview(b *strings.Builder, y0, cols int, accent [3]float3
 	swatchRow(y0+1, "text  ", u.cfg.Colors.DefaultFg, "bg    ", u.cfg.Colors.DefaultBg)
 	swatchRow(y0+2, "accent", u.cfg.Phosphor.High, "glow  ", u.cfg.Phosphor.Low)
 	u.drawSampleLine(b, y0+3, cols, u.cfg.Colors.DefaultFg, u.cfg.Colors.DefaultBg)
+}
+
+// drawPalette256Reference renders the fixed xterm 256-color table's
+// upper range (16-255 — the 6x6x6 cube and grayscale ramp that never
+// change per-theme, unlike the 16 editable slots in the palette section
+// above) as a compact swatch grid: a read-only reference for confirming
+// what an app's indexed colourN styling (tmux's included) actually looks
+// like, since there's nothing here to edit.
+func (u *ui) drawPalette256Reference(b *strings.Builder, y0 int) {
+	u.at(b, y0, 1, sgrDim+" 256-COLOR REFERENCE (16-255, fixed)"+sgrReset)
+	// One row per R-level keeps the 216-color cube (16-231) a legible
+	// 36-cell G x B square per row instead of one 216-wide strip.
+	for r := range 6 {
+		var sl styledLine
+		sl.plain(" ")
+		for g := range 6 {
+			for bl := range 6 {
+				idx := 16 + 36*r + 6*g + bl
+				sl.chunk(ansi256Bg(idx)+" "+sgrReset, 1)
+			}
+		}
+		u.at(b, y0+1+r, 1, sl.buf.String())
+	}
+	var gray styledLine
+	gray.plain(" ")
+	for idx := 232; idx <= 255; idx++ {
+		gray.chunk(ansi256Bg(idx)+"  "+sgrReset, 2)
+	}
+	u.at(b, y0+7, 1, gray.buf.String())
 }
 
 // drawRampPreview renders the monochrome phosphor Low→High ramp as a

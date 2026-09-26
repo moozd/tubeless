@@ -11,8 +11,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -32,30 +30,23 @@ import (
 //     either (see the config TUI's "experimental" tab for Scrolling
 //     specifically).
 type Config struct {
-	Theme  string `toml:"theme"`
-	Preset string `toml:"preset"`
-	// ActiveProfile is the config TUI's own bookkeeping — which saved
-	// profile (see SaveProfile/LoadProfile) this Config was last loaded
-	// from or saved into, so the TUI can show "profile: X" and keep
-	// syncing further edits to it across separate runs, not just within
-	// one session. Ignored by the render pipeline entirely; empty means
-	// "no profile associated".
-	ActiveProfile string     `toml:"active_profile"`
-	TrueColor     bool       `toml:"true_color"`
-	Font          Font       `toml:"font"`
-	Atlas         Atlas      `toml:"atlas"`
-	Padding       Padding    `toml:"padding"`
-	Phosphor      Phosphor   `toml:"phosphor"`
-	Monochrome    Monochrome `toml:"monochrome"`
-	Colors        Colors     `toml:"colors"`
-	Surface       Surface    `toml:"surface"`
-	Blur          Blur       `toml:"blur"`
-	Cursor        Cursor     `toml:"cursor"`
-	Face          Face       `toml:"face"`
-	Contrast      Contrast   `toml:"contrast"`
-	Scrollback    Scrollback `toml:"scrollback"`
-	Shell         Shell      `toml:"shell"`
-	CRT           CRT        `toml:"crt"`
+	Theme      string     `toml:"theme"`
+	Preset     string     `toml:"preset"`
+	TrueColor  bool       `toml:"true_color"`
+	Font       Font       `toml:"font"`
+	Atlas      Atlas      `toml:"atlas"`
+	Padding    Padding    `toml:"padding"`
+	Phosphor   Phosphor   `toml:"phosphor"`
+	Monochrome Monochrome `toml:"monochrome"`
+	Colors     Colors     `toml:"colors"`
+	Surface    Surface    `toml:"surface"`
+	Blur       Blur       `toml:"blur"`
+	Cursor     Cursor     `toml:"cursor"`
+	Face       Face       `toml:"face"`
+	Contrast   Contrast   `toml:"contrast"`
+	Scrollback Scrollback `toml:"scrollback"`
+	Shell      Shell      `toml:"shell"`
+	CRT        CRT        `toml:"crt"`
 }
 
 // Shell controls how the pty's child process is launched. Lives on the
@@ -754,101 +745,4 @@ func permissionHintError(err error, dir string) error {
 		return fmt.Errorf("%w (if tubeless was previously run with sudo, this may be root-owned — try: sudo chown -R $(whoami) %s)", err, dir)
 	}
 	return err
-}
-
-// ProfilesDir is where SaveProfile/LoadProfile/ProfileNames operate:
-// a "profiles" directory next to config.toml itself.
-func ProfilesDir() (string, error) {
-	path, err := DefaultPath()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(filepath.Dir(path), "profiles"), nil
-}
-
-// profileFilePath resolves name to its file under ProfilesDir,
-// sanitizing it first — the config TUI's profile name is free-typed
-// user input, and this is the one place it becomes a filesystem path.
-func profileFilePath(name string) (string, error) {
-	dir, err := ProfilesDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, sanitizeProfileName(name)+".toml"), nil
-}
-
-// sanitizeProfileName keeps a profile name to characters safe as a
-// single path segment: letters, digits, spaces, dash, underscore — so
-// free-typed input can never escape ProfilesDir (no '/', no leading
-// '.', nothing that isn't a plain filename).
-func sanitizeProfileName(name string) string {
-	name = strings.TrimSpace(name)
-	var b strings.Builder
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == ' ':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('_')
-		}
-	}
-	return strings.Trim(b.String(), " ._-")
-}
-
-// SaveProfile writes cfg as a complete, named snapshot under
-// ProfilesDir — a full Config dump (every field this package knows how
-// to marshal), the same shape as config.toml itself, so LoadProfile can
-// read one straight back with no preset-seeding needed.
-func SaveProfile(name string, cfg Config) error {
-	path, err := profileFilePath(name)
-	if err != nil {
-		return err
-	}
-	if filepath.Base(path) == ".toml" {
-		return fmt.Errorf("profile name %q has no usable characters", name)
-	}
-	return Save(path, cfg)
-}
-
-// LoadProfile reads back a snapshot SaveProfile wrote.
-func LoadProfile(name string) (Config, error) {
-	path, err := profileFilePath(name)
-	if err != nil {
-		return Config{}, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return Config{}, err
-	}
-	var cfg Config
-	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parse profile %s: %w", path, err)
-	}
-	return cfg, nil
-}
-
-// ProfileNames lists every saved profile (base filename, without
-// ".toml"), sorted. A missing ProfilesDir (no profile saved yet) yields
-// an empty list, never an error.
-func ProfileNames() ([]string, error) {
-	dir, err := ProfilesDir()
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".toml" {
-			continue
-		}
-		names = append(names, strings.TrimSuffix(e.Name(), ".toml"))
-	}
-	sort.Strings(names)
-	return names, nil
 }

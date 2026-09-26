@@ -185,15 +185,13 @@ Every field defaults to off (`0`) under the `modern` preset.
 | `[crt.phosphor_decay]`| `decay_seconds` | Afterglow trail length behind recently-changed content.              |
 | `[crt.aspect_ratio]`  | `width`/`height`| Letterboxed tube aspect ratio (e.g. `4`/`3`) — the physical tube shape, not the raw pixel-count ratio of the mode it displayed. |
 
-## Themes vs. presets vs. profiles
+## Themes vs. presets
 
-- **Theme** and **preset** are the two axes above — always exactly one
-  named built-in (or `"custom"`) each.
-- **Profiles** are complete, named snapshots of the whole config,
-  saved under `profiles/` next to `config.toml` (`tubeless config`'s
-  `s`/`p`/`o` keys: save, profile-save, profile-load). Useful for
-  switching between a few fully different setups rather than one
-  theme/preset combination.
+**Theme** and **preset** are the two axes above — always exactly one
+named built-in (or `"custom"`) each. `config.toml` is the single source
+of truth: `tubeless config`'s `s` key writes straight to it, and the
+running `tubeless` host watches that file and picks up any change live —
+there's no separate profile/switch concept to manage on top of it.
 
 ## Custom theme editor
 
