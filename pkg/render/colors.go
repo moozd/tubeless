@@ -28,15 +28,18 @@ func cellColors(attr screen.Attr, cfg config.Config) (fg, bg [3]float32) {
 		if attr.Reverse {
 			// No explicit background: reverse video is a pure highlight
 			// signal (a file-tree selection, a search match, htop's header
-			// bar) with no intentional color of its own to preserve —
-			// always a clean full invert (solid bright block, black text),
-			// never the cell's own original fg brightness. Reusing that
-			// brightness reads fine for one uniformly-colored cell, but a
-			// highlighted run of text whose characters had different
-			// original colors (icons, syntax spans) would then compute a
-			// different block shade per cell — a muddy, unevenly-striped
-			// bar instead of one solid highlight.
-			return [3]float32{0, 0, 0}, cfg.Phosphor.High
+			// bar, tmux's own selection/status highlighting). This used to
+			// always invert to a flat solid block (black text on
+			// Phosphor.High) regardless of the cell's own brightness — a
+			// clean invert, but one that makes every reverse-video run look
+			// identical, so distinct highlights (e.g. tmux's active vs.
+			// inactive status segments) become indistinguishable. Scaling
+			// the block by the cell's own intensity instead keeps that
+			// distinction, at the accepted cost that a highlighted run
+			// whose characters originally carried different colors/icons
+			// can now shade unevenly across cells rather than reading as
+			// one uniform bar.
+			return [3]float32{0, 0, 0}, lerpPhosphor(cfg.Phosphor.Low, cfg.Phosphor.High, fgI)
 		}
 		if attr.Invisible {
 			return bg, bg
