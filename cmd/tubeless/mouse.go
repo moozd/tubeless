@@ -60,7 +60,7 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 				btn = screen.MouseWheelUp
 			}
 			shift, alt, ctrl := currentMods(win)
-			x, y := cellAt(win, cs, cfgRef.Load().CRT.AspectRatio)
+			x, y := cellAt(win, cs, cfgRef.Load().CRT.AspectRatio, scr.Cols, scr.Rows)
 			x, y = clampCell(scr, x, y)
 			sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, btn, screen.MousePress, x, y, shift, alt, ctrl))
 			return
@@ -80,7 +80,7 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 			return
 		}
 		scr := shared.Load()
-		x, y := cellAt(win, cs, cfgRef.Load().CRT.AspectRatio)
+		x, y := cellAt(win, cs, cfgRef.Load().CRT.AspectRatio, scr.Cols, scr.Rows)
 		x, y = clampCell(scr, x, y)
 
 		if action == glfw.Press {
@@ -128,8 +128,8 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 		// dedup below, since a still mouse re-entering the same cell
 		// shouldn't need to move first to reappear.
 		win.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
-		x, y := cellFromPixels(win, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio)
 		scr := shared.Load()
+		x, y := cellFromPixels(win, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio, scr.Cols, scr.Rows)
 		x, y = clampCell(scr, x, y)
 		if x == ms.lastX && y == ms.lastY {
 			return
@@ -173,28 +173,39 @@ func currentMods(win *render.Window) (shift, alt, ctrl bool) {
 // cellAt is cellFromPixels for the cursor's current position — used by
 // callbacks (scroll, button press/release) that don't already have a
 // fresh xpos/ypos the way the cursor-position callback does.
-func cellAt(win *render.Window, cs *cellSize, ar config.AspectRatio) (x, y int) {
+func cellAt(win *render.Window, cs *cellSize, ar config.AspectRatio, cols, rows int) (x, y int) {
 	xpos, ypos := win.GetCursorPos()
-	return cellFromPixels(win, xpos, ypos, cs, ar)
+	return cellFromPixels(win, xpos, ypos, cs, ar, cols, rows)
 }
 
 // cellFromPixels converts a GLFW cursor position (screen/logical
 // coordinates) to a grid cell in the letterboxed content viewport. cs.w/h
 // are physical-pixel cell sizes (see cellSize), so the logical position is
 // scaled by the content-scale factor first to land in the same space — the
-// same relationship pushResizeSize uses going the other direction.
-func cellFromPixels(win *render.Window, xpos, ypos float64, cs *cellSize, ar config.AspectRatio) (x, y int) {
+// same relationship pushResizeSize uses going the other direction. cols/rows
+// is the live Screen's size, needed to invert the same grid-centering
+// margin rendering applies (see cellFromFramebufferPixels).
+func cellFromPixels(win *render.Window, xpos, ypos float64, cs *cellSize, ar config.AspectRatio, cols, rows int) (x, y int) {
 	w, h := win.FramebufferPixelSize()
-	return cellFromFramebufferPixels(float32(xpos)*cs.dpiX, float32(ypos)*cs.dpiY, w, h, cs, ar)
+	return cellFromFramebufferPixels(float32(xpos)*cs.dpiX, float32(ypos)*cs.dpiY, w, h, cs, ar, cols, rows)
 }
 
-func cellFromFramebufferPixels(px, py float32, w, h int, cs *cellSize, ar config.AspectRatio) (x, y int) {
+// cellFromFramebufferPixels inverts the exact transform rendering uses to
+// place cell (x,y) on screen: boxOrigin (LetterboxBox's bx,by) + a
+// grid-centering margin (render.GridOffset — the leftover space once
+// cols*cw x rows*ch is subtracted from the letterbox box, split evenly on
+// every side) + cell*(cw,ch). Missing the GridOffset term here used to
+// leave hit-testing off by roughly one row/column whenever that margin was
+// non-zero (any non-zero padding, or a cell size that doesn't evenly
+// divide the box) — clicks landed a row above what was visually selected.
+func cellFromFramebufferPixels(px, py float32, w, h int, cs *cellSize, ar config.AspectRatio, cols, rows int) (x, y int) {
 	if cs.w <= 0 || cs.h <= 0 {
 		return 0, 0
 	}
 	bx, by, bw, bh := render.LetterboxBox(ar, w, h)
-	px = clampFloat32(px-float32(bx), 0, float32(max(bw-1, 0)))
-	py = clampFloat32(py-float32(by), 0, float32(max(bh-1, 0)))
+	offX, offY := render.GridOffset(float32(bw), float32(bh), cols, rows, cs.w, cs.h)
+	px = clampFloat32(px-float32(bx)-offX, 0, float32(max(bw-1, 0)))
+	py = clampFloat32(py-float32(by)-offY, 0, float32(max(bh-1, 0)))
 	x = int(px / cs.w)
 	y = int(py / cs.h)
 	return max(0, x), max(0, y)

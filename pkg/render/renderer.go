@@ -399,7 +399,7 @@ func (r *Renderer) CurrentScrollLine() int {
 // framebuffer and need to know its real dimensions to place the
 // letterbox bars/modal correctly.
 func (r *Renderer) RenderEffects(boxW, boxH, outW, outH int, cfg config.Config, dt float64) {
-	offsetX, offsetY := gridOffset(float32(boxW), float32(boxH), r.cols, r.rows, r.cellW, r.cellH)
+	offsetX, offsetY := GridOffset(float32(boxW), float32(boxH), r.cols, r.rows, r.cellW, r.cellH)
 
 	// Wrapped at an arbitrary round period (1 day) rather than a
 	// meaningful one — unlike cursorPhase, nothing here is periodic on a

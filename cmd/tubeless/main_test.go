@@ -230,20 +230,59 @@ func TestBuildFacesForClampsOversizedScale(t *testing.T) {
 func TestCellFromFramebufferPixelsUsesLetterbox(t *testing.T) {
 	cs := &cellSize{w: 10, h: 10, dpiX: 1, dpiY: 1}
 	ar := config.AspectRatio{Width: 4, Height: 3}
+	// Letterbox box for a 1000x500 framebuffer at 4:3 is 666x500 with a
+	// 167px bar on each side (see LetterboxBox); a 66x50 grid of 10px
+	// cells leaves a 3px grid-centering margin on the left/right (666 -
+	// 660 = 6, split evenly) and none top/bottom (500 - 500 = 0).
+	cols, rows := 66, 50
 
-	x, y := cellFromFramebufferPixels(187, 30, 1000, 500, cs, ar)
-	if x != 2 || y != 3 {
-		t.Fatalf("cell = (%d,%d), want (2,3)", x, y)
+	x, y := cellFromFramebufferPixels(187, 30, 1000, 500, cs, ar, cols, rows)
+	if x != 1 || y != 3 {
+		t.Fatalf("cell = (%d,%d), want (1,3)", x, y)
 	}
 
-	x, y = cellFromFramebufferPixels(10, 30, 1000, 500, cs, ar)
+	x, y = cellFromFramebufferPixels(10, 30, 1000, 500, cs, ar, cols, rows)
 	if x != 0 || y != 3 {
 		t.Fatalf("left bar cell = (%d,%d), want (0,3)", x, y)
 	}
 
-	x, y = cellFromFramebufferPixels(990, 30, 1000, 500, cs, ar)
+	x, y = cellFromFramebufferPixels(990, 30, 1000, 500, cs, ar, cols, rows)
 	if x != 66 || y != 3 {
 		t.Fatalf("right bar cell = (%d,%d), want (66,3)", x, y)
+	}
+}
+
+// TestCellFromFramebufferPixelsUsesGridOffset guards the padding-driven
+// grid-centering margin (render.GridOffset) that rendering has always
+// applied but hit-testing used to ignore — the bug that made mouse
+// selection land roughly one row above what was visually clicked whenever
+// padding (or a non-exact cell/box fit) left a centering margin. ar is
+// left zero so LetterboxBox contributes no bars of its own, isolating the
+// grid-offset term.
+func TestCellFromFramebufferPixelsUsesGridOffset(t *testing.T) {
+	cs := &cellSize{w: 10, h: 10, dpiX: 1, dpiY: 1}
+	var ar config.AspectRatio
+	// A 90x40 grid of 10px cells is 900x400, inside a 1000x500 box — a
+	// 50px margin on every side.
+	cols, rows := 90, 40
+
+	x, y := cellFromFramebufferPixels(55, 55, 1000, 500, cs, ar, cols, rows)
+	if x != 0 || y != 0 {
+		t.Fatalf("cell just past the margin = (%d,%d), want (0,0)", x, y)
+	}
+
+	// A click inside the margin, before the grid starts, must clamp to the
+	// first cell rather than dividing the raw (unshifted) pixel by cell
+	// size — which is exactly what silently landed one row/col into the
+	// grid before this fix.
+	x, y = cellFromFramebufferPixels(10, 10, 1000, 500, cs, ar, cols, rows)
+	if x != 0 || y != 0 {
+		t.Fatalf("cell inside the margin = (%d,%d), want (0,0)", x, y)
+	}
+
+	x, y = cellFromFramebufferPixels(945, 445, 1000, 500, cs, ar, cols, rows)
+	if x != 89 || y != 39 {
+		t.Fatalf("last cell = (%d,%d), want (89,39)", x, y)
 	}
 }
 
