@@ -37,6 +37,23 @@ func toggleFullscreen(win *render.Window, fs *fullscreenState) {
 	win.SetMonitor(mon, 0, 0, mode.Width, mode.Height, mode.RefreshRate)
 }
 
+// nearMonitorSize reports whether fbw/fbh are close enough to modeW/modeH
+// (within 15% on both axes) that the difference reads as a startup
+// sizing race against the monitor's real resolution (see runLoop's
+// post-wireResize correction) rather than a deliberately smaller
+// windowed size on a normal desktop.
+func nearMonitorSize(fbw, fbh, modeW, modeH int) bool {
+	const slack = 0.15
+	closeEnough := func(a, b int) bool {
+		diff := b - a
+		if diff < 0 {
+			diff = -diff
+		}
+		return float64(diff) <= float64(b)*slack
+	}
+	return closeEnough(fbw, modeW) && closeEnough(fbh, modeH)
+}
+
 // isFullscreenShortcut reports whether key+mods is this platform's
 // toggle-fullscreen binding: Ctrl+Cmd+F on macOS (the system convention
 // every native macOS app answers to), F11 elsewhere (the binding shared

@@ -1198,6 +1198,32 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	}
 	wireResize(win, resizeCh, cs, cfgRef, renderFrame)
 
+	// Some kiosk compositors (observed with cage) hand the window its
+	// initial Wayland configure before the real output mode has fully
+	// settled, leaving the framebuffer a few dozen pixels short of the
+	// monitor's actual resolution — invisible as anything but a stray
+	// black strip along one edge, since GLFW's resize callback (wired
+	// just above) never fires for a window's *initial* sizing, only a
+	// later one, so that shortfall otherwise persists for the entire
+	// session. Forcing real GLFW fullscreen once here, exactly like
+	// toggleFullscreen's F11 path, re-requests the monitor's true video
+	// mode directly and corrects it — gated to a near-miss only (see
+	// nearMonitorSize) so a deliberately smaller windowed size on a
+	// normal desktop is never touched.
+	if win.GetMonitor() == nil {
+		mon := win.CurrentMonitor()
+		if mon == nil {
+			mon = glfw.GetPrimaryMonitor()
+		}
+		if mon != nil {
+			mode := mon.GetVideoMode()
+			fbw, fbh := win.FramebufferPixelSize()
+			if (fbw != mode.Width || fbh != mode.Height) && nearMonitorSize(fbw, fbh, mode.Width, mode.Height) {
+				win.SetMonitor(mon, 0, 0, mode.Width, mode.Height, mode.RefreshRate)
+			}
+		}
+	}
+
 	for !win.ShouldClose() && !closeRequested.Load() {
 		if win.GetAttrib(glfw.Iconified) == glfw.True {
 			// Truly minimized windows must not burn GPU presenting frames
