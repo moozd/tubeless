@@ -1241,6 +1241,21 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			fbw, fbh := win.FramebufferPixelSize()
 			if (fbw != mode.Width || fbh != mode.Height) && nearMonitorSize(fbw, fbh, mode.Width, mode.Height) {
 				win.SetMonitor(mon, 0, 0, mode.Width, mode.Height, mode.RefreshRate)
+				// SetMonitor only sends the request; the compositor's
+				// confirming configure (which is what actually drives
+				// wireResize's callback, wired just above) is its own
+				// round trip, same as CurrentMonitorContentScale below —
+				// without pumping events here, the loop's first frame
+				// renders before that configure ever arrives and the
+				// shortfall this block exists to fix goes uncorrected
+				// until something else (e.g. a manual F11) forces a
+				// fresh one.
+				for i := 0; i < 20; i++ {
+					glfw.WaitEventsTimeout(0.05)
+					if w, h := win.FramebufferPixelSize(); w == mode.Width && h == mode.Height {
+						break
+					}
+				}
 			}
 		}
 	}
