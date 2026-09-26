@@ -157,7 +157,7 @@ func main() {
 		return c
 	}
 
-	maxTextureSize, err := render.ProbeMaxTextureSize()
+	maxTextureSize, err := probeMaxTextureSizeWithRetry()
 	if err != nil {
 		log.Fatalf("probe GPU texture limit: %v", err)
 	}
@@ -314,6 +314,27 @@ func main() {
 	load := &fontLoad{}
 	req, res := startRebuilder(maxTextureSize, load)
 	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef, req, res, load)
+}
+
+// probeMaxTextureSizeWithRetry is render.ProbeMaxTextureSize with retries:
+// this is the first call in main that touches GLFW/EGL, and on a kiosk
+// autologin (cage on tty1) it's been observed losing a startup race
+// against wlroots' own DRM backend coming up — the compositor's Wayland
+// socket exists but isn't accepting real connections for its first
+// fraction of a second, so the very first client to exec right after
+// login can fail here once and never gets a second chance without this.
+func probeMaxTextureSizeWithRetry() (int, error) {
+	const attempts = 10
+	const delay = 300 * time.Millisecond
+	var size int
+	var err error
+	for i := 0; i < attempts; i++ {
+		if size, err = render.ProbeMaxTextureSize(); err == nil {
+			return size, nil
+		}
+		time.Sleep(delay)
+	}
+	return 0, err
 }
 
 // runUpgrade runs `tubeless upgrade`: checks GitHub for a release newer
