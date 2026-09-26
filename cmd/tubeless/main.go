@@ -1226,11 +1226,26 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	// black strip along one edge, since GLFW's resize callback (wired
 	// just above) never fires for a window's *initial* sizing, only a
 	// later one, so that shortfall otherwise persists for the entire
-	// session. Forcing real GLFW fullscreen once here, exactly like
-	// toggleFullscreen's F11 path, re-requests the monitor's true video
-	// mode directly and corrects it — gated to a near-miss only (see
+	// session. Nudging the size directly re-requests the monitor's true
+	// video mode and corrects it — gated to a near-miss only (see
 	// nearMonitorSize) so a deliberately smaller windowed size on a
 	// normal desktop is never touched.
+	//
+	// This deliberately uses SetSize, not SetMonitor — an earlier version
+	// used SetMonitor to force real GLFW fullscreen (like toggleFullscreen's
+	// F11 path), which fixed the black strip but crashed the whole process
+	// the next time the monitor's connector cycled (screen off/on: 2026-09-
+	// 26). GLFW's own monitor-disconnect handling (_glfwInputMonitor in
+	// monitor.c) automatically calls setWindowPos on every window it
+	// considers fullscreened on the monitor that just disconnected — an
+	// operation Wayland has no support for, which go-gl's wrapper turns
+	// into a panic instead of a normal error, and nothing in application
+	// code runs early enough to guard against it. cage already displays
+	// this window at full output size regardless of GLFW's own fullscreen
+	// bookkeeping, so entering that tracked state was never actually
+	// needed here — a plain resize gets the same corrected size without
+	// ever making the window "fullscreen" as GLFW itself understands it,
+	// so that disconnect handling has nothing of ours to act on.
 	if win.GetMonitor() == nil {
 		mon := win.CurrentMonitor()
 		if mon == nil {
@@ -1240,13 +1255,12 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			mode := mon.GetVideoMode()
 			fbw, fbh := win.FramebufferPixelSize()
 			if (fbw != mode.Width || fbh != mode.Height) && nearMonitorSize(fbw, fbh, mode.Width, mode.Height) {
-				// SetMonitor only sends the request; the compositor's
+				// SetSize only sends the request; the compositor's
 				// confirming configure is its own round trip, same as
 				// CurrentMonitorContentScale below — without pumping
 				// events here, the loop's first frame renders before
 				// that configure ever arrives and the shortfall this
-				// block exists to fix goes uncorrected until something
-				// else (e.g. a manual F11) forces a fresh one.
+				// block exists to fix goes uncorrected.
 				//
 				// wireResize's real callback (just above) calls
 				// renderFrame() on every resize, which is fine once the
@@ -1265,7 +1279,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 					c := cfgRef.Load()
 					pushResizeSize(resizeCh, cs, width, height, c.CRT.AspectRatio, c.Padding.Size)
 				})
-				win.SetMonitor(mon, 0, 0, mode.Width, mode.Height, mode.RefreshRate)
+				win.SetSize(mode.Width, mode.Height)
 				for i := 0; i < 20; i++ {
 					glfw.WaitEventsTimeout(0.05)
 					if w, h := win.FramebufferPixelSize(); w == mode.Width && h == mode.Height {
