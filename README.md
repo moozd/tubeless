@@ -150,11 +150,33 @@ tubeless --font="JetBrains Mono" --font-size=16
 tubeless --shell=/path/to/program
 tubeless config           # open the in-terminal settings UI
 tubeless upgrade          # check GitHub for a newer release, install it, and restart
+tubeless ssh-integration install   # make ssh from inside tubeless forward its terminfo (see below)
 tubeless --version        # print the build version
 ```
 
 See [docs/config.md](docs/config.md) for the full config file
 reference — every theme, preset, and TOML key.
+
+### SSH to remote hosts
+
+A tubeless session runs with `TERM=tubeless`, a terminfo entry that only
+exists on this machine. `ssh` forwards that TERM name to the remote but
+not the entry itself, so without help every ncurses app on the remote
+(neovim, less, htop) fails with an unknown terminal type.
+
+`install.sh` and `make install-darwin` already take care of this. If you
+installed some other way, run once:
+
+```sh
+tubeless ssh-integration install   # adds a managed block to ~/.ssh/config
+tubeless ssh-integration status
+tubeless ssh-integration remove
+```
+
+The block only matches sessions started from inside tubeless, and on
+first connect compiles the entry into the remote's `~/.terminfo` before
+handing off to your login shell. The remote needs `tic` and `base64`,
+which ncurses and coreutils provide on every mainstream distro.
 
 ## License
 

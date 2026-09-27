@@ -64,8 +64,10 @@ help:
 	@echo "                        tubeless-config into \$$CLI_BIN_DIR (default"
 	@echo "                        $(CLI_BIN_DIR)) so they run from any Terminal"
 	@echo "                        shell, not just Finder"
+	@echo "                        and adds the ssh-integration block to ~/.ssh/config"
 	@echo "  make uninstall-darwin - Remove the installed Tubeless.app bundle"
 	@echo "                        and its \$$CLI_BIN_DIR symlinks."
+	@echo "                        and the ssh-integration block from ~/.ssh/config."
 	@echo "  make package-linux  - Build for the host arch (override with"
 	@echo "                        GOARCH_TARGET=amd64|arm64) and package as"
 	@echo "                        .deb/.rpm/Arch pkg (via nfpm) + .tar.gz into dist/"
@@ -157,6 +159,8 @@ install-linux: tubeless tubeless-config
 	    gtk-update-icon-cache -f -t $(PREFIX)/share/icons/hicolor 2>/dev/null || true
 	@echo "Installed $(BINARY_NAME) + tubeless-config to $(BIN_INSTALL_DIR)"
 	@echo "Installed desktop entry to $(DESKTOP_DIR)/tubeless.desktop"
+	@echo "Now run, as your own user (not via sudo): tubeless ssh-integration install"
+	@echo "  so ssh from inside tubeless forwards its terminfo entry to remote hosts."
 	@echo "Your config at ~/.config/tubeless/config.toml is untouched."
 
 uninstall-linux:
@@ -209,10 +213,12 @@ install-darwin: tubeless tubeless-config $(ICNS)
 	codesign --force --deep --sign - $(APP_BUNDLE)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME) $(CLI_BIN_DIR)/$(BINARY_NAME)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/tubeless-config $(CLI_BIN_DIR)/tubeless-config
+	$(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME) ssh-integration install
 	@grep -qs '$(CLI_BIN_DIR)' $(HOME)/.zprofile 2>/dev/null || \
 	    printf '\n# Added by tubeless'"'"'s install-darwin\nexport PATH="$(CLI_BIN_DIR):$$PATH"\n' >> $(HOME)/.zprofile
 	@echo "Installed $(APP_BUNDLE)"
 	@echo "Symlinked $(BINARY_NAME) + tubeless-config into $(CLI_BIN_DIR)"
+	@echo "Added tubeless's ssh block to ~/.ssh/config so ssh from inside tubeless forwards its terminfo (remove with: tubeless ssh-integration remove)"
 	@echo "Added $(CLI_BIN_DIR) to PATH in ~/.zprofile if it wasn't already there — open a new terminal (or run: source ~/.zprofile)"
 	@echo "Your config at ~/.config/tubeless/config.toml is untouched."
 
@@ -223,6 +229,7 @@ $(ICNS): packaging/icon.svg packaging/darwin/make-icns.sh
 	packaging/darwin/make-icns.sh
 
 uninstall-darwin:
+	-$(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME) ssh-integration remove
 	rm -rf $(APP_BUNDLE)
 	rm -f $(CLI_BIN_DIR)/$(BINARY_NAME) $(CLI_BIN_DIR)/tubeless-config
 	@echo "Removed $(APP_BUNDLE) and its $(CLI_BIN_DIR) symlinks."

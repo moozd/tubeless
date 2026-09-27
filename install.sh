@@ -103,6 +103,17 @@ get_asset() {
 	fi
 }
 
+# install_ssh_integration adds tubeless's managed block to ~/.ssh/config
+# so plain `ssh` from inside a tubeless session carries its own terminfo
+# entry to the remote host. Without it the remote sees TERM=tubeless but
+# has no entry for it, and every ncurses app there fails. Always runs as
+# the invoking user, never under sudo, so it lands in your ~/.ssh/config
+# rather than root's.
+install_ssh_integration() {
+	local bin=$1
+	"$bin" ssh-integration install
+}
+
 install_darwin() {
 	local zip
 	zip=$(get_asset "darwin-$arch.zip")
@@ -124,6 +135,7 @@ install_darwin() {
 	mkdir -p "$bin_dir"
 	ln -sf "$bundle/tubeless" "$bin_dir/tubeless"
 	ln -sf "$bundle/tubeless-config" "$bin_dir/tubeless-config"
+	install_ssh_integration "$bin_dir/tubeless"
 	if ! grep -qs "$bin_dir" "$HOME/.zprofile" 2>/dev/null; then
 		printf '\n# Added by tubeless install.sh\nexport PATH="%s:$PATH"\n' "$bin_dir" >>"$HOME/.zprofile"
 		echo "Added $bin_dir to PATH in ~/.zprofile — open a new terminal (or run: source ~/.zprofile)"
@@ -132,6 +144,7 @@ install_darwin() {
 }
 
 install_linux() {
+	local bin=tubeless
 	local id="" id_like=""
 	if [ -r /etc/os-release ]; then
 		. /etc/os-release
@@ -160,8 +173,10 @@ install_linux() {
 		local dest="$HOME/.local"
 		mkdir -p "$dest"
 		tar -C "$dest" -xzf "$tarball"
+		bin="$dest/bin/tubeless"
 		echo "Installed into $dest/bin — make sure that's on your PATH."
 	fi
+	install_ssh_integration "$bin"
 }
 
 case "$os" in
