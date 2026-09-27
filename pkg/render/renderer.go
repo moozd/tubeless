@@ -97,6 +97,16 @@ type Renderer struct {
 	// loading is the current in-progress overlay state (see SetLoading);
 	// when Active, RenderEffects draws the modal over the frame.
 	loading Loading
+
+	// openTex is the live texture a `tubeless open` embedded app's frame
+	// is drawn into (see OpenTexture) — created lazily on first use via
+	// OpenTexture(). openActive gates RenderScene between the normal
+	// terminal grid and this texture full-bleed (see SetOpenActive), and
+	// RenderEffects between the animated tubeless cursor and none at all
+	// (an embedded app's own cursor is whatever wayvnc's --render-cursor
+	// baked into the captured pixels, not something this renderer draws).
+	openTex    *OpenTexture
+	openActive bool
 }
 
 // Cursor glide tuning: UpdateCursor's exponential-approach rate (per
@@ -228,6 +238,10 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	scene := r.sceneFBO
 	scene.Resize(outW, outH)
 	scene.ClearOpaque()
+	if r.openActive && r.openTex != nil {
+		r.imagePass.DrawTex(scene, r.openTex.tex, 0, 0, float32(outW), float32(outH))
+		return
+	}
 	if cfg.TrueColor {
 		r.cellPass.DrawAmbientBG(scene, outW, outH, cfg.Colors.DefaultBg)
 	}
@@ -443,7 +457,17 @@ func (r *Renderer) RenderEffects(boxW, boxH, outW, outH int, cfg config.Config, 
 	}
 	tailLenPx := morph * cfg.Cursor.Trail.Size * cursorTrailMaxCells * (r.cellW + r.cellH) * 0.5
 
-	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, boxW, boxH, bright, morph, tailPxX, tailPxY, tailLenPx, r.sceneFBO.tex, cfg)
+	if r.openActive {
+		// An embedded app's own cursor is whatever wayvnc's
+		// --render-cursor baked into the captured pixels — this
+		// renderer's animated glow/trail has no meaningful position to
+		// track in open mode, so it's skipped entirely rather than
+		// drawing a stray glow over unrelated app content. cursorFBO
+		// still needs *some* content for InsetPass's sample below.
+		r.cursorFBO.Clear()
+	} else {
+		r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, boxW, boxH, bright, morph, tailPxX, tailPxY, tailLenPx, r.sceneFBO.tex, cfg)
+	}
 
 	sceneTex := r.sceneFBO.tex
 	if decaySeconds := cfg.CRT.PhosphorDecay.DecaySeconds; decaySeconds > 0 {
@@ -463,6 +487,25 @@ func (r *Renderer) RenderEffects(boxW, boxH, outW, outH int, cfg config.Config, 
 // indeterminate/empty bar).
 func (r *Renderer) SetLoading(l Loading) {
 	r.loading = l
+}
+
+// OpenTexture returns the renderer's live embedded-app texture, creating
+// it (with no backing storage yet — see OpenTexture.Resize) on first use.
+// Safe to call only from the render thread, same as every other Renderer
+// method.
+func (r *Renderer) OpenTexture() *OpenTexture {
+	if r.openTex == nil {
+		r.openTex = NewOpenTexture()
+	}
+	return r.openTex
+}
+
+// SetOpenActive switches RenderScene/RenderEffects between the normal
+// terminal grid (false) and the embedded `tubeless open` app's live
+// texture full-bleed (true) — see RenderScene and RenderEffects' own
+// handling of openActive.
+func (r *Renderer) SetOpenActive(active bool) {
+	r.openActive = active
 }
 
 // drawOverlay renders the loading modal over the just-composited frame: a dim

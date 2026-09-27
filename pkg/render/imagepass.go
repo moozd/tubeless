@@ -90,3 +90,30 @@ func (p *ImagePass) Draw(fbo *FBO, images []screen.PlacedImage, cellW, cellH flo
 	gl.Disable(gl.BLEND)
 	fbo.Unbind()
 }
+
+// DrawTex draws one arbitrary GL texture at pos/size in fbo — unlike Draw,
+// which blits Screen's own list of placed sixel images, this is for a
+// single live texture spanning a caller-chosen rect (an embedded `tubeless
+// open` app's live frame — see OpenTexture and Renderer's open-mode
+// fields). No blending: the embedded app's frame is opaque and meant to
+// fully replace whatever's beneath it, not composite over it.
+func (p *ImagePass) DrawTex(fbo *FBO, tex uint32, x, y, w, h float32) {
+	fbo.Bind()
+	gl.UseProgram(p.prog)
+	gl.BindVertexArray(p.vao)
+
+	uScreen := gl.GetUniformLocation(p.prog, gl.Str("uScreenSize\x00"))
+	uPos := gl.GetUniformLocation(p.prog, gl.Str("uPos\x00"))
+	uSize := gl.GetUniformLocation(p.prog, gl.Str("uSize\x00"))
+	uImage := gl.GetUniformLocation(p.prog, gl.Str("uImage\x00"))
+	gl.Uniform2f(uScreen, float32(fbo.W), float32(fbo.H))
+	gl.Uniform1i(uImage, 0)
+	gl.ActiveTexture(gl.TEXTURE0)
+	gl.BindTexture(gl.TEXTURE_2D, tex)
+	gl.Uniform2f(uPos, x, y)
+	gl.Uniform2f(uSize, w, h)
+	gl.DrawArrays(gl.TRIANGLES, 0, 6)
+
+	gl.BindVertexArray(0)
+	fbo.Unbind()
+}
