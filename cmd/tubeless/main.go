@@ -105,6 +105,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
 		runUpgrade()
 	}
+	if len(os.Args) > 1 && os.Args[1] == "open" {
+		runOpen(os.Args[2:])
+	}
 
 	// Registered before anything else — critically, before any cgo call
 	// (font.Build's FreeType binding is the first one below). Something
@@ -180,7 +183,25 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	sess := startShell(*shell, cfg.Shell.Program)
+	// openSrv is the control socket `tubeless open <app_cmd>` connects to
+	// from inside this window's shell (see pkg/openproto and
+	// openserver.go) — its path is exported to the shell as TUBELESS_CTL,
+	// the same way TERM=tubeless itself is exported (see ptyio.Start).
+	// A bind failure only disables that one feature, never the terminal
+	// itself: activeOpen still exists but never has anything active, so
+	// wireMouse/wireInput/runLoop's checks below are unconditionally safe.
+	activeOpen := &atomic.Pointer[openSession]{}
+	var openExtraEnv []string
+	openSrv, err := listenOpenServer(openControlSocketPath())
+	if err != nil {
+		log.Printf("tubeless open support disabled: %v", err)
+	} else {
+		defer openSrv.Close()
+		activeOpen = &openSrv.active
+		openExtraEnv = []string{"TUBELESS_CTL=" + openSrv.path}
+	}
+
+	sess := startShell(*shell, cfg.Shell.Program, openExtraEnv...)
 	ref := newSessionRef(sess)
 	defer ref.Close()
 	// log.Fatalf calls os.Exit internally, which would skip the deferred
@@ -213,7 +234,7 @@ func main() {
 			if !ok {
 				return nil, false
 			}
-			s, err := ptyio.Start(name, args, cols, rows)
+			s, err := ptyio.Start(name, args, cols, rows, openExtraEnv...)
 			if err != nil {
 				log.Printf("restart tmux: %v", err)
 				return nil, false
@@ -299,9 +320,9 @@ func main() {
 	sel := &render.Selection{}
 	fontZoom := make(chan int, 16)
 	fsState := &fullscreenState{}
-	wireInput(win, ref, &shared, sel, fontZoom, fsState)
+	wireInput(win, ref, &shared, sel, fontZoom, fsState, activeOpen)
 	scroll := &scrollState{}
-	wireMouse(win, ref, &shared, scroll, cs, &cfgRef, sel)
+	wireMouse(win, ref, &shared, scroll, cs, &cfgRef, sel, activeOpen)
 
 	// focused tracks real window focus, read/written only from this
 	// locked OS thread (see runLoop's visibility gate) — no
@@ -313,7 +334,7 @@ func main() {
 
 	load := &fontLoad{}
 	req, res := startRebuilder(maxTextureSize, load)
-	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef, req, res, load)
+	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef, req, res, load, activeOpen)
 }
 
 // probeMaxTextureSizeWithRetry is render.ProbeMaxTextureSize with retries:
@@ -754,13 +775,17 @@ func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
 // drag ends and the main loop finally redraws at the settled size.
 // Rendering here too means every intermediate size gets a real,
 // correctly-proportioned frame instead.
-func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config], renderFrame func()) {
+func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config], activeOpen *atomic.Pointer[openSession], renderFrame func()) {
 	win.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
 		lw, lh := win.GetSize()
 		sx, sy := win.CurrentMonitorContentScale()
 		log.Printf("debug resize: fb=%dx%d logical=%dx%d contentScale=%.4fx%.4f cellPx=%.4fx%.4f", width, height, lw, lh, sx, sy, cs.w, cs.h)
 		c := cfgRef.Load()
 		pushResizeSize(resizeCh, cs, width, height, c.CRT.AspectRatio, c.Padding.Size)
+		if sess := activeOpen.Load(); sess != nil {
+			_, _, bw, bh := render.LetterboxBox(c.CRT.AspectRatio, width, height)
+			sess.SendResize(bw, bh)
+		}
 		renderFrame()
 	})
 }
@@ -820,12 +845,12 @@ func windowTitle(appTitle string) string {
 	return "tubeless"
 }
 
-func startShell(shell, shellProgram string) *ptyio.Session {
+func startShell(shell, shellProgram string, extraEnv ...string) *ptyio.Session {
 	name, args := shellCommand(shell, shellProgram)
 	if name == "" {
 		name = "/bin/sh"
 	}
-	sess, err := ptyio.Start(name, args, cols, rows)
+	sess, err := ptyio.Start(name, args, cols, rows, extraEnv...)
 	if err != nil {
 		log.Fatalf("start shell: %v", err)
 	}
@@ -1122,6 +1147,40 @@ func pumpEvents(fn func()) {
 	fn()
 }
 
+// drainOpenUpdates applies every pixel/resize update queued for sess
+// (see openServer.handle) onto renderer's OpenTexture, returning whether
+// anything was actually applied — the caller folds that into its own
+// per-frame dirty check, since a new embedded-app frame arriving is just
+// as much a reason to redraw as the terminal's own screen changing.
+// sess == nil (no active session) is a no-op. Must run on the render
+// thread — GL calls (via OpenTexture) aren't safe from anywhere else.
+func drainOpenUpdates(sess *openSession, r *render.Renderer) bool {
+	if sess == nil {
+		return false
+	}
+	dirty := false
+	tex := r.OpenTexture()
+	for {
+		select {
+		case u := <-sess.updates:
+			dirty = true
+			if u.resize {
+				tex.Resize(u.w, u.h)
+				continue
+			}
+			if tex.Width() < u.x+u.w || tex.Height() < u.y+u.h {
+				// A pixel patch arrived before any explicit Resize
+				// notification sized the texture — grow it to at least
+				// cover this patch rather than dropping pixels silently.
+				tex.Resize(max(tex.Width(), u.x+u.w), max(tex.Height(), u.y+u.h))
+			}
+			tex.UpdateRect(u.x, u.y, u.w, u.h, u.pix)
+		default:
+			return dirty
+		}
+	}
+}
+
 // runLoop drives a continuous, vsync-paced render so the cursor can
 // animate in real time. The scene (cell buffers + shape blur) is
 // dirty-gated — it only rebuilds when the published Screen changed or the
@@ -1134,7 +1193,7 @@ func pumpEvents(fn func()) {
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config], req chan fontBuildReq, res chan fontBuildResult, load *fontLoad) {
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config], req chan fontBuildReq, res chan fontBuildResult, load *fontLoad, activeOpen *atomic.Pointer[openSession]) {
 	r := renderer
 	var lastScr *screen.Screen
 	lastTitle := windowTitle("")
@@ -1149,6 +1208,13 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	// very first iteration, regardless of whatever focus state the
 	// window happened to open in.
 	lastFocused := !*focused
+	// lastOpenActive tracks whether a `tubeless open` session was active
+	// on the previous frame, purely to force one extra dirty frame the
+	// moment a session starts or ends — a session ending doesn't
+	// otherwise guarantee scr != lastScr in that exact frame, which would
+	// leave the last embedded-app frame frozen on screen instead of
+	// falling back to the live terminal grid immediately.
+	lastOpenActive := false
 	// reqDpiX/reqDpiY remember the scale the newest font build was
 	// *requested* for. cs.dpiX/dpiY only catch up once that build lands and
 	// installs, so comparing the monitor's scale against cs below would
@@ -1213,7 +1279,15 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 				lastTitle = title
 			}
 		}
-		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
+		sess := activeOpen.Load()
+		r.SetOpenActive(sess != nil)
+		openDirty := drainOpenUpdates(sess, r)
+		if (sess != nil) != lastOpenActive {
+			lastOpenActive = sess != nil
+			openDirty = true
+		}
+
+		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload || openDirty
 		reload = false
 
 		// Computed every frame, not just when dirty — RenderEffects below
@@ -1235,7 +1309,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		win.SwapBuffers()
 		lastScr, lastW, lastH, lastScrollLine, lastSel = scr, w, h, scrollLine, *sel
 	}
-	wireResize(win, resizeCh, cs, cfgRef, renderFrame)
+	wireResize(win, resizeCh, cs, cfgRef, activeOpen, renderFrame)
 
 	// Some kiosk compositors (observed with cage) hand the window its
 	// initial Wayland configure before the real output mode has fully
@@ -1304,7 +1378,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 						break
 					}
 				}
-				wireResize(win, resizeCh, cs, cfgRef, renderFrame)
+				wireResize(win, resizeCh, cs, cfgRef, activeOpen, renderFrame)
 			}
 		}
 	}

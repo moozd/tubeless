@@ -7,6 +7,7 @@ import (
 	"github.com/go-gl/glfw/v3.4/glfw"
 
 	"github.com/moozd/tubeless/pkg/config"
+	"github.com/moozd/tubeless/pkg/openproto"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
 )
@@ -52,10 +53,15 @@ type mouseState struct {
 // of local selection/scroll vs. VT reporting applies is decided per-event
 // from the latest published Screen's MouseMode: an app that wants mouse
 // events gets them instead of the terminal handling clicks/wheel itself.
-func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection) {
+func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection, activeOpen *atomic.Pointer[openSession]) {
 	ms := &mouseState{sel: sel}
 
 	win.SetScrollCallback(func(_ *glfw.Window, _, yoff float64) {
+		if os := activeOpen.Load(); os != nil {
+			x, y := openPixelAt(win, cs, cfgRef.Load().CRT.AspectRatio, os)
+			os.SendInput(openproto.InputEvent{Kind: openproto.InputPointerScroll, X: x, Y: y, Scroll: int(yoff * linesPerNotch)})
+			return
+		}
 		scr := shared.Load()
 		if scr.MouseMode != screen.MouseOff {
 			btn := screen.MouseWheelDown
@@ -80,6 +86,11 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 
 	win.SetMouseButtonCallback(func(_ *glfw.Window, button glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
 		if button != glfw.MouseButtonLeft && button != glfw.MouseButtonMiddle && button != glfw.MouseButtonRight {
+			return
+		}
+		if os := activeOpen.Load(); os != nil {
+			x, y := openPixelAt(win, cs, cfgRef.Load().CRT.AspectRatio, os)
+			os.SendInput(openproto.InputEvent{Kind: openproto.InputPointerButton, X: x, Y: y, Button: openPointerButton(button), Pressed: action == glfw.Press})
 			return
 		}
 		scr := shared.Load()
@@ -132,6 +143,11 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 		// dedup below, since a still mouse re-entering the same cell
 		// shouldn't need to move first to reappear.
 		win.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+		if os := activeOpen.Load(); os != nil {
+			x, y := openPixelFromPixels(win, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio, os)
+			os.SendInput(openproto.InputEvent{Kind: openproto.InputPointerMove, X: x, Y: y})
+			return
+		}
 		scr := shared.Load()
 		x, y := cellFromPixels(win, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio, scr.Cols, scr.Rows)
 		x, y = clampCell(scr, x, y)
@@ -243,6 +259,57 @@ func cellFromFramebufferPixels(px, py float32, w, h int, cs *cellSize, ar config
 	x = int(px / cs.w)
 	y = int(py / cs.h)
 	return max(0, x), max(0, y)
+}
+
+// openPointerButton maps a GLFW mouse button to openproto's own
+// X11/xterm-numbered button enum — same convention as sgrButton, just a
+// different destination type.
+func openPointerButton(b glfw.MouseButton) openproto.PointerButton {
+	switch b {
+	case glfw.MouseButtonMiddle:
+		return openproto.PointerMiddle
+	case glfw.MouseButtonRight:
+		return openproto.PointerRight
+	default:
+		return openproto.PointerLeft
+	}
+}
+
+// openPixelAt is openPixelFromPixels for the cursor's current position —
+// used by callbacks (scroll, button press/release) that don't already
+// have a fresh xpos/ypos the way the cursor-position callback does.
+func openPixelAt(win *render.Window, cs *cellSize, ar config.AspectRatio, os *openSession) (x, y int) {
+	xpos, ypos := win.GetCursorPos()
+	return openPixelFromPixels(win, xpos, ypos, cs, ar, os)
+}
+
+// openPixelFromPixels converts a GLFW cursor position into a pixel
+// coordinate in the embedded app's own framebuffer space — the open-mode
+// counterpart to cellFromPixels, which targets a character cell instead.
+func openPixelFromPixels(win *render.Window, xpos, ypos float64, cs *cellSize, ar config.AspectRatio, os *openSession) (x, y int) {
+	w, h := win.FramebufferPixelSize()
+	return openPixelFromFramebufferPixels(float32(xpos)*cs.dpiX, float32(ypos)*cs.dpiY, w, h, ar, int(os.w.Load()), int(os.h.Load()))
+}
+
+// openPixelFromFramebufferPixels maps a window framebuffer pixel position
+// into the embedded app's own (openW, openH) pixel space: the open
+// texture fills the whole letterboxed content box edge to edge (no
+// per-cell grid centering the way cellFromFramebufferPixels has to
+// account for — see its own doc comment on GridOffset), so this is just
+// the box-relative fraction scaled by the embedded framebuffer's size.
+func openPixelFromFramebufferPixels(px, py float32, w, h int, ar config.AspectRatio, openW, openH int) (x, y int) {
+	if openW <= 0 || openH <= 0 {
+		return 0, 0
+	}
+	bx, by, bw, bh := render.LetterboxBox(ar, w, h)
+	if bw <= 0 || bh <= 0 {
+		return 0, 0
+	}
+	rx := clampFloat32(px-float32(bx), 0, float32(max(bw-1, 0)))
+	ry := clampFloat32(py-float32(by), 0, float32(max(bh-1, 0)))
+	x = int(rx / float32(bw) * float32(openW))
+	y = int(ry / float32(bh) * float32(openH))
+	return clampInt(x, 0, max(openW-1, 0)), clampInt(y, 0, max(openH-1, 0))
 }
 
 func clampCell(scr *screen.Screen, x, y int) (int, int) {
