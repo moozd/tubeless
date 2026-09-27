@@ -108,6 +108,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "open" {
 		runOpen(os.Args[2:])
 	}
+	if len(os.Args) > 1 && os.Args[1] == "ssh-integration" {
+		runSSHIntegration(os.Args[2:])
+	}
 
 	// Registered before anything else — critically, before any cgo call
 	// (font.Build's FreeType binding is the first one below). Something

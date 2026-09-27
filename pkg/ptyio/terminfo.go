@@ -83,6 +83,20 @@ func setupTerminfo() (term string, extraEnv []string) {
 	return terminfoTerm, []string{"TERMINFO_DIRS=" + dir + ":"}
 }
 
+// TerminfoSource returns the same embedded terminfo text setupTerminfo
+// compiles locally — exported for cmd/tubeless's ssh-integration
+// subcommand, which ships this source to remote hosts so TERM=tubeless
+// resolves there too instead of only inside this process's own session.
+func TerminfoSource() []byte {
+	return tubelessTerminfoSource
+}
+
+// TerminfoTerm is the TERM name tubeless sessions use — exported for the
+// same reason as TerminfoSource.
+func TerminfoTerm() string {
+	return terminfoTerm
+}
+
 func terminfoCacheDir() (string, error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
