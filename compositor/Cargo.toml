@@ -1,0 +1,8 @@
+[package]
+name = "tubeless-wm"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+smithay = { version = "0.7", default-features = false, features = ["wayland_frontend"] }
+rustix = { version = "1", features = ["net", "fs", "mm", "process"] }
