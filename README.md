@@ -79,8 +79,8 @@ install from a build you made yourself (see below).
 
 ## Build from source
 
-Requires Go 1.21+ and a C toolchain (cgo bindings to GLFW, FreeType, and
-HarfBuzz). On macOS, GLFW's Cocoa backend needs to build on an actual
+Requires Go 1.21+, a C toolchain (cgo bindings to GLFW, FreeType, and
+HarfBuzz), and on Linux a Rust toolchain (`cargo`) for `tubeless-wm`. On macOS, GLFW's Cocoa backend needs to build on an actual
 Mac — it can't be cross-compiled from Linux.
 
 Install the build dependencies for your OS:
@@ -158,6 +158,32 @@ tubeless --version        # print the build version
 
 See [docs/config.md](docs/config.md) for the full config file
 reference — every theme, preset, and TOML key.
+
+### GUI apps in tmux panes
+
+Inside tmux, tubeless can run a real GUI app in a pane or popup, with
+no VNC or remote-desktop layer: each app runs under its own tiny Wayland
+compositor (`tubeless-wm`, built from `compositor/`) and tubeless paints
+its frames with OpenGL over the pane's cells. tmux keeps doing layout,
+focus, zoom, resize, kill and popups.
+
+```sh
+tubeless open foot                # run an app in the current pane
+tubeless open                     # pick an installed app (fuzzy search)
+tubeless popup                    # the same picker, in a centered tmux popup
+tmux split-window -h 'tubeless open google-chrome-stable'
+```
+
+A suggested binding for a cmd+space style launcher, in `tmux.conf`:
+
+```
+bind Space run-shell 'tubeless popup'
+```
+
+Linux only (Wayland apps). Keys reach the app through the pane, so the
+tmux prefix keeps working; set `focus-events on` and `extended-keys on`
+in tmux for focus and modified keys. Needs `tubeless-wm` next to the
+`tubeless` binary (`make build` builds both; it needs `cargo`).
 
 ### SSH to remote hosts
 
