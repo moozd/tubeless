@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-gl/glfw/v3.4/glfw"
 
-	"github.com/moozd/tubeless/pkg/openproto"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
 )
@@ -88,22 +87,14 @@ func keyboardModeOf(scr *screen.Screen) keyboardMode {
 	return keyboardMode{modifyOtherKeys: scr.ModifyOtherKeys, kittyFlags: scr.KittyFlags()}
 }
 
-func wireInput(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], sel *render.Selection, fontZoom chan<- int, fs *fullscreenState, activeOpen *atomic.Pointer[openSession]) {
+func wireInput(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], sel *render.Selection, fontZoom chan<- int, fs *fullscreenState) {
 	win.SetCharModsCallback(func(_ *glfw.Window, r rune, mods glfw.ModifierKey) {
 		win.SetInputMode(glfw.CursorMode, glfw.CursorHidden)
-		if os := activeOpen.Load(); os != nil {
-			sendOpenChar(os, r)
-			return
-		}
 		handleChar(sess, r, mods, keyboardModeOf(shared.Load()))
 	})
 	win.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, _ int, action glfw.Action, mods glfw.ModifierKey) {
 		if action == glfw.Press || action == glfw.Repeat {
 			win.SetInputMode(glfw.CursorMode, glfw.CursorHidden)
-		}
-		if os := activeOpen.Load(); os != nil {
-			handleOpenKey(os, key, action, mods)
-			return
 		}
 		scr := shared.Load()
 		mode := keyboardModeOf(scr)
@@ -527,95 +518,6 @@ func encodeTildeKey(num int, mods glfw.ModifierKey) []byte {
 		return fmt.Appendf(nil, "\x1b[%d;%d~", num, n)
 	}
 	return fmt.Appendf(nil, "\x1b[%d~", num)
-}
-
-// openModifierKeys maps GLFW's modifier keys to their own X11-keysym-
-// backed KeyCode (see pkg/openproto.KeyCode) — RFB's KeyEvent has no
-// modifier-flags field of its own; a real key's modifiers only reach the
-// embedded app if the modifier keys' own press/release events are
-// forwarded too, bracketing whatever key comes between them, exactly as
-// a real keyboard would report them.
-var openModifierKeys = map[glfw.Key]openproto.KeyCode{
-	glfw.KeyLeftControl:  openproto.KeyControlL,
-	glfw.KeyRightControl: openproto.KeyControlR,
-	glfw.KeyLeftShift:    openproto.KeyShiftL,
-	glfw.KeyRightShift:   openproto.KeyShiftR,
-	glfw.KeyLeftAlt:      openproto.KeyAltL,
-	glfw.KeyRightAlt:     openproto.KeyAltR,
-	glfw.KeyLeftSuper:    openproto.KeySuperL,
-	glfw.KeyRightSuper:   openproto.KeySuperR,
-}
-
-// openSpecialKeys maps every non-printable key input.go's legacy encoding
-// already special-cases (plainKeys/cursorKey/fnKey/tildeKey combined) to
-// its own KeyCode for the open-mode takeover path.
-var openSpecialKeys = map[glfw.Key]openproto.KeyCode{
-	glfw.KeyEnter:     openproto.KeyReturn,
-	glfw.KeyBackspace: openproto.KeyBackspace,
-	glfw.KeyEscape:    openproto.KeyEscape,
-	glfw.KeyTab:       openproto.KeyTab,
-	glfw.KeyDelete:    openproto.KeyDelete,
-	glfw.KeyHome:      openproto.KeyHome,
-	glfw.KeyEnd:       openproto.KeyEnd,
-	glfw.KeyLeft:      openproto.KeyLeft,
-	glfw.KeyRight:     openproto.KeyRight,
-	glfw.KeyUp:        openproto.KeyUp,
-	glfw.KeyDown:      openproto.KeyDown,
-	glfw.KeyPageUp:    openproto.KeyPageUp,
-	glfw.KeyPageDown:  openproto.KeyPageDown,
-	glfw.KeyInsert:    openproto.KeyInsert,
-	glfw.KeyF1:        openproto.KeyF1,
-	glfw.KeyF2:        openproto.KeyF2,
-	glfw.KeyF3:        openproto.KeyF3,
-	glfw.KeyF4:        openproto.KeyF4,
-	glfw.KeyF5:        openproto.KeyF5,
-	glfw.KeyF6:        openproto.KeyF6,
-	glfw.KeyF7:        openproto.KeyF7,
-	glfw.KeyF8:        openproto.KeyF8,
-	glfw.KeyF9:        openproto.KeyF9,
-	glfw.KeyF10:       openproto.KeyF10,
-	glfw.KeyF11:       openproto.KeyF11,
-	glfw.KeyF12:       openproto.KeyF12,
-}
-
-// sendOpenChar forwards a printable character from SetCharModsCallback as
-// a tap (down immediately followed by up) — the standard way a VNC client
-// synthesizes typed text, since char-mods itself carries no press/release
-// distinction of its own.
-func sendOpenChar(os *openSession, r rune) {
-	os.SendInput(openproto.InputEvent{Kind: openproto.InputKey, Rune: r, Pressed: true})
-	os.SendInput(openproto.InputEvent{Kind: openproto.InputKey, Rune: r, Pressed: false})
-}
-
-// handleOpenKey forwards a non-character key event to an active `tubeless
-// open` session. Modifier keys and non-printable keys forward their real
-// press/release (see openModifierKeys/openSpecialKeys above); an ordinary
-// printable key is otherwise left entirely to sendOpenChar — forwarding
-// it here too would double every keystroke — except when Ctrl is held,
-// since GLFW never fires the char-mods callback for a Ctrl combination at
-// all (mirrors handleChar/handleSpecialKey's own legacy-encoding split).
-func handleOpenKey(os *openSession, key glfw.Key, action glfw.Action, mods glfw.ModifierKey) {
-	if action != glfw.Press && action != glfw.Release && action != glfw.Repeat {
-		return
-	}
-	down := action == glfw.Press || action == glfw.Repeat
-
-	if code, ok := openModifierKeys[key]; ok {
-		if action == glfw.Repeat {
-			return // already down; nothing changed
-		}
-		os.SendInput(openproto.InputEvent{Kind: openproto.InputKey, Code: code, Pressed: down})
-		return
-	}
-	if code, ok := openSpecialKeys[key]; ok {
-		os.SendInput(openproto.InputEvent{Kind: openproto.InputKey, Code: code, Pressed: down})
-		return
-	}
-	if mods&glfw.ModControl != 0 {
-		if r, ok := baseRune(key); ok {
-			os.SendInput(openproto.InputEvent{Kind: openproto.InputKey, Rune: r, Pressed: down})
-		}
-	}
 }
 
 // pasteFromClipboard writes the system clipboard's text into the PTY,

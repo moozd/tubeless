@@ -231,7 +231,7 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, rx, ry, rw, rh, fg, [4]float32{})
 				continue
 			}
-			if cell.Rune == ' ' {
+			if cell.Rune == ' ' || cell.Rune == screen.SlotRune {
 				continue
 			}
 			if font.IsShapeRune(cell.Rune) {

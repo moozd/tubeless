@@ -76,6 +76,8 @@ func (p *ImagePass) Draw(fbo *FBO, images []screen.PlacedImage, cellW, cellH flo
 	uImage := gl.GetUniformLocation(p.prog, gl.Str("uImage\x00"))
 	gl.Uniform2f(uScreen, screenW, screenH)
 	gl.Uniform1i(uImage, 0)
+	gl.Uniform2f(gl.GetUniformLocation(p.prog, gl.Str("uUVPos\x00")), 0, 0)
+	gl.Uniform2f(gl.GetUniformLocation(p.prog, gl.Str("uUVSize\x00")), 1, 1)
 	gl.ActiveTexture(gl.TEXTURE0)
 
 	for _, pi := range images {
@@ -91,28 +93,35 @@ func (p *ImagePass) Draw(fbo *FBO, images []screen.PlacedImage, cellW, cellH flo
 	fbo.Unbind()
 }
 
-// DrawTex draws one arbitrary GL texture at pos/size in fbo — unlike Draw,
-// which blits Screen's own list of placed sixel images, this is for a
-// single live texture spanning a caller-chosen rect (an embedded `tubeless
-// open` app's live frame — see OpenTexture and Renderer's open-mode
-// fields). No blending: the embedded app's frame is opaque and meant to
-// fully replace whatever's beneath it, not composite over it.
-func (p *ImagePass) DrawTex(fbo *FBO, tex uint32, x, y, w, h float32) {
+// DrawSlots paints each span's part of its app's texture over the cells
+// it covers. Opaque: an app's frame replaces whatever is beneath it.
+func (p *ImagePass) DrawSlots(fbo *FBO, spans []SlotSpan, tex map[int]*SlotTexture, cellW, cellH float32) {
+	if len(spans) == 0 {
+		return
+	}
 	fbo.Bind()
 	gl.UseProgram(p.prog)
 	gl.BindVertexArray(p.vao)
-
-	uScreen := gl.GetUniformLocation(p.prog, gl.Str("uScreenSize\x00"))
+	gl.Uniform2f(gl.GetUniformLocation(p.prog, gl.Str("uScreenSize\x00")), float32(fbo.W), float32(fbo.H))
+	gl.Uniform1i(gl.GetUniformLocation(p.prog, gl.Str("uImage\x00")), 0)
+	gl.ActiveTexture(gl.TEXTURE0)
 	uPos := gl.GetUniformLocation(p.prog, gl.Str("uPos\x00"))
 	uSize := gl.GetUniformLocation(p.prog, gl.Str("uSize\x00"))
-	uImage := gl.GetUniformLocation(p.prog, gl.Str("uImage\x00"))
-	gl.Uniform2f(uScreen, float32(fbo.W), float32(fbo.H))
-	gl.Uniform1i(uImage, 0)
-	gl.ActiveTexture(gl.TEXTURE0)
-	gl.BindTexture(gl.TEXTURE_2D, tex)
-	gl.Uniform2f(uPos, x, y)
-	gl.Uniform2f(uSize, w, h)
-	gl.DrawArrays(gl.TRIANGLES, 0, 6)
+	uUVPos := gl.GetUniformLocation(p.prog, gl.Str("uUVPos\x00"))
+	uUVSize := gl.GetUniformLocation(p.prog, gl.Str("uUVSize\x00"))
+
+	for _, s := range spans {
+		t, ok := tex[s.ID]
+		if !ok || t.w == 0 {
+			continue
+		}
+		gl.BindTexture(gl.TEXTURE_2D, t.tex)
+		gl.Uniform2f(uPos, float32(s.Col)*cellW, float32(s.Row)*cellH)
+		gl.Uniform2f(uSize, float32(s.Cells)*cellW, cellH)
+		gl.Uniform2f(uUVPos, s.U0, s.V0)
+		gl.Uniform2f(uUVSize, s.U1-s.U0, s.V1-s.V0)
+		gl.DrawArrays(gl.TRIANGLES, 0, 6)
+	}
 
 	gl.BindVertexArray(0)
 	fbo.Unbind()

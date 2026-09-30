@@ -101,15 +101,11 @@ type Renderer struct {
 	// when Active, RenderEffects draws the modal over the frame.
 	loading Loading
 
-	// openTex is the live texture a `tubeless open` embedded app's frame
-	// is drawn into (see OpenTexture) — created lazily on first use via
-	// OpenTexture(). openActive gates RenderScene between the normal
-	// terminal grid and this texture full-bleed (see SetOpenActive), and
-	// RenderEffects between the animated tubeless cursor and none at all
-	// (an embedded app's own cursor is whatever wayvnc's --render-cursor
-	// baked into the captured pixels, not something this renderer draws).
-	openTex    *OpenTexture
-	openActive bool
+	// slotTex holds one live texture per embedded GUI app (see
+	// SlotTexture), keyed by slot id; slotSpans is the per-frame list of
+	// visible cell runs RenderScene paints them into, over the text.
+	slotTex   map[int]*SlotTexture
+	slotSpans []SlotSpan
 }
 
 // Cursor glide tuning: UpdateCursor's exponential-approach rate (per
@@ -243,10 +239,6 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	scene := r.sceneFBO
 	scene.Resize(outW, outH)
 	scene.ClearOpaque()
-	if r.openActive && r.openTex != nil {
-		r.imagePass.DrawTex(scene, r.openTex.tex, 0, 0, float32(outW), float32(outH))
-		return
-	}
 	if cfg.TrueColor {
 		r.cellPass.DrawAmbientBG(scene, outW, outH, cfg.Colors.DefaultBg)
 	}
@@ -276,6 +268,7 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	r.cellPass.DrawUnderline(r.sceneFBO, cellW, cellH)
 	r.drawTextGlow(outW, outH, cellW, cellH, cfg.TextGlow)
 	r.cellPass.DrawText(r.sceneFBO, cellW, cellH)
+	r.imagePass.DrawSlots(r.sceneFBO, r.slotSpans, r.slotTex, cellW, cellH)
 }
 
 // drawTextGlow lays TextGlow's halo into the scene just before the sharp
@@ -486,17 +479,7 @@ func (r *Renderer) RenderEffects(boxW, boxH, outW, outH int, cfg config.Config, 
 	}
 	tailLenPx := morph * cfg.Cursor.Trail.Size * cursorTrailMaxCells * (r.cellW + r.cellH) * 0.5
 
-	if r.openActive {
-		// An embedded app's own cursor is whatever wayvnc's
-		// --render-cursor baked into the captured pixels — this
-		// renderer's animated glow/trail has no meaningful position to
-		// track in open mode, so it's skipped entirely rather than
-		// drawing a stray glow over unrelated app content. cursorFBO
-		// still needs *some* content for InsetPass's sample below.
-		r.cursorFBO.Clear()
-	} else {
-		r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, boxW, boxH, bright, morph, tailPxX, tailPxY, tailLenPx, r.sceneFBO.tex, cfg)
-	}
+	r.cursorPass.Draw(r.cursorFBO, r.cursorCol, r.cursorRow, offsetX, offsetY, r.cellW, r.cellH, boxW, boxH, bright, morph, tailPxX, tailPxY, tailLenPx, r.sceneFBO.tex, cfg)
 
 	sceneTex := r.sceneFBO.tex
 	if decaySeconds := cfg.CRT.PhosphorDecay.DecaySeconds; decaySeconds > 0 {
@@ -518,23 +501,33 @@ func (r *Renderer) SetLoading(l Loading) {
 	r.loading = l
 }
 
-// OpenTexture returns the renderer's live embedded-app texture, creating
-// it (with no backing storage yet — see OpenTexture.Resize) on first use.
-// Safe to call only from the render thread, same as every other Renderer
-// method.
-func (r *Renderer) OpenTexture() *OpenTexture {
-	if r.openTex == nil {
-		r.openTex = NewOpenTexture()
+// SlotTexture returns the live texture for slot id, creating it (with
+// no backing storage yet, see SlotTexture.Resize) on first use. Render
+// thread only, like every other Renderer method.
+func (r *Renderer) SlotTexture(id int) *SlotTexture {
+	if r.slotTex == nil {
+		r.slotTex = make(map[int]*SlotTexture)
 	}
-	return r.openTex
+	if t, ok := r.slotTex[id]; ok {
+		return t
+	}
+	t := NewSlotTexture()
+	r.slotTex[id] = t
+	return t
 }
 
-// SetOpenActive switches RenderScene/RenderEffects between the normal
-// terminal grid (false) and the embedded `tubeless open` app's live
-// texture full-bleed (true) — see RenderScene and RenderEffects' own
-// handling of openActive.
-func (r *Renderer) SetOpenActive(active bool) {
-	r.openActive = active
+// DropSlot frees slot id's texture once its app is gone.
+func (r *Renderer) DropSlot(id int) {
+	if t, ok := r.slotTex[id]; ok {
+		t.delete()
+		delete(r.slotTex, id)
+	}
+}
+
+// SetSlotSpans replaces the cell runs the next RenderScene paints app
+// frames into.
+func (r *Renderer) SetSlotSpans(spans []SlotSpan) {
+	r.slotSpans = spans
 }
 
 // drawOverlay renders the loading modal over the just-composited frame: a dim

@@ -7,9 +7,9 @@ import (
 	"github.com/go-gl/glfw/v3.4/glfw"
 
 	"github.com/moozd/tubeless/pkg/config"
-	"github.com/moozd/tubeless/pkg/openproto"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
+	"github.com/moozd/tubeless/pkg/wmproto"
 )
 
 // linesPerNotch is how many scrollback lines one wheel "notch" (yoff of
@@ -53,13 +53,12 @@ type mouseState struct {
 // of local selection/scroll vs. VT reporting applies is decided per-event
 // from the latest published Screen's MouseMode: an app that wants mouse
 // events gets them instead of the terminal handling clicks/wheel itself.
-func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection, activeOpen *atomic.Pointer[openSession]) {
+func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection, hub *slotHub) {
 	ms := &mouseState{sel: sel}
 
 	win.SetScrollCallback(func(_ *glfw.Window, _, yoff float64) {
-		if os := activeOpen.Load(); os != nil {
-			x, y := openPixelAt(win, cs, cfgRef.Load().CRT.AspectRatio, os)
-			os.SendInput(openproto.InputEvent{Kind: openproto.InputPointerScroll, X: x, Y: y, Scroll: int(yoff * linesPerNotch)})
+		if s, _, _, ok := slotUnderCursor(win, hub, cs, cfgRef.Load().CRT.AspectRatio, shared.Load()); ok {
+			s.sendWM(wmproto.PointerAxis{DY: int(yoff * linesPerNotch)})
 			return
 		}
 		scr := shared.Load()
@@ -88,12 +87,13 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 		if button != glfw.MouseButtonLeft && button != glfw.MouseButtonMiddle && button != glfw.MouseButtonRight {
 			return
 		}
-		if os := activeOpen.Load(); os != nil {
-			x, y := openPixelAt(win, cs, cfgRef.Load().CRT.AspectRatio, os)
-			os.SendInput(openproto.InputEvent{Kind: openproto.InputPointerButton, X: x, Y: y, Button: openPointerButton(button), Pressed: action == glfw.Press})
+		scr := shared.Load()
+		if s, px, py, ok := slotUnderCursor(win, hub, cs, cfgRef.Load().CRT.AspectRatio, shared.Load()); ok {
+			s.sendWM(wmproto.PointerMove{X: px, Y: py})
+			s.sendWM(wmproto.PointerButton{Button: slotButton(button), Pressed: action == glfw.Press})
+			forwardSlotClick(win, sess, scr, cs, cfgRef.Load().CRT.AspectRatio, button, action)
 			return
 		}
-		scr := shared.Load()
 		x, y := cellAt(win, cs, cfgRef.Load().CRT.AspectRatio, scr.Cols, scr.Rows)
 		x, y = clampCell(scr, x, y)
 
@@ -143,9 +143,8 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 		// dedup below, since a still mouse re-entering the same cell
 		// shouldn't need to move first to reappear.
 		win.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
-		if os := activeOpen.Load(); os != nil {
-			x, y := openPixelFromPixels(win, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio, os)
-			os.SendInput(openproto.InputEvent{Kind: openproto.InputPointerMove, X: x, Y: y})
+		if s, px, py, ok := slotAtCursorPos(win, hub, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio, shared.Load()); ok {
+			s.sendWM(wmproto.PointerMove{X: px, Y: py})
 			return
 		}
 		scr := shared.Load()
@@ -261,55 +260,59 @@ func cellFromFramebufferPixels(px, py float32, w, h int, cs *cellSize, ar config
 	return max(0, x), max(0, y)
 }
 
-// openPointerButton maps a GLFW mouse button to openproto's own
-// X11/xterm-numbered button enum — same convention as sgrButton, just a
-// different destination type.
-func openPointerButton(b glfw.MouseButton) openproto.PointerButton {
+// slotButton maps a GLFW mouse button to wmproto's 1/2/3 numbering.
+func slotButton(b glfw.MouseButton) uint8 {
 	switch b {
 	case glfw.MouseButtonMiddle:
-		return openproto.PointerMiddle
+		return 2
 	case glfw.MouseButtonRight:
-		return openproto.PointerRight
+		return 3
 	default:
-		return openproto.PointerLeft
+		return 1
 	}
 }
 
-// openPixelAt is openPixelFromPixels for the cursor's current position —
-// used by callbacks (scroll, button press/release) that don't already
-// have a fresh xpos/ypos the way the cursor-position callback does.
-func openPixelAt(win *render.Window, cs *cellSize, ar config.AspectRatio, os *openSession) (x, y int) {
+// slotUnderCursor is slotAtCursorPos for the cursor's current position,
+// for callbacks (scroll, button) that don't receive one.
+func slotUnderCursor(win *render.Window, hub *slotHub, cs *cellSize, ar config.AspectRatio, scr *screen.Screen) (*slot, int, int, bool) {
 	xpos, ypos := win.GetCursorPos()
-	return openPixelFromPixels(win, xpos, ypos, cs, ar, os)
+	return slotAtCursorPos(win, hub, xpos, ypos, cs, ar, scr)
 }
 
-// openPixelFromPixels converts a GLFW cursor position into a pixel
-// coordinate in the embedded app's own framebuffer space — the open-mode
-// counterpart to cellFromPixels, which targets a character cell instead.
-func openPixelFromPixels(win *render.Window, xpos, ypos float64, cs *cellSize, ar config.AspectRatio, os *openSession) (x, y int) {
+// slotAtCursorPos finds the embedded app (if any) under a GLFW cursor
+// position and the pixel offset inside its frame.
+func slotAtCursorPos(win *render.Window, hub *slotHub, xpos, ypos float64, cs *cellSize, ar config.AspectRatio, scr *screen.Screen) (*slot, int, int, bool) {
+	if hub == nil {
+		return nil, 0, 0, false
+	}
 	w, h := win.FramebufferPixelSize()
-	return openPixelFromFramebufferPixels(float32(xpos)*cs.dpiX, float32(ypos)*cs.dpiY, w, h, ar, int(os.w.Load()), int(os.h.Load()))
+	gx, gy := gridPixelFromFramebufferPixels(float32(xpos)*cs.dpiX, float32(ypos)*cs.dpiY, w, h, cs, ar, scr.Cols, scr.Rows)
+	return hub.HitTest(gx, gy, cs)
 }
 
-// openPixelFromFramebufferPixels maps a window framebuffer pixel position
-// into the embedded app's own (openW, openH) pixel space: the open
-// texture fills the whole letterboxed content box edge to edge (no
-// per-cell grid centering the way cellFromFramebufferPixels has to
-// account for — see its own doc comment on GridOffset), so this is just
-// the box-relative fraction scaled by the embedded framebuffer's size.
-func openPixelFromFramebufferPixels(px, py float32, w, h int, ar config.AspectRatio, openW, openH int) (x, y int) {
-	if openW <= 0 || openH <= 0 {
-		return 0, 0
-	}
+// gridPixelFromFramebufferPixels is cellFromFramebufferPixels without the
+// final division: the pixel position relative to the grid's top-left.
+func gridPixelFromFramebufferPixels(px, py float32, w, h int, cs *cellSize, ar config.AspectRatio, cols, rows int) (float32, float32) {
 	bx, by, bw, bh := render.LetterboxBox(ar, w, h)
-	if bw <= 0 || bh <= 0 {
-		return 0, 0
+	offX, offY := render.GridOffset(float32(bw), float32(bh), cols, rows, cs.w, cs.h)
+	return clampFloat32(px-float32(bx)-offX, 0, float32(max(bw-1, 0))), clampFloat32(py-float32(by)-offY, 0, float32(max(bh-1, 0)))
+}
+
+// forwardSlotClick also reports a click over an embedded app to the
+// terminal, when tmux asked for mouse reporting, so tmux selects the pane
+// and keyboard focus follows the click.
+func forwardSlotClick(win *render.Window, sess *sessionRef, scr *screen.Screen, cs *cellSize, ar config.AspectRatio, button glfw.MouseButton, action glfw.Action) {
+	if scr.MouseMode == screen.MouseOff {
+		return
 	}
-	rx := clampFloat32(px-float32(bx), 0, float32(max(bw-1, 0)))
-	ry := clampFloat32(py-float32(by), 0, float32(max(bh-1, 0)))
-	x = int(rx / float32(bw) * float32(openW))
-	y = int(ry / float32(bh) * float32(openH))
-	return clampInt(x, 0, max(openW-1, 0)), clampInt(y, 0, max(openH-1, 0))
+	x, y := cellAt(win, cs, ar, scr.Cols, scr.Rows)
+	x, y = clampCell(scr, x, y)
+	shift, alt, ctrl := currentMods(win)
+	kind := screen.MousePress
+	if action == glfw.Release {
+		kind = screen.MouseRelease
+	}
+	sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, sgrButton(button), kind, x, y, shift, alt, ctrl))
 }
 
 func clampCell(scr *screen.Screen, x, y int) (int, int) {
