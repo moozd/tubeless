@@ -24,8 +24,8 @@ import (
 // own doc comment on how editing flips a name to "custom"):
 //
 //   - Theme governs color: TrueColor, Colors, Phosphor.
-//   - Preset governs every other visual effect: Surface, Blur, Cursor,
-//     Face, Contrast, CRT. Font/Atlas/Padding/Scrolling/Monochrome sit
+//   - Preset governs every other visual effect: Surface, Blur,
+//     TextGlow, Cursor, Face, Contrast, CRT. Font/Atlas/Padding/Scrolling/Monochrome sit
 //     outside both axes — always user-set directly, never reseeded by
 //     either (see the config TUI's "experimental" tab for Scrolling
 //     specifically).
@@ -41,6 +41,7 @@ type Config struct {
 	Colors     Colors     `toml:"colors"`
 	Surface    Surface    `toml:"surface"`
 	Blur       Blur       `toml:"blur"`
+	TextGlow   TextGlow   `toml:"text_glow"`
 	Cursor     Cursor     `toml:"cursor"`
 	Face       Face       `toml:"face"`
 	Contrast   Contrast   `toml:"contrast"`
@@ -227,6 +228,24 @@ type Surface struct {
 type Blur struct {
 	Radius   float32 `toml:"radius"`   // gaussian spread in pixels
 	Strength float32 `toml:"strength"` // 0..1 mix of the blurred result
+}
+
+// TextGlow is a neon halo around text, in each glyph's own color —
+// unlike Blur, which only ever blooms block/border pixels. It is
+// selective by design: a glyph's glow is weighted by how colorful its
+// foreground is (see cell_glyph.frag's uGlowThreshold), so neutral text
+// (the default fg, comments, gray UI chrome) stays crisp while vivid
+// palette colors (prompts, keywords, git status, errors) light up. A
+// neon look where *everything* glows just reads as a blurry screen.
+// Zero Strength is off, matching Blur's convention.
+type TextGlow struct {
+	Radius   float32 `toml:"radius"`   // gaussian spread in pixels
+	Strength float32 `toml:"strength"` // 0..1 intensity of the halo added under the text
+	// Threshold is the foreground colorfulness (linear RGB max-min,
+	// 0 gray .. 1 a pure primary) at which a glyph starts to glow; its
+	// glow ramps up to full over the next 0.25 above it. 0 glows every
+	// non-black glyph.
+	Threshold float32 `toml:"threshold"`
 }
 
 // Cursor is the animated cursor's shape, corner rounding, and breathing
@@ -715,6 +734,7 @@ func applyEffectsPreset(cfg *Config, name string) {
 	}
 	e := EffectsPreset(name)
 	cfg.Surface, cfg.Blur, cfg.Cursor = e.Surface, e.Blur, e.Cursor
+	cfg.TextGlow = e.TextGlow
 	cfg.Face, cfg.Contrast, cfg.CRT = e.Face, e.Contrast, e.CRT
 }
 

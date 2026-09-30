@@ -31,6 +31,7 @@ type Loading struct {
 //	-> optional bloom over surfaceFBO/shadowFBO             -> sceneFBO
 //	-> sixel images                                       -> sceneFBO
 //	-> underline decorations                              -> sceneFBO
+//	-> optional text glow: colorful glyphs -> textGlowFBO, halo -> sceneFBO
 //	-> text glyphs                                        -> sceneFBO
 //
 //	(every frame) cursor glow                             -> cursorFBO
@@ -55,6 +56,8 @@ type Renderer struct {
 	surfaceFBO  *FBO
 	shadowFBO   *FBO
 	blurFBO     *FBO
+	textGlowFBO *FBO
+	haloFBO     *FBO
 	sceneFBO    *FBO
 	cursorFBO   *FBO
 	persistFBO  [2]*FBO
@@ -211,6 +214,8 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 		surfaceFBO:  newSRGBFBO(2, 2),
 		shadowFBO:   newSRGBFBO(2, 2),
 		blurFBO:     newSRGBFBO(2, 2),
+		textGlowFBO: newSRGBFBO(2, 2),
+		haloFBO:     newSRGBFBO(2, 2),
 		sceneFBO:    newSRGBFBO(2, 2),
 		cursorFBO:   newSRGBFBO(2, 2),
 		persistFBO:  [2]*FBO{newFloatFBO(2, 2), newFloatFBO(2, 2)},
@@ -269,8 +274,32 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	}
 	r.imagePass.Draw(r.sceneFBO, r.pendingImages, cellW, cellH)
 	r.cellPass.DrawUnderline(r.sceneFBO, cellW, cellH)
+	r.drawTextGlow(outW, outH, cellW, cellH, cfg.TextGlow)
 	r.cellPass.DrawText(r.sceneFBO, cellW, cellH)
 }
+
+// drawTextGlow lays TextGlow's halo into the scene just before the sharp
+// text: colorful glyphs are drawn alone into a transparent layer, that
+// layer is blurred into halo-only light, and the light is added onto the
+// scene — so the glyphs drawn next stay crisp on top of their own glow.
+func (r *Renderer) drawTextGlow(outW, outH int, cellW, cellH float32, glow config.TextGlow) {
+	if glow.Strength <= 0.001 || glow.Radius <= 0.01 {
+		return
+	}
+	r.textGlowFBO.Resize(outW, outH)
+	r.textGlowFBO.Clear()
+	r.cellPass.DrawTextGlow(r.textGlowFBO, cellW, cellH, glow.Threshold)
+	strength := glow.Strength * textGlowGain
+	r.blurPass.DrawGlow(r.textGlowFBO.tex, r.haloFBO, glow.Radius, strength, outW, outH)
+	r.copyPass.DrawOver(r.haloFBO.tex, r.sceneFBO, outW, outH)
+}
+
+// textGlowGain scales TextGlow.Strength up for thin sources: a text
+// stroke covers a small fraction of the area a gaussian spreads it over,
+// so at 1x its halo averages down to a faint smudge rather than a neon
+// tube's glow. 1.5 lifts it just enough; higher gains brighten the
+// stroke edges themselves and read as blurry text instead of neon.
+const textGlowGain = 1.5
 
 // UpdateCursor advances the cursor animation toward the current cell
 // (x, y). Called every frame from the render loop. The position eases

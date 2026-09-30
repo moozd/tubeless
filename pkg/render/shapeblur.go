@@ -37,21 +37,32 @@ func (b *BlurPass) Draw(src, dst *FBO, radius, strength float32) {
 }
 
 func (b *BlurPass) DrawTex(srcTex uint32, dst *FBO, radius, strength float32, w, h int) {
+	b.draw(srcTex, dst, radius, strength, false, w, h)
+}
+
+// DrawGlow writes only the blurred halo of srcTex, scaled by strength,
+// into dst with alpha 0 — the source itself is not included. Composited
+// with CopyPass.DrawOver it adds light under whatever is drawn next,
+// which is how TextGlow sits beneath the sharp text (see RenderScene).
+func (b *BlurPass) DrawGlow(srcTex uint32, dst *FBO, radius, strength float32, w, h int) {
+	b.draw(srcTex, dst, radius, strength, true, w, h)
+}
+
+func (b *BlurPass) draw(srcTex uint32, dst *FBO, radius, strength float32, glowOnly bool, w, h int) {
 	if strength <= 0.001 || radius <= 0.01 {
 		return
 	}
-	sigma := float64(radius)
-	samples := int(math.Ceil(3 * sigma))
-	if samples < 1 {
-		samples = 1
-	}
-	if samples > 16 {
-		samples = 16
-	}
-
+	samples := blurSamples(radius)
 	b.tmp.Resize(w, h)
-	b.run(srcTex, srcTex, b.tmp, radius, float32(samples), 1.0, 0.0, strength, false, w, h)
-	b.run(b.tmp.tex, srcTex, dst, radius, float32(samples), 0.0, 1.0, strength, true, w, h)
+	b.run(srcTex, srcTex, b.tmp, radius, samples, 1.0, 0.0, strength, false, glowOnly, w, h)
+	b.run(b.tmp.tex, srcTex, dst, radius, samples, 0.0, 1.0, strength, true, glowOnly, w, h)
+}
+
+// blurSamples is the taps-per-side for a gaussian of sigma radius:
+// 3 sigma covers ~99.7% of its weight, capped at the shader's loop max.
+func blurSamples(radius float32) float32 {
+	samples := math.Ceil(3 * float64(radius))
+	return float32(math.Max(1, math.Min(16, samples)))
 }
 
 // run executes one separable direction: samples tex into dst. orig is the
@@ -62,7 +73,7 @@ func (b *BlurPass) DrawTex(srcTex uint32, dst *FBO, radius, strength float32, w,
 // pass ends up blurring an already-glow-boosted image and re-applying the
 // glow on top of that, compounding into a much stronger (and wrongly
 // shaped) effect than the configured strength.
-func (b *BlurPass) run(tex, origTex uint32, dst *FBO, radius, samples, dirX, dirY, strength float32, final bool, w, h int) {
+func (b *BlurPass) run(tex, origTex uint32, dst *FBO, radius, samples, dirX, dirY, strength float32, final, glowOnly bool, w, h int) {
 	dst.Resize(w, h)
 	dst.Bind()
 	gl.UseProgram(b.prog)
@@ -83,6 +94,11 @@ func (b *BlurPass) run(tex, origTex uint32, dst *FBO, radius, samples, dirX, dir
 		finalF = 1
 	}
 	gl.Uniform1f(u("uFinal"), finalF)
+	glowOnlyF := float32(0)
+	if glowOnly {
+		glowOnlyF = 1
+	}
+	gl.Uniform1f(u("uGlowOnly"), glowOnlyF)
 	gl.BindVertexArray(b.vao)
 	gl.DrawArrays(gl.TRIANGLES, 0, 6)
 	gl.BindVertexArray(0)

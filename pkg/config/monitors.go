@@ -9,6 +9,7 @@ package config
 type Effects struct {
 	Surface  Surface
 	Blur     Blur
+	TextGlow TextGlow
 	Cursor   Cursor
 	Face     Face
 	Contrast Contrast

@@ -35,7 +35,7 @@ Every look tubeless ships is built from two independent settings:
 
 - **`theme`** — color. Selects `true_color`, `colors`, and `phosphor`.
 - **`preset`** — every other visual effect: `surface`, `blur`,
-  `cursor`, `face`, `contrast`, and `crt`.
+  `text_glow`, `cursor`, `face`, `contrast`, and `crt`.
 
 Setting either one seeds the fields it governs; hand-editing any of
 those fields afterward (or through the config TUI) flips that axis's
@@ -158,6 +158,9 @@ by switching theme or preset.
 |               | `glow`         | Cursor edge anti-aliasing width, in pixels.                          |
 |               | `blink_style`  | How brightness pulses over time: `ease` (default, sine breathing), `static` (always fully lit), or `hard` (on/off toggle each half-period). Forced to `static` whenever `cursor.glass.enabled` is on. |
 |               | `pulse_period` | Cursor breathing/toggle period, in seconds.                          |
+| `[text_glow]` | `radius`       | Gaussian spread, in pixels, of a halo around text in each glyph's own color. |
+|               | `strength`     | `0..1` halo intensity. `0` (every preset but `neon`) is off.         |
+|               | `threshold`    | How colorful a glyph's foreground must be to glow (linear RGB max-min, `0` gray .. `1` pure primary; ramps to full over the next `0.25`). `0` glows all text; higher keeps neutral text crisp. |
 | `[cursor.glass]` (experimental) | `enabled` | macOS-style frosted panel that refracts/blurs the scene behind the cursor instead of glowing over it, tinted toward the accent color. Forces `blink_style` to `static` and disables the ball/tail morph. |
 |               | `tint`         | `0..1` accent strength mixed into the refracted sample.              |
 |               | `blur`         | Refraction sample blur spread, in pixels.                            |

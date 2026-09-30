@@ -11,6 +11,7 @@ uniform vec2 uDir;       // (1,0) for the horizontal pass, (0,1) vertical
 uniform float uStrength; // 0..1 glow intensity soft-added over the original
 uniform sampler2D uOrig; // the un-blurred source (only used for the mix)
 uniform float uFinal;    // 1.0 on the vertical pass (apply the soft-add), 0.0 on the horizontal pass (pure blur)
+uniform float uGlowOnly; // 1.0 outputs just the halo (see BlurPass.DrawGlow), 0.0 soft-adds it over uOrig
 
 // Separable gaussian image-space bloom over a literal, non-text effect
 // source. The terminal scene is drawn separately; this shader only sees the
@@ -42,6 +43,14 @@ void main() {
 		// a pure blur of uScene, or the vertical pass below would blur an
 		// already-glow-boosted image and re-apply the glow on top of that.
 		fragColor = blurred;
+		return;
+	}
+
+	if (uGlowOnly > 0.5) {
+		// Halo only, alpha 0: under a premultiplied ONE/ONE_MINUS_SRC_ALPHA
+		// blend (CopyPass.DrawOver) that is a pure additive light, so the
+		// glow brightens whatever sits beneath it without covering it.
+		fragColor = vec4(blurred.rgb * uStrength, 0.0);
 		return;
 	}
 

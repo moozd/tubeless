@@ -29,6 +29,13 @@ uniform sampler2D uAtlas3;
 // causes on saturated color pairs.
 uniform int uLinearCorrect;
 
+// uGlowThreshold < 0 is the normal sharp-text draw. >= 0 is TextGlow's
+// source draw (see CellPass.DrawTextGlow): each glyph is weighted by its
+// foreground's colorfulness — linear RGB max-min, 0 for any gray, 1 for
+// a pure primary — ramping from the threshold to full over the next
+// 0.25, so neutral text contributes nothing to the halo.
+uniform float uGlowThreshold;
+
 float luminance(vec3 c) {
 	return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
@@ -60,6 +67,11 @@ void main() {
 			float blendL = linearize(unlinearize(fgL) * a + unlinearize(bgL) * (1.0 - a));
 			a = clamp((blendL - bgL) / (fgL - bgL), 0.0, 1.0);
 		}
+	}
+
+	if (uGlowThreshold >= 0.0) {
+		float chroma = max(vColor.r, max(vColor.g, vColor.b)) - min(vColor.r, min(vColor.g, vColor.b));
+		a *= smoothstep(uGlowThreshold, uGlowThreshold + 0.25, chroma);
 	}
 
 	// Premultiplied output (paired with a GL_ONE/GL_ONE_MINUS_SRC_ALPHA

@@ -621,6 +621,7 @@ func applyEffectsPresetCfg(c *config.Config, name string) {
 	e := config.EffectsPreset(name)
 	c.Preset = name
 	c.Surface, c.Blur, c.Cursor = e.Surface, e.Blur, e.Cursor
+	c.TextGlow = e.TextGlow
 	c.Face, c.Contrast, c.CRT = e.Face, e.Contrast, e.CRT
 	if theme, ok := config.MonitorTheme(name); ok {
 		applyThemeCfg(c, theme)
@@ -844,6 +845,17 @@ func (u *ui) buildPresetsList() []panelRow {
 	add(asEffect(newSlider("blur.strength", "glow strength", "strength of the post-process glow under images/underlines/text", "", 2, 0.01, 0, 1,
 		func(c *config.Config) float64 { return float64(c.Blur.Strength) },
 		func(c *config.Config, v float64) { c.Blur.Strength = float32(v) })))
+
+	section("text glow — neon")
+	add(asEffect(newSlider("text_glow.radius", "glow radius", "gaussian spread in px of the halo around colorful text", "px", 1, 0.1, 0, 8,
+		func(c *config.Config) float64 { return float64(c.TextGlow.Radius) },
+		func(c *config.Config, v float64) { c.TextGlow.Radius = float32(v) })))
+	add(asEffect(newSlider("text_glow.strength", "glow strength", "intensity of the halo, in each glyph's own color; 0 is off", "", 2, 0.01, 0, 1,
+		func(c *config.Config) float64 { return float64(c.TextGlow.Strength) },
+		func(c *config.Config, v float64) { c.TextGlow.Strength = float32(v) })))
+	add(asEffect(newSlider("text_glow.threshold", "threshold", "how colorful a glyph must be to glow: 0 glows all text, higher keeps neutral text crisp", "", 2, 0.01, 0, 1,
+		func(c *config.Config) float64 { return float64(c.TextGlow.Threshold) },
+		func(c *config.Config, v float64) { c.TextGlow.Threshold = float32(v) })))
 
 	section("face — tube")
 	add(asEffect(newSlider("face.bg_tint", "bg tint", "brightness of the unlit screen", "", 3, 0.005, 0, 0.5,

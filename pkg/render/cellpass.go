@@ -555,7 +555,7 @@ func (cp *CellPass) DrawLineArt(fbo *FBO, cw, ch float32) {
 
 	screenW, screenH := float32(fbo.W), float32(fbo.H)
 	offsetX, offsetY := GridOffset(screenW, screenH, cp.cols, cp.rows, cw, ch)
-	cp.drawGlyphs(cp.shapeScratch, cw, ch, screenW, screenH, offsetX, offsetY)
+	cp.drawGlyphs(cp.shapeScratch, cw, ch, screenW, screenH, offsetX, offsetY, -1)
 
 	gl.Disable(gl.BLEND)
 	fbo.Unbind()
@@ -577,7 +577,27 @@ func (cp *CellPass) DrawText(fbo *FBO, cw, ch float32) {
 
 	screenW, screenH := float32(fbo.W), float32(fbo.H)
 	offsetX, offsetY := GridOffset(screenW, screenH, cp.cols, cp.rows, cw, ch)
-	cp.drawGlyphs(cp.textScratch, cw, ch, screenW, screenH, offsetX, offsetY)
+	cp.drawGlyphs(cp.textScratch, cw, ch, screenW, screenH, offsetX, offsetY, -1)
+
+	gl.Disable(gl.BLEND)
+	fbo.Unbind()
+}
+
+// DrawTextGlow draws TextGlow's source layer into fbo: the same glyphs
+// DrawText draws, each faded by how colorful its foreground is relative
+// to threshold (see cell_glyph.frag's uGlowThreshold), so only vivid
+// text ends up in the halo. fbo should start transparent.
+func (cp *CellPass) DrawTextGlow(fbo *FBO, cw, ch, threshold float32) {
+	if len(cp.textScratch) == 0 {
+		return
+	}
+	fbo.Bind()
+	gl.Enable(gl.BLEND)
+	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+
+	screenW, screenH := float32(fbo.W), float32(fbo.H)
+	offsetX, offsetY := GridOffset(screenW, screenH, cp.cols, cp.rows, cw, ch)
+	cp.drawGlyphs(cp.textScratch, cw, ch, screenW, screenH, offsetX, offsetY, max(threshold, 0))
 
 	gl.Disable(gl.BLEND)
 	fbo.Unbind()
@@ -607,7 +627,9 @@ func (cp *CellPass) DrawUnderline(fbo *FBO, cw, ch float32) {
 	fbo.Unbind()
 }
 
-func (cp *CellPass) drawGlyphs(instances []float32, cw, ch, screenW, screenH, offsetX, offsetY float32) {
+// drawGlyphs draws glyph instances; glowThreshold < 0 is the normal
+// sharp draw, >= 0 TextGlow's colorfulness-weighted source draw.
+func (cp *CellPass) drawGlyphs(instances []float32, cw, ch, screenW, screenH, offsetX, offsetY, glowThreshold float32) {
 	if len(instances) == 0 {
 		return
 	}
@@ -623,6 +645,7 @@ func (cp *CellPass) drawGlyphs(instances []float32, cw, ch, screenW, screenH, of
 		linearCorrect = 1
 	}
 	gl.Uniform1i(gl.GetUniformLocation(cp.progGlyph, gl.Str("uLinearCorrect\x00")), linearCorrect)
+	gl.Uniform1f(gl.GetUniformLocation(cp.progGlyph, gl.Str("uGlowThreshold\x00")), glowThreshold)
 	uniformNames := [styleCount]string{"uAtlas0\x00", "uAtlas1\x00", "uAtlas2\x00", "uAtlas3\x00"}
 	for i, tex := range cp.atlasTex {
 		gl.ActiveTexture(gl.TEXTURE0 + uint32(i))
@@ -669,7 +692,7 @@ func (cp *CellPass) DrawTextString(text string, x, y, cw, ch float32, color [3]f
 	gl.Viewport(0, 0, int32(outW), int32(outH))
 	gl.Enable(gl.BLEND)
 	gl.BlendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
-	cp.drawGlyphs(inst, cw, ch, outW, outH, 0, 0)
+	cp.drawGlyphs(inst, cw, ch, outW, outH, 0, 0, -1)
 	gl.Disable(gl.BLEND)
 }
 

@@ -4,7 +4,7 @@ package config
 // tube-face chrome (Blur/Face/Cursor above). Every field's Go zero value
 // means "off" — matching Blur.Strength/Face.BgTint/Cursor.Glow's existing
 // convention rather than a separate Enabled flag — so a new CRT field
-// needs no edits to any of the 10 preset functions, and every preset ships
+// needs no edits to any of the preset functions, and every preset ships
 // with all of these off by default.
 type CRT struct {
 	Curvature     Curvature     `toml:"curvature"`
