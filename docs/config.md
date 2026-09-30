@@ -50,25 +50,29 @@ preset = "modern"
 
 `rosepine` (default) · `rosepine-moon` · `gruvbox-dark-hard` · `nord` ·
 `dracula` · `catppuccin-mocha` · `tokyo-night` · `one-dark` · `green` ·
-`amber` · `green-p39` · `white-p4` · `cga` · `cyberpunk`
+`amber` · `green-p39` · `white-p4` · `cga` · `cyberpunk` · `neon`
 
 The last six (`green`, `amber`, `green-p39`, `white-p4`, `cga`,
 `cyberpunk`) are monochrome or fixed-palette themes — companions to the
 CRT/effects presets below rather than independent color schemes;
 `cyberpunk` (neon cyan) is a fictional companion, the rest period-
-accurate.
+accurate. `neon` is a true-color rainbow companion to the `neon`
+preset: a low-chroma default foreground and grays, with every hue slot
+a saturated neon, so its preset's selective text glow lights up only
+colored output.
 
 ### Built-in presets
 
 `modern` (every CRT effect off) · `ibm-5151` · `ibm-5153` ·
 `zenith-zvm-1220` · `apple-monitor-iii` · `commodore-1084s` ·
 `princeton-hx12` · `cyberpunk` (also every CRT effect off — a sharp,
-modern digital feel, not a real monitor)
+modern digital feel, not a real monitor) · `neon` (a neon-sign look:
+selective text glow, low block bloom, a faint RGB fringe and scanlines)
 
 Each `ibm-*`/`zenith-*`/`apple-*`/`commodore-*`/`princeton-*` preset
 models one real 1980s monitor's curvature, phosphor persistence, noise,
 and (where applicable) shadow-mask convergence error, tuned from that
-display's own service manual. Five of them have one theme pairing
+display's own service manual. Six of them have one theme pairing
 (selecting the preset in `tubeless config` switches the theme too):
 
 | Preset              | Paired theme |
@@ -78,6 +82,7 @@ display's own service manual. Five of them have one theme pairing
 | `zenith-zvm-1220`   | `amber`      |
 | `apple-monitor-iii` | `white-p4`   |
 | `cyberpunk`         | `cyberpunk`  |
+| `neon`              | `neon`       |
 
 (`commodore-1084s` and `princeton-hx12` have no fixed native palette —
 real analog RGB monitors that just rendered whatever the host sent
@@ -153,14 +158,14 @@ by switching theme or preset.
 |               | `shadow`       | `0..1` soft drop shadow cast by block surfaces.                      |
 | `[blur]`      | `radius`       | Gaussian bloom spread, in pixels, over block/border surfaces.        |
 |               | `strength`     | `0..1` mix of the blurred result.                                    |
+| `[text_glow]` | `radius`       | Gaussian spread, in pixels, of a halo around text in each glyph's own color. |
+|               | `strength`     | `0..1` halo intensity. `0` (every preset but `neon`) is off.         |
+|               | `threshold`    | How colorful a glyph's foreground must be to glow (linear RGB max-min, `0` gray .. `1` pure primary; ramps to full over the next `0.25`). `0` glows all text; higher keeps neutral text crisp. |
 | `[cursor]`    | `shape`        | At-rest outline: `block` (default), `bar` (I-beam on the cell's left edge), or `underline`. The speed-reactive ball/tail morph layers on top of whichever is picked. |
 |               | `radius`       | `0..1` at-rest corner rounding, as a fraction of the shape's own short half-dimension. |
 |               | `glow`         | Cursor edge anti-aliasing width, in pixels.                          |
 |               | `blink_style`  | How brightness pulses over time: `ease` (default, sine breathing), `static` (always fully lit), or `hard` (on/off toggle each half-period). Forced to `static` whenever `cursor.glass.enabled` is on. |
 |               | `pulse_period` | Cursor breathing/toggle period, in seconds.                          |
-| `[text_glow]` | `radius`       | Gaussian spread, in pixels, of a halo around text in each glyph's own color. |
-|               | `strength`     | `0..1` halo intensity. `0` (every preset but `neon`) is off.         |
-|               | `threshold`    | How colorful a glyph's foreground must be to glow (linear RGB max-min, `0` gray .. `1` pure primary; ramps to full over the next `0.25`). `0` glows all text; higher keeps neutral text crisp. |
 | `[cursor.glass]` (experimental) | `enabled` | macOS-style frosted panel that refracts/blurs the scene behind the cursor instead of glowing over it, tinted toward the accent color. Forces `blink_style` to `static` and disables the ball/tail morph. |
 |               | `tint`         | `0..1` accent strength mixed into the refracted sample.              |
 |               | `blur`         | Refraction sample blur spread, in pixels.                            |

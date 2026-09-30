@@ -375,7 +375,7 @@ func ThemeNames() []string {
 	return []string{
 		"rosepine", "rosepine-moon", "gruvbox-dark-hard", "nord", "dracula",
 		"catppuccin-mocha", "tokyo-night", "one-dark", "green", "amber",
-		"green-p39", "white-p4", "cga", "cyberpunk",
+		"green-p39", "white-p4", "cga", "cyberpunk", "neon",
 	}
 }
 
@@ -383,7 +383,8 @@ func ThemeNames() []string {
 // names fall back to rosepine, the default. green-p39/white-p4/cga are
 // period-accurate companions to the monochrome/CGA entries in
 // EffectsPresetNames (see monitors.go and MonitorTheme); cyberpunk is
-// its own companion to the "cyberpunk" effects preset there.
+// its own companion to the "cyberpunk" effects preset there, and neon
+// the same for the "neon" preset.
 func Theme(name string) ThemeColors {
 	switch name {
 	case "amber":
@@ -398,6 +399,8 @@ func Theme(name string) ThemeColors {
 		return cgaTheme()
 	case "cyberpunk":
 		return cyberpunkTheme()
+	case "neon":
+		return neonTheme()
 	case "rosepine-moon":
 		return rosepineMoonTheme()
 	case "gruvbox-dark-hard":
@@ -486,6 +489,27 @@ func greenTheme() ThemeColors {
 func cyberpunkTheme() ThemeColors {
 	peak := srgb3(0x00, 0xf6, 0xff) // vivid neon cyan
 	return ThemeColors{Phosphor: Phosphor{Low: scale3(peak, 0.05), High: peak}}
+}
+
+// neonTheme is the rainbow TrueColor companion to the "neon" effects
+// preset (see monitors.go). It is split in two on purpose, to match
+// TextGlow's colorfulness gate: bg/fg and the grays (0, 7, 8, 15) are
+// low-chroma, so ordinary output and comments stay crisp and dark, while
+// every hue slot is a near-fully-saturated neon — anything an app colors
+// on purpose glows. Normal hues are the saturated core, brights (9-14)
+// push lighter toward a hot-white center, like a real neon tube. The
+// accent (Phosphor.High — cursor and chrome tint) is hot magenta.
+func neonTheme() ThemeColors {
+	return trueColorTheme(
+		srgb3(0x0a, 0x08, 0x14), // bg: near-black with a violet cast
+		srgb3(0xc8, 0xc6, 0xe0), // fg: cool, low-chroma off-white
+		srgb3(0xff, 0x2a, 0xd4), // accent: hot magenta
+		[16][3]float32{
+			srgb3(0x1c, 0x19, 0x2e), srgb3(0xff, 0x1f, 0x5a), srgb3(0x2b, 0xff, 0x88), srgb3(0xff, 0xe6, 0x00),
+			srgb3(0x2f, 0x7b, 0xff), srgb3(0xff, 0x2a, 0xd4), srgb3(0x00, 0xf0, 0xff), srgb3(0xb4, 0xb2, 0xcc),
+			srgb3(0x5a, 0x55, 0x7a), srgb3(0xff, 0x6a, 0x3d), srgb3(0x9d, 0xff, 0x3a), srgb3(0xff, 0xf5, 0x7a),
+			srgb3(0x8a, 0x5c, 0xff), srgb3(0xff, 0x7a, 0xf0), srgb3(0x7a, 0xff, 0xf6), srgb3(0xf4, 0xf2, 0xff),
+		})
 }
 
 // scale3 multiplies every channel of a linear-RGB triple by k — used to

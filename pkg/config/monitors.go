@@ -23,12 +23,13 @@ type Effects struct {
 // monitor, a soft composite monochrome monitor, a long-persistence white
 // monochrome monitor, and two shadow-mask analog RGB monitors at
 // different quality tiers — then cyberpunk, a fictional look rather than
-// a real monitor (see cyberpunkEffects' own doc comment).
+// a real monitor (see cyberpunkEffects' own doc comment) — and neon, its
+// full-color, text-glowing counterpart (see neonEffects).
 func EffectsPresetNames() []string {
 	return []string{
 		"modern", "ibm-5151", "ibm-5153", "zenith-zvm-1220",
 		"apple-monitor-iii", "commodore-1084s", "princeton-hx12",
-		"cyberpunk",
+		"cyberpunk", "neon",
 	}
 }
 
@@ -50,6 +51,8 @@ func EffectsPreset(name string) Effects {
 		return princetonHX12Effects()
 	case "cyberpunk":
 		return cyberpunkEffects()
+	case "neon":
+		return neonEffects()
 	default:
 		return modernEffects()
 	}
@@ -76,6 +79,8 @@ func MonitorTheme(presetName string) (theme string, ok bool) {
 		return "white-p4", true
 	case "cyberpunk":
 		return "cyberpunk", true
+	case "neon":
+		return "neon", true
 	default:
 		return "", false
 	}
@@ -283,6 +288,33 @@ func cyberpunkEffects() Effects {
 	e.Blur = Blur{Radius: 1.2, Strength: 0.12}
 	e.Face = Face{BgTint: 0.05, InsetShadow: 0.35}
 	e.Cursor.Glow = 2.0
+	return e
+}
+
+// neonEffects is a fictional neon-sign look paired with neonTheme's
+// rainbow palette — the one preset that turns TextGlow on. Glow is
+// selective, not global: Threshold 0.55 sits above neonTheme's low-
+// chroma fg/grays and below every one of its neon hues, so only colored
+// output lights up. The halo is wide and faint on purpose: a tight
+// radius piles its light onto the stroke's own anti-aliased edges and
+// reads as out-of-focus text, while a wide one spreads that light thin
+// around the letter, leaving the stroke itself crisp — the lit-tube
+// look (sharp core, soft ambient glow) rather than a blur. Blur (block/border bloom) stays low for the same
+// reason cyberpunkEffects documents — a selection or status bar is a
+// large lit surface, and heavy bloom there washes the frame. A touch of
+// chromatic aberration gives bright strokes an RGB fringe; faint
+// scanlines add texture without the curvature/noise of a real tube.
+func neonEffects() Effects {
+	e := modernEffects()
+	e.Surface = Surface{Radius: 2.0, Gradient: 0.15, Shadow: 0.15}
+	e.Blur = Blur{Radius: 2.0, Strength: 0.2}
+	e.TextGlow = TextGlow{Radius: 6.0, Strength: 0.3, Threshold: 0.55}
+	e.Face = Face{BgTint: 0.03, InsetShadow: 0.3}
+	e.Cursor.Glow = 3.0
+	e.CRT = CRT{
+		Scanlines:  Scanlines{Intensity: 0.08, Period: 2.0},
+		Aberration: Aberration{Amount: 0.0015},
+	}
 	return e
 }
 

@@ -209,3 +209,46 @@ func TestMonitorThemeLinksResolve(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryListedNameIsRegistered catches a name added to ThemeNames or
+// EffectsPresetNames but not to the switch behind it, which would
+// silently fall back to the default look.
+func TestEveryListedNameIsRegistered(t *testing.T) {
+	for _, name := range ThemeNames() {
+		if name != "rosepine" && Theme(name) == Theme("rosepine") {
+			t.Errorf("theme %q falls back to rosepine", name)
+		}
+	}
+	for _, name := range EffectsPresetNames() {
+		if name != "modern" && EffectsPreset(name) == EffectsPreset("modern") {
+			t.Errorf("preset %q falls back to modern", name)
+		}
+	}
+}
+
+// TestNeonGlowIsSelective guards the neon look's core idea: its
+// TextGlow threshold must sit above every neutral color the theme
+// draws plain text in, and below every one of its neon hues — or
+// either nothing glows or everything does.
+func TestNeonGlowIsSelective(t *testing.T) {
+	threshold := EffectsPreset("neon").TextGlow.Threshold
+	full := threshold + 0.25
+	c := Theme("neon").Colors
+	neutral := [][3]float32{c.DefaultFg, c.Palette[0], c.Palette[7], c.Palette[8], c.Palette[15]}
+	for i, col := range neutral {
+		if got := colorfulness(col); got >= threshold {
+			t.Errorf("neutral color %d colorfulness %.2f glows (threshold %.2f)", i, got, threshold)
+		}
+	}
+	for _, i := range []int{1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14} {
+		if got := colorfulness(c.Palette[i]); got < full {
+			t.Errorf("palette %d colorfulness %.2f is below full glow at %.2f", i, got, full)
+		}
+	}
+}
+
+// colorfulness mirrors cell_glyph.frag's glow weight input: linear RGB
+// max minus min.
+func colorfulness(c [3]float32) float32 {
+	return max(c[0], c[1], c[2]) - min(c[0], c[1], c[2])
+}
