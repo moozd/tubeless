@@ -19,6 +19,8 @@ contents:
     dst: /usr/bin/tubeless
   - src: __BIN_DIR__/tubeless-config
     dst: /usr/bin/tubeless-config
+  - src: __BIN_DIR__/tubeless-wm
+    dst: /usr/bin/tubeless-wm
   - src: packaging/icon.svg
     dst: /usr/share/icons/hicolor/scalable/apps/tubeless.svg
   - src: __DESKTOP__

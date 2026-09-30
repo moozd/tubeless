@@ -1,4 +1,4 @@
-.PHONY: build build-x11 tubeless tubeless-config tektest tubeless-icons test clean \
+.PHONY: build build-x11 tubeless tubeless-wm tubeless-config tektest tubeless-icons test clean \
         install uninstall install-linux uninstall-linux install-darwin uninstall-darwin help \
         run-green run-amber run-config run-icons package-linux package-darwin
 
@@ -9,6 +9,13 @@ UNAME_S := $(shell uname -s)
 
 BINARY_NAME=tubeless
 BIN_DIR=bin
+
+# tubeless-wm is the Rust compositor `tubeless open` runs GUI apps under
+# (see compositor/). Linux only: macOS has no Wayland to host apps with.
+WM_DIR=compositor
+ifeq ($(UNAME_S),Linux)
+WM_TARGET = tubeless-wm
+endif
 CMD_PATH=./cmd/$(BINARY_NAME)
 
 # VERSION is baked into both binaries (see main.go's -version flag) and
@@ -39,7 +46,9 @@ help:
 	@echo "                        Linux; the 'wayland' build tag is a no-op on"
 	@echo "                        macOS/Windows, which always use their own"
 	@echo "                        native Cocoa/Win32 backend regardless),"
-	@echo "                        tubeless-config, tektest, and tubeless-icons"
+	@echo "                        tubeless-config, tektest, and tubeless-icons; on"
+	@echo "                        Linux also tubeless-wm (the Rust app compositor,"
+	@echo "                        needs cargo)"
 	@echo "  make build-x11      - Build tubeless for X11 instead, for Linux"
 	@echo "                        desktops without a Wayland compositor"
 	@echo "  make run-green      - Build and run tubeless (green theme) with tektest"
@@ -76,7 +85,15 @@ help:
 	@echo "                        actual Mac of that architecture."
 	@echo "  make clean          - Remove build artifacts"
 
-build: tubeless tubeless-config tektest tubeless-icons
+build: tubeless $(WM_TARGET) tubeless-config tektest tubeless-icons
+
+# tubeless-wm must sit next to tubeless: the window looks for it beside
+# its own executable first (see cmd/tubeless/slots.go findWMBinary).
+tubeless-wm:
+	@mkdir -p $(BIN_DIR)
+	cargo build --release --manifest-path $(WM_DIR)/Cargo.toml
+	cp $(WM_DIR)/target/release/tubeless-wm $(BIN_DIR)/tubeless-wm
+	@echo "Built $(BIN_DIR)/tubeless-wm"
 
 build-x11:
 	@mkdir -p $(BIN_DIR)
@@ -121,6 +138,9 @@ run-icons: tubeless-icons
 
 test:
 	go test -v ./...
+ifeq ($(UNAME_S),Linux)
+	cargo test --manifest-path $(WM_DIR)/Cargo.toml
+endif
 
 # install dispatches to whichever per-OS target matches the host, so
 # `make install` alone is the one command that works everywhere — no more
@@ -145,10 +165,11 @@ endif
 # for macOS. tektest is deliberately excluded: it's a dev-only VT
 # test-pattern generator (see run-green/run-amber above), not something a
 # system install should ship.
-install-linux: tubeless tubeless-config
+install-linux: tubeless tubeless-wm tubeless-config
 	@mkdir -p $(BIN_INSTALL_DIR) $(DESKTOP_DIR) $(ICON_DIR)
 	cp $(BIN_DIR)/$(BINARY_NAME) $(BIN_INSTALL_DIR)/
 	cp $(BIN_DIR)/tubeless-config $(BIN_INSTALL_DIR)/
+	cp $(BIN_DIR)/tubeless-wm $(BIN_INSTALL_DIR)/
 	cp packaging/icon.svg $(ICON_DIR)/tubeless.svg
 	sed -e 's|__EXEC__|$(BIN_INSTALL_DIR)/$(BINARY_NAME)|' \
 	    -e 's|__ICON__|tubeless|' \
@@ -164,7 +185,7 @@ install-linux: tubeless tubeless-config
 	@echo "Your config at ~/.config/tubeless/config.toml is untouched."
 
 uninstall-linux:
-	rm -f $(BIN_INSTALL_DIR)/$(BINARY_NAME) $(BIN_INSTALL_DIR)/tubeless-config
+	rm -f $(BIN_INSTALL_DIR)/$(BINARY_NAME) $(BIN_INSTALL_DIR)/tubeless-config $(BIN_INSTALL_DIR)/tubeless-wm
 	rm -f $(DESKTOP_DIR)/tubeless.desktop
 	rm -f $(ICON_DIR)/tubeless.svg
 	@command -v update-desktop-database >/dev/null 2>&1 && \
@@ -250,6 +271,8 @@ package-linux:
 	@mkdir -p $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin
 	GOARCH=$(GOARCH_TARGET) go build -tags wayland -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/$(BINARY_NAME) $(CMD_PATH)
 	GOARCH=$(GOARCH_TARGET) go build -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/tubeless-config ./cmd/tubeless-config
+	cargo build --release --manifest-path $(WM_DIR)/Cargo.toml
+	cp $(WM_DIR)/target/release/tubeless-wm $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/tubeless-wm
 	tar -C $(DIST_DIR)/linux-$(GOARCH_TARGET) -czf $(DIST_DIR)/tubeless-$(VERSION)-linux-$(GOARCH_TARGET).tar.gz bin
 	sed -e 's|__EXEC__|/usr/bin/$(BINARY_NAME)|' -e 's|__ICON__|tubeless|' \
 	    packaging/tubeless.desktop > $(DIST_DIR)/tubeless-$(GOARCH_TARGET).desktop
@@ -287,6 +310,6 @@ package-darwin: $(ICNS)
 	@echo "Packaged $(DIST_DIR)/tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip"
 
 clean:
-	rm -rf $(BIN_DIR) $(DIST_DIR)
+	rm -rf $(BIN_DIR) $(DIST_DIR) $(WM_DIR)/target
 	go clean
 	@echo "Cleaned build artifacts"

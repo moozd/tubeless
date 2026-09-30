@@ -27,3 +27,6 @@ dist/
 *~
 .DS_Store
 /.
+
+# Rust compositor build output
+compositor/target/
