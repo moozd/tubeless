@@ -73,7 +73,11 @@ func NewWindow(title string, width, height int) (*Window, error) {
 	// instead of directly on gamma-encoded values — the fix for
 	// anti-aliased glyph edges reading thinner/weaker than they should.
 	gl.Enable(gl.FRAMEBUFFER_SRGB)
-	glfw.SwapInterval(1)
+	// Never vsync through SwapBuffers: with a hidden window (another
+	// workspace) the compositor stops sending frame callbacks and the swap
+	// blocks forever, starving the event pump so the compositor flags the
+	// app as not responding. The render loop paces itself instead.
+	glfw.SwapInterval(0)
 	return &Window{Window: win}, nil
 }
 

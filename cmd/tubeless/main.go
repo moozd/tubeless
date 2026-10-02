@@ -1147,14 +1147,51 @@ func pumpEvents(fn func()) {
 	fn()
 }
 
+// unfocusedFrame is the frame period while the window isn't focused: a
+// switched-away workspace gets no frame callbacks, so there is nothing to
+// pace against, and a visible-but-unfocused tile doesn't need more.
+const unfocusedFrame = time.Second / 30
+
+// frameBudget is how long one presented frame should take: the display's
+// refresh period while focused (60Hz when GLFW can't tell), a slower
+// fixed period otherwise.
+func frameBudget(win *render.Window, isFocused bool) time.Duration {
+	if !isFocused {
+		return unfocusedFrame
+	}
+	hz := 60
+	if m := win.CurrentMonitor(); m != nil {
+		if mode := m.GetVideoMode(); mode != nil && mode.RefreshRate > 0 {
+			hz = mode.RefreshRate
+		}
+	}
+	return time.Second / time.Duration(hz)
+}
+
+// pumpFrame pumps window events until one frame budget has passed since
+// lastPresent. Pacing here, rather than in a vsync'd SwapBuffers, keeps
+// the thread answering the compositor's pings: a hidden window (another
+// Hyprland workspace) stops getting frame callbacks, and a swap waiting
+// on one never returns — the compositor then shows its "application not
+// responding" dialog.
+func pumpFrame(win *render.Window, isFocused bool, lastPresent time.Time) {
+	deadline := lastPresent.Add(frameBudget(win, isFocused))
+	for time.Now().Before(deadline) {
+		wait := time.Until(deadline).Seconds()
+		pumpEvents(func() { glfw.WaitEventsTimeout(wait) })
+	}
+	pumpEvents(glfw.PollEvents)
+}
+
 // runLoop drives a continuous, vsync-paced render so the cursor can
 // animate in real time. The scene (cell buffers + shape blur) is
 // dirty-gated — it only rebuilds when the published Screen changed or the
 // framebuffer resized — while the cheap fullscreen passes (cursor glow,
 // inset composite) run every frame so the cursor glides even with the
-// shell idle. SwapBuffers blocks on vsync (see window.go's SwapInterval),
-// so an idle visible window costs the fullscreen passes at display
-// refresh, not a busy spin.
+// shell idle. SwapBuffers never blocks (see window.go's SwapInterval) —
+// pumpFrame paces the loop to the display refresh instead, so an idle
+// visible window costs the fullscreen passes at display refresh, not a
+// busy spin.
 //
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
@@ -1169,11 +1206,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	lastFrame := time.Now()
 	watch := &cfgWatch{path: cfgPath}
 	reload := false
-	// lastFocused starts deliberately mismatched against *focused so the
-	// branch below always runs (and sets the right SwapInterval) on the
-	// very first iteration, regardless of whatever focus state the
-	// window happened to open in.
-	lastFocused := !*focused
+	lastPresent := time.Now()
 	// reqDpiX/reqDpiY remember the scale the newest font build was
 	// *requested* for. cs.dpiX/dpiY only catch up once that build lands and
 	// installs, so comparing the monitor's scale against cs below would
@@ -1260,6 +1293,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		r.SetLoading(load.snapshot())
 		r.RenderEffects(bw, bh, w, h, cfg, dt)
 		win.SwapBuffers()
+		lastPresent = time.Now()
 		lastScr, lastW, lastH, lastScrollLine, lastSel = scr, w, h, scrollLine, *sel
 	}
 	wireResize(win, resizeCh, cs, cfgRef, renderFrame)
@@ -1346,40 +1380,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			lastFrame = time.Now()
 			continue
 		}
-		if *focused != lastFocused {
-			// win.SwapBuffers below is vsync'd, and on compositors where a
-			// window that's occluded or switched away from (another
-			// virtual desktop/workspace, another application) stops
-			// receiving frame callbacks, presenting through that
-			// unconditionally can block SwapBuffers forever — freezing
-			// this whole loop, including glfw.PollEvents, since both run
-			// on the single OS-locked thread the window manager expects
-			// to keep pumping events. That read as "not responding" until
-			// the window manager killed the process.
-			//
-			// The fix is NOT to stop presenting while unfocused: many
-			// window managers (tiling WMs especially) never auto-focus a
-			// newly opened window, and a compositor won't even map a
-			// surface before its first buffer commit — skipping
-			// presentation until focus arrives previously meant the
-			// window never appeared at all. Instead, disable vsync while
-			// unfocused so SwapBuffers presents immediately without
-			// waiting on a frame callback that might never come, and
-			// restore normal vsync-paced presentation the instant focus
-			// returns. The loop below is throttled via WaitEventsTimeout
-			// while unfocused so this doesn't spin unbounded.
-			if *focused {
-				glfw.SwapInterval(1)
-			} else {
-				glfw.SwapInterval(0)
-			}
-			lastFocused = *focused
-		}
-		if *focused {
-			pumpEvents(glfw.PollEvents)
-		} else {
-			pumpEvents(func() { glfw.WaitEventsTimeout(1.0 / 30.0) })
-		}
+		pumpFrame(win, *focused, lastPresent)
 
 		// A one-off content-scale check right after window creation isn't
 		// always enough — observed on macOS, where GLFW can keep reporting
