@@ -2,6 +2,7 @@ package font
 
 import (
 	"image"
+	"math"
 	"testing"
 )
 
@@ -313,4 +314,22 @@ func hasCoverage(atlas *Atlas, g Glyph) bool {
 		}
 	}
 	return false
+}
+
+// TestFitPrivateUseKeepsIconCentered guards against shrinking an oversized
+// icon's bearing toward the baseline, which drops it below the text.
+func TestFitPrivateUseKeepsIconCentered(t *testing.T) {
+	w, h, left, top := 40, 40, 0, 30
+	pix := make([]byte, w*h)
+	_, nw, nh, nleft, ntop := fitPrivateUse(pix, w, h, left, top, 10, 20)
+	wantCenterY := float64(top) - float64(h)/2
+	gotCenterY := float64(ntop) - float64(nh)/2
+	if math.Abs(gotCenterY-wantCenterY) > 1 {
+		t.Fatalf("vertical center moved: got %v, want %v", gotCenterY, wantCenterY)
+	}
+	wantCenterX := float64(left) + float64(w)/2
+	gotCenterX := float64(nleft) + float64(nw)/2
+	if math.Abs(gotCenterX-wantCenterX) > 1 {
+		t.Fatalf("horizontal center moved: got %v, want %v", gotCenterX, wantCenterX)
+	}
 }

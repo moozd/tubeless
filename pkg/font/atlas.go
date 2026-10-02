@@ -565,19 +565,30 @@ func blitGlyph(face *ftFace, r rune, dst *image.Alpha, gx, gy, cellW, cellH, asc
 	blitCoverage(pix, w, h, left, top, dst, gx, gy, cellW, cellH, ascender, gamma)
 }
 
-// fitPrivateUse uniformly shrinks a private-use icon bitmap (and its
-// bearing) down to fitScale's target whenever it overflows boxW x boxH —
-// see fitScale's own doc for why this never grows an undersized one up.
-// A no-op at exactly scale 1.
+// fitPrivateUse uniformly shrinks a private-use icon bitmap down to
+// fitScale's target whenever it overflows boxW x boxH — see fitScale's own doc for why this never grows an undersized one up.
+// The shrink keeps the icon's center fixed (see shrinkAboutCenter). A
+// no-op at exactly scale 1.
 func fitPrivateUse(pix []byte, w, h, left, top, boxW, boxH int) ([]byte, int, int, int, int) {
 	scale := fitScale(w, h, boxW, boxH)
 	if scale == 1 {
 		return pix, w, h, left, top
 	}
+	oldW, oldH := w, h
 	pix, w, h = scaleCoverage(pix, w, h, scale)
-	left = int(float64(left) * scale)
-	top = int(float64(top) * scale)
+	left = shrinkAboutCenter(left, oldW, w)
+	top = shrinkAboutCenter(top-oldH, oldH, h) + h
 	return pix, w, h, left, top
+}
+
+// shrinkAboutCenter returns the new leading edge of a span whose size
+// went from oldSize to newSize while keeping its center fixed — the
+// same rule Ghostty's Constraint.constrainInner uses ("preserving the
+// center bearings"). Scaling the edge itself instead drags the whole
+// icon toward the origin (the baseline, for top), which reads as an
+// icon sitting too low in the cell.
+func shrinkAboutCenter(edge, oldSize, newSize int) int {
+	return edge + (oldSize-newSize)/2
 }
 
 // blitCoverage stamps an already-fit coverage bitmap into dst's (gx,gy)
