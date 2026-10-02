@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"sync/atomic"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
@@ -91,6 +92,9 @@ func wireInput(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 	win.SetCharModsCallback(func(_ *glfw.Window, r rune, mods glfw.ModifierKey) {
 		win.SetInputMode(glfw.CursorMode, glfw.CursorHidden)
 		handleChar(sess, r, mods, keyboardModeOf(shared.Load()))
+	})
+	win.SetDropCallback(func(_ *glfw.Window, paths []string) {
+		pasteDroppedFiles(sess, shared, paths)
 	})
 	win.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, _ int, action glfw.Action, mods glfw.ModifierKey) {
 		if action == glfw.Press || action == glfw.Repeat {
@@ -527,7 +531,11 @@ func encodeTildeKey(num int, mods glfw.ModifierKey) []byte {
 // to auto-indent every line of a multi-line paste. Read via readClipboard
 // so the Wayland build still sees the X11 CLIPBOARD that xclip writes.
 func pasteFromClipboard(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen]) {
-	text := readClipboard(win)
+	pasteText(sess, shared, readClipboard(win))
+}
+
+// pasteText writes text into the PTY, bracketed when the app asked for it.
+func pasteText(sess *sessionRef, shared *atomic.Pointer[screen.Screen], text string) {
 	if text == "" {
 		return
 	}
@@ -539,3 +547,29 @@ func pasteFromClipboard(win *render.Window, sess *sessionRef, shared *atomic.Poi
 	}
 	sess.Write([]byte(text))
 }
+
+// pasteDroppedFiles pastes files dragged onto the window as space-separated,
+// shell-escaped paths — what other terminals do — so a drop reads as a paste
+// and apps like Claude Code can pick up an image path from it.
+func pasteDroppedFiles(sess *sessionRef, shared *atomic.Pointer[screen.Screen], paths []string) {
+	quoted := make([]string, len(paths))
+	for i, p := range paths {
+		quoted[i] = quoteShellPath(p)
+	}
+	pasteText(sess, shared, strings.Join(quoted, " ")+" ")
+}
+
+// quoteShellPath backslash-escapes every character a shell would split or
+// expand, leaving ordinary path characters alone.
+func quoteShellPath(path string) string {
+	var b strings.Builder
+	for _, r := range path {
+		if strings.ContainsRune(shellSpecialChars, r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+const shellSpecialChars = " \t\"'`\\$&;|<>()[]{}*?!#~^"

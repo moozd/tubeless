@@ -149,3 +149,17 @@ func TestShiftRune(t *testing.T) {
 		}
 	}
 }
+
+func TestQuoteShellPath(t *testing.T) {
+	cases := map[string]string{
+		"/tmp/a.png":        "/tmp/a.png",
+		"/tmp/my shot.png":  `/tmp/my\ shot.png`,
+		"/tmp/it's (1).png": `/tmp/it\'s\ \(1\).png`,
+		`/tmp/a$b&c.png`:    `/tmp/a\$b\&c.png`,
+	}
+	for in, want := range cases {
+		if got := quoteShellPath(in); got != want {
+			t.Errorf("quoteShellPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
