@@ -44,7 +44,7 @@ jobs:
           sudo apt-get install -y \
             libgl1-mesa-dev xorg-dev \
             libwayland-dev libxkbcommon-dev wayland-protocols extra-cmake-modules \
-            libharfbuzz-dev
+            libharfbuzz-dev libasound2-dev
       - name: Build and package
         run: make package-linux
       - uses: actions/upload-artifact@v4

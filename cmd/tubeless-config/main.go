@@ -1097,6 +1097,15 @@ func (u *ui) buildFontsThemeList() []panelRow {
 		},
 	})
 
+	section("sound — tumbler")
+	add(newToggle("sound.tumbler.enabled", "tumbler",
+		"safe-dial detent clicks that spin faster the more the screen changes",
+		func(c *config.Config) bool { return c.Sound.Tumbler.Enabled },
+		func(c *config.Config, v bool) { c.Sound.Tumbler.Enabled = v }))
+	add(newSlider("sound.tumbler.volume", "volume", "tumbler master volume", "", 2, 0.05, 0, 1,
+		func(c *config.Config) float64 { return c.Sound.Tumbler.Volume },
+		func(c *config.Config, v float64) { c.Sound.Tumbler.Volume = v }))
+
 	section("theme")
 	add(&setting{
 		key: "theme", label: "theme",

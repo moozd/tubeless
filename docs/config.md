@@ -127,6 +127,20 @@ RGB triples `[r, g, b]` in `0.0-1.0`, not raw hex.
 | --------- | ------ | ------- | ------------------------------------------------------------------------ |
 | `program` | string | `""`    | Which installed shell to launch into. Empty (`"auto"` in the config TUI) follows `$SHELL`. `"tmux"` attaches to (or creates) a fixed session named `home` instead of a plain login shell, only when tmux is on `PATH`. Any other value names a shell resolved via `PATH` — the config TUI's shell row lists what's actually installed on this machine. Only applies on the `$SHELL` auto-detect path (an explicit `--shell` always wins). |
 
+### `[sound.tumbler]`
+
+A safe-dial sound effect: screen changes turn an imaginary combination-lock
+knob, one synthesized detent click per few changed cells. A single keystroke
+is one click; the more content changes, the faster the knob spins (up to a
+ratchet at heavy redraws), and it coasts down when the output stops. Audio
+is generated live, no sound files. The audio device is only opened once the
+first click is due.
+
+| Key       | Type  | Default | Meaning                                  |
+| --------- | ----- | ------- | ------------------------------------------- |
+| `enabled` | bool  | `false` | Turn the effect on.                      |
+| `volume`  | float | `0.5`   | Master volume, `0-1`.                    |
+
 ### Theme axis: `[colors]` and `[phosphor]`
 
 | Key                 | Meaning                                                                 |

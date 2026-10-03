@@ -47,6 +47,7 @@ type Config struct {
 	Contrast   Contrast   `toml:"contrast"`
 	Scrollback Scrollback `toml:"scrollback"`
 	Shell      Shell      `toml:"shell"`
+	Sound      Sound      `toml:"sound"`
 	CRT        CRT        `toml:"crt"`
 }
 
@@ -708,6 +709,7 @@ func Default() Config {
 		Padding:    Padding{Size: 15.0},
 		Scrollback: Scrollback{Lines: DefaultScrollbackLines},
 		Shell:      Shell{Program: "tmux"},
+		Sound:      Sound{Tumbler: Tumbler{Volume: 0.5}},
 		// HueWeight/Amount's zero value (0) is each a valid explicit
 		// choice ("luminance only" / "stay on the ramp" — see their own
 		// doc comments), so neither can double as "unset" the way

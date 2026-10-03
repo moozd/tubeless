@@ -91,7 +91,7 @@ Install the build dependencies for your OS:
 sudo apt-get install -y \
   libgl1-mesa-dev xorg-dev \
   libwayland-dev libxkbcommon-dev wayland-protocols extra-cmake-modules \
-  libharfbuzz-dev libfreetype-dev pkg-config
+  libharfbuzz-dev libfreetype-dev libasound2-dev pkg-config
 ```
 
 **Fedora/RHEL**
@@ -100,7 +100,7 @@ sudo apt-get install -y \
 sudo dnf install -y \
   mesa-libGL-devel libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
   wayland-devel libxkbcommon-devel wayland-protocols-devel extra-cmake-modules \
-  harfbuzz-devel freetype-devel pkgconf-pkg-config
+  harfbuzz-devel freetype-devel alsa-lib-devel pkgconf-pkg-config
 ```
 
 **openSUSE**
@@ -109,7 +109,7 @@ sudo dnf install -y \
 sudo zypper install -y \
   Mesa-libGL-devel libX11-devel libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
   wayland-devel libxkbcommon-devel wayland-protocols-devel extra-cmake-modules \
-  harfbuzz-devel freetype2-devel pkg-config
+  harfbuzz-devel freetype2-devel alsa-devel pkg-config
 ```
 
 **Arch/Manjaro**
@@ -118,7 +118,7 @@ sudo zypper install -y \
 sudo pacman -S --needed \
   mesa libx11 libxcursor libxi libxinerama libxrandr \
   wayland libxkbcommon wayland-protocols extra-cmake-modules \
-  harfbuzz freetype2 pkgconf
+  harfbuzz freetype2 alsa-lib pkgconf
 ```
 
 **macOS**

@@ -33,6 +33,7 @@ import (
 	"github.com/moozd/tubeless/pkg/ptyio"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
+	"github.com/moozd/tubeless/pkg/tumbler"
 	"github.com/moozd/tubeless/pkg/upgrade"
 	"github.com/moozd/tubeless/pkg/vtparse"
 )
@@ -1183,6 +1184,15 @@ func pumpFrame(win *render.Window, isFocused bool, lastPresent time.Time) {
 	pumpEvents(glfw.PollEvents)
 }
 
+// feedTumbler turns the tumbler knob by however many cells changed
+// between two published screens. A no-op while the effect is off.
+func feedTumbler(knob *tumbler.Player, cfg config.Tumbler, scr, prev *screen.Screen) {
+	if !cfg.Enabled {
+		return
+	}
+	knob.Feed(scr.ChangedCells(prev), cfg.Volume)
+}
+
 // runLoop drives a continuous, vsync-paced render so the cursor can
 // animate in real time. The scene (cell buffers + shape blur) is
 // dirty-gated — it only rebuilds when the published Screen changed or the
@@ -1207,6 +1217,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	watch := &cfgWatch{path: cfgPath}
 	reload := false
 	lastPresent := time.Now()
+	knob := tumbler.NewPlayer()
 	// reqDpiX/reqDpiY remember the scale the newest font build was
 	// *requested* for. cs.dpiX/dpiY only catch up once that build lands and
 	// installs, so comparing the monitor's scale against cs below would
@@ -1255,6 +1266,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		r.UpdateScroll(scroll.target, dt)
 		scrollLine := r.CurrentScrollLine()
 		if scr != lastScr {
+			feedTumbler(knob, cfg.Sound.Tumbler, scr, lastScr)
 			// A yank in tmux (with set-clipboard on) or an OSC52-aware
 			// app relaying a copy out of a nested session — see
 			// Screen.PendingClipboard — lands here as plain text to

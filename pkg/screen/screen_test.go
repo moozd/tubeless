@@ -145,3 +145,18 @@ func TestUTF8Print(t *testing.T) {
 		t.Fatalf("got %q, want café", got)
 	}
 }
+
+func TestChangedCells(t *testing.T) {
+	a, b := New(10, 3), New(10, 3)
+	b.Grid[1][2].Rune = 'x'
+	b.Grid[2][9].Rune = 'y'
+	if got := b.ChangedCells(a); got != 2 {
+		t.Fatalf("changed cells = %d, want 2", got)
+	}
+	if got := b.ChangedCells(nil); got != 0 {
+		t.Fatalf("nil prev = %d, want 0", got)
+	}
+	if got := b.ChangedCells(New(8, 3)); got != 0 {
+		t.Fatalf("resized = %d, want 0", got)
+	}
+}

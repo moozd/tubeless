@@ -598,3 +598,27 @@ func clamp(v, lo, hi int) int {
 	}
 	return v
 }
+
+// ChangedCells counts the grid cells whose content differs from prev's.
+// A nil prev or a different grid size (a resize, not a content change)
+// counts as none.
+func (s *Screen) ChangedCells(prev *Screen) int {
+	if prev == nil || s.Cols != prev.Cols || s.Rows != prev.Rows {
+		return 0
+	}
+	n := 0
+	for y := range s.Grid {
+		n += changedInRow(s.Grid[y], prev.Grid[y])
+	}
+	return n
+}
+
+func changedInRow(a, b []Cell) int {
+	n := 0
+	for x := range min(len(a), len(b)) {
+		if a[x] != b[x] {
+			n++
+		}
+	}
+	return n
+}
