@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -18,8 +20,9 @@ import (
 // Config is the full set of user-settable settings. Nested sections map
 // 1:1 to TOML tables so the file reads like the TUI's section list.
 //
-// Theme and Preset are two independent axes, each named after whichever
-// built-in seeded the fields it governs — "custom" once the user edits
+// Theme and Preset are two fully independent axes — picking one never
+// changes the other — each named after whichever built-in seeded the
+// fields it governs — "custom" once the user edits
 // past that seed (see ThemeNames/EffectsPresetNames and the config TUI's
 // own doc comment on how editing flips a name to "custom"):
 //
@@ -376,15 +379,23 @@ func ThemeNames() []string {
 		"rosepine", "rosepine-moon", "gruvbox-dark-hard", "nord", "dracula",
 		"catppuccin-mocha", "tokyo-night", "one-dark", "green", "amber",
 		"green-p39", "white-p4", "cga", "cyberpunk", "neon",
+		"nixie", "vfd", "dmg", "scope", "ember", "sepia", "ultraviolet",
+		"rose-gold", "seafoam", "lavender-haze", "sunset", "sage", "glacier",
+		"mulberry", "gold-leaf",
+		"green-night", "moss", "emerald-noir", "amber-night", "bronze-night",
+		"ice-night", "p4-night", "crimson-night", "msdos-blue", "msdos-black",
+		"turbo-blue",
+		"pipboy", "nostromo", "wopr", "matrix", "replicant",
+		"tron", "synthwave", "c64", "terminator", "vertigo",
+		"ibm-3278", "arcade", "radar-p7",
 	}
 }
 
 // Theme returns the color values a named theme seeds. Unknown or empty
 // names fall back to rosepine, the default. green-p39/white-p4/cga are
-// period-accurate companions to the monochrome/CGA entries in
-// EffectsPresetNames (see monitors.go and MonitorTheme); cyberpunk is
-// its own companion to the "cyberpunk" effects preset there, and neon
-// the same for the "neon" preset.
+// period-accurate colors for the monitors in EffectsPresetNames (see
+// monitors.go). Themes and presets are chosen independently; neither
+// ever seeds the other.
 func Theme(name string) ThemeColors {
 	switch name {
 	case "amber":
@@ -401,6 +412,84 @@ func Theme(name string) ThemeColors {
 		return cyberpunkTheme()
 	case "neon":
 		return neonTheme()
+	case "nixie":
+		return nixieTheme()
+	case "vfd":
+		return vfdTheme()
+	case "dmg":
+		return dmgTheme()
+	case "scope":
+		return scopeTheme()
+	case "ember":
+		return emberTheme()
+	case "sepia":
+		return sepiaTheme()
+	case "ultraviolet":
+		return ultravioletTheme()
+	case "rose-gold":
+		return roseGoldTheme()
+	case "seafoam":
+		return seafoamTheme()
+	case "lavender-haze":
+		return lavenderHazeTheme()
+	case "sunset":
+		return sunsetTheme()
+	case "sage":
+		return sageTheme()
+	case "glacier":
+		return glacierTheme()
+	case "mulberry":
+		return mulberryTheme()
+	case "gold-leaf":
+		return goldLeafTheme()
+	case "green-night":
+		return greenNightTheme()
+	case "moss":
+		return mossTheme()
+	case "emerald-noir":
+		return emeraldNoirTheme()
+	case "amber-night":
+		return amberNightTheme()
+	case "bronze-night":
+		return bronzeNightTheme()
+	case "ice-night":
+		return iceNightTheme()
+	case "p4-night":
+		return p4NightTheme()
+	case "crimson-night":
+		return crimsonNightTheme()
+	case "msdos-blue":
+		return msdosBlueTheme()
+	case "msdos-black":
+		return msdosBlackTheme()
+	case "turbo-blue":
+		return turboBlueTheme()
+	case "pipboy":
+		return pipboyTheme()
+	case "nostromo":
+		return nostromoTheme()
+	case "wopr":
+		return woprTheme()
+	case "matrix":
+		return matrixTheme()
+	case "replicant":
+		return replicantTheme()
+	case "tron":
+		return tronTheme()
+	case "synthwave":
+		return synthwaveTheme()
+	case "c64":
+		return c64Theme()
+	case "terminator":
+		return terminatorTheme()
+	case "vertigo":
+		return vertigoTheme()
+	case "ibm-3278":
+		return ibm3278Theme()
+	case "arcade":
+		return arcadeTheme()
+	case "radar-p7":
+		return radarP7Theme()
 	case "rosepine-moon":
 		return rosepineMoonTheme()
 	case "gruvbox-dark-hard":
@@ -441,7 +530,7 @@ const DefaultScrollbackLines = 5000
 // dominantWavelengthChromaticity's doc comment. 75% purity (rather than a
 // more fully saturated point closer to the spectral locus) keeps the
 // result a warm gold-orange instead of a deeply saturated traffic-orange.
-// This is also the theme MonitorTheme links to zenith-zvm-1220's effects
+// This is the period color for zenith-zvm-1220's effects
 // preset — Zenith's own service manual documents the ZVM-1220 as an
 // "amber phosphor CRT" without naming a JEDEC P-number, so it inherits
 // this construction rather than a second, redundant one.
@@ -464,7 +553,7 @@ func greenTheme() ThemeColors {
 }
 
 // cyberpunkTheme is a monochrome ramp built around a vivid neon cyan,
-// the companion color to the "cyberpunk" effects preset (see
+// the color that suits the "cyberpunk" effects preset (see
 // monitors.go). Unlike amber/green/green-p39/white-p4 above, this isn't
 // phosphorColor(x, y) from a real or dominant-wavelength chromaticity —
 // this saturated a cyan sits well outside sRGB's own gamut mapping for
@@ -741,6 +830,10 @@ func Default() Config {
 // about to be overridden by the TOML unmarshal that follows in Load, or
 // by hand in the config TUI).
 func applyTheme(cfg *Config, name string) {
+	if !isKnownName(ThemeNames(), name) {
+		log.Printf("config: unknown theme %q, treating as custom", name)
+		name = "custom"
+	}
 	cfg.Theme = name
 	if name == "custom" {
 		return
@@ -752,6 +845,10 @@ func applyTheme(cfg *Config, name string) {
 // applyEffectsPreset is applyTheme's counterpart for the effects axis —
 // see EffectsPreset/Effects.
 func applyEffectsPreset(cfg *Config, name string) {
+	if !isKnownName(EffectsPresetNames(), name) {
+		log.Printf("config: unknown preset %q, treating as custom", name)
+		name = "custom"
+	}
 	cfg.Preset = name
 	if name == "custom" {
 		return
@@ -760,6 +857,11 @@ func applyEffectsPreset(cfg *Config, name string) {
 	cfg.Surface, cfg.Blur, cfg.Cursor = e.Surface, e.Blur, e.Cursor
 	cfg.TextGlow = e.TextGlow
 	cfg.Face, cfg.Contrast, cfg.CRT = e.Face, e.Contrast, e.CRT
+}
+
+// isKnownName reports whether name is one of names, or "custom".
+func isKnownName(names []string, name string) bool {
+	return name == "custom" || slices.Contains(names, name)
 }
 
 // Save writes cfg to path as TOML, creating parent directories as needed.

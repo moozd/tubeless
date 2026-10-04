@@ -17,19 +17,18 @@ type Effects struct {
 }
 
 // EffectsPresetNames lists every registered effects preset, in the order
-// the config TUI's preset cycler steps through them — modern (the
-// CRT-off default) followed by six 80s monitors spanning the look's
-// range: a sharp monochrome data display, a shadow-mask digital RGB
-// monitor, a soft composite monochrome monitor, a long-persistence white
-// monochrome monitor, and two shadow-mask analog RGB monitors at
-// different quality tiers — then cyberpunk, a fictional look rather than
-// a real monitor (see cyberpunkEffects' own doc comment) — and neon, its
-// full-color, text-glowing counterpart (see neonEffects).
+// the config TUI's preset picker shows them: modern (the CRT-off
+// default), the author's daily-driver, five 80s monitors spanning the
+// look's range (a sharp monochrome data display, a shadow-mask digital
+// RGB monitor, a soft composite monitor, a long-persistence white
+// monitor, a shadow-mask analog RGB monitor), then the two fictional
+// looks cyberpunk and neon. A preset only ever seeds effects — it never
+// touches the theme (colors); the two axes are chosen independently.
 func EffectsPresetNames() []string {
 	return []string{
-		"modern", "ibm-5151", "ibm-5153", "zenith-zvm-1220",
-		"apple-monitor-iii", "commodore-1084s", "princeton-hx12",
-		"cyberpunk", "neon",
+		"modern", "daily-driver", "ibm-5151", "ibm-5153",
+		"commodore-1084s", "apple-monitor-iii", "zenith-zvm-1220",
+		"princeton-hx12", "cyberpunk", "neon",
 	}
 }
 
@@ -53,36 +52,10 @@ func EffectsPreset(name string) Effects {
 		return cyberpunkEffects()
 	case "neon":
 		return neonEffects()
+	case "daily-driver":
+		return dailyDriverEffects()
 	default:
 		return modernEffects()
-	}
-}
-
-// MonitorTheme reports the color theme a named effects preset is
-// authentic (or, for cyberpunk, matched) with, when one exists — a
-// monochrome monitor's phosphor color (or a fixed-palette digital
-// monitor's native palette) is as much a part of "being that monitor" as
-// its scanlines, so selecting one of these in the config TUI switches
-// Theme the same moment it switches Preset. An analog RGB monitor with
-// no fixed native palette (commodore-1084s, princeton-hx12) reports
-// ok=false and leaves the active theme alone — it rendered whatever the
-// host computer sent it, same as any TrueColor theme does today.
-func MonitorTheme(presetName string) (theme string, ok bool) {
-	switch presetName {
-	case "ibm-5151":
-		return "green-p39", true
-	case "ibm-5153":
-		return "cga", true
-	case "zenith-zvm-1220":
-		return "amber", true
-	case "apple-monitor-iii":
-		return "white-p4", true
-	case "cyberpunk":
-		return "cyberpunk", true
-	case "neon":
-		return "neon", true
-	default:
-		return "", false
 	}
 }
 
@@ -258,8 +231,8 @@ func princetonHX12Effects() Effects {
 // monitor — no CRT emulation at all (CRT stays at its zero value, the
 // same "off" convention modernEffects uses), the sharpest and most
 // modern digital feel of any preset here. Only Surface/Blur/Face/Cursor
-// are tuned, for a neon monochrome look, paired with cyberpunkTheme's
-// neon cyan (see MonitorTheme).
+// are tuned, for a neon monochrome look; cyberpunkTheme's neon cyan
+// suits it.
 //
 // Blur.Strength is deliberately much lower than every preset above
 // (0.12, vs. modern's 0.5): those presets were tuned against a
@@ -318,7 +291,7 @@ func neonEffects() Effects {
 	return e
 }
 
-// greenP39Theme is the color companion to ibm-5151 (see MonitorTheme):
+// greenP39Theme is the period color for ibm-5151:
 // IBM's own documentation names the phosphor P39 (Zn2SiO4:Mn,As) and
 // describes it as "very saturated" and "dark green" — distinctly more
 // saturated than the P1 scope-green greenTheme already models — but its
@@ -333,8 +306,7 @@ func greenP39Theme() ThemeColors {
 	return ThemeColors{Phosphor: Phosphor{Low: scale3(peak, 0.38), High: peak}}
 }
 
-// whiteP4Theme is the color companion to apple-monitor-iii (see
-// MonitorTheme). P4 (the standard black-and-white TV/data-monitor
+// whiteP4Theme is the period color for apple-monitor-iii. P4 (the standard black-and-white TV/data-monitor
 // phosphor blend) is widely documented in CRT restoration references as
 // a cool, blue-leaning white rather than a neutral D65 white — no public
 // source gives its JEDEC-registered xy, so this uses a commonly cited
@@ -345,7 +317,7 @@ func whiteP4Theme() ThemeColors {
 	return ThemeColors{Phosphor: Phosphor{Low: scale3(peak, 0.45), High: peak}}
 }
 
-// cgaTheme is the color companion to ibm-5153 (see MonitorTheme): the
+// cgaTheme is the period color for ibm-5153: the
 // real measured 16-color CGA output of an actual IBM 5153, from
 // engineer Dr. Hugo Holden's gun-amplifier voltage measurements
 // (int10h.org, "The IBM 5153's True CGA Palette and Color Output") —
