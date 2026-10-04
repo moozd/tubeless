@@ -41,6 +41,12 @@ Setting either one seeds the fields it governs; hand-editing any of
 those fields afterward (or through the config TUI) flips that axis's
 name to `"custom"` so it's never silently reseeded later.
 
+The axes never affect each other: picking a preset leaves your theme
+alone, and picking a theme leaves your effects alone. A `preset` or
+`theme` name that no longer exists (for example `preset = "nixie"` from
+an older version) is logged and treated as `"custom"`: your own values
+are kept and nothing is reseeded.
+
 ```toml
 theme = "rosepine"
 preset = "modern"
@@ -50,43 +56,78 @@ preset = "modern"
 
 `rosepine` (default) · `rosepine-moon` · `gruvbox-dark-hard` · `nord` ·
 `dracula` · `catppuccin-mocha` · `tokyo-night` · `one-dark` · `green` ·
-`amber` · `green-p39` · `white-p4` · `cga` · `cyberpunk` · `neon`
+`amber` · `green-p39` · `white-p4` · `cga` · `cyberpunk` · `neon` ·
+`nixie` · `vfd` · `dmg` · `scope` · `ember` · `sepia` · `ultraviolet` ·
+`rose-gold` · `seafoam` · `lavender-haze` · `sunset` · `sage` · `glacier` ·
+`mulberry` · `gold-leaf` · `green-night` · `moss` · `emerald-noir` ·
+`amber-night` · `bronze-night` · `ice-night` · `p4-night` · `crimson-night` ·
+`msdos-blue` · `msdos-black` · `turbo-blue` · `pipboy` · `nostromo` · `wopr` ·
+`matrix` · `replicant` · `tron` · `synthwave` · `c64` · `terminator` ·
+`vertigo` · `ibm-3278` · `arcade` · `radar-p7`
 
-The last six (`green`, `amber`, `green-p39`, `white-p4`, `cga`,
-`cyberpunk`) are monochrome or fixed-palette themes — companions to the
-CRT/effects presets below rather than independent color schemes;
-`cyberpunk` (neon cyan) is a fictional companion, the rest period-
-accurate. `neon` is a true-color rainbow companion to the `neon`
-preset: a low-chroma default foreground and grays, with every hue slot
-a saturated neon, so its preset's selective text glow lights up only
-colored output.
+The monochrome and fixed-palette themes (`green`, `amber`, `green-p39`,
+`white-p4`, `cga`, `cyberpunk`) pair naturally with the monitor presets
+below but never depend on them. `green-p39`, `white-p4`, `cga` and
+`amber` are period-accurate phosphor and palette colors; `cyberpunk`
+(neon cyan) is fictional. `neon` is a true-color rainbow theme: a
+low-chroma default foreground and grays, with every hue slot a saturated
+neon, so the `neon` preset's selective text glow lights up only colored
+output.
+
+**Palette themes** — chosen for their color. Each is a duotone: the dim
+and bright ends of the ramp are two different, paired hues, so text
+shades through a gradient (dusty rose into warm gold) instead of one
+color at varying brightness: `rose-gold`, `seafoam`, `lavender-haze`,
+`sunset`, `sage`, `glacier`, `mulberry`, `gold-leaf`.
+
+**Night themes** — darker takes for late hours, with a bright end at or
+under 80% so nothing glares: `green-night`, `moss`, `emerald-noir`,
+`amber-night`, `bronze-night`, `ice-night`, `p4-night`, `crimson-night`.
+
+**Hardware themes** — `nixie`, `vfd`, `dmg`, `scope`, `ember`, `sepia`,
+`ultraviolet`: the glow colors of a nixie tube, vacuum-fluorescent
+display, handheld LCD, scope tube, red LED readout, thermal paper and a
+fictional blacklight tube.
+
+**MS-DOS themes** — true-color themes on the real 16-color VGA text
+palette: `msdos-blue` (light gray on VGA blue), `msdos-black` (light
+gray on black) and `turbo-blue` (yellow on blue with a cyan accent, a
+Borland-IDE look). Being true-color themes they ignore `[monochrome]`
+and `true_color` is switched on when you pick them.
+
+**Screen themes** — inspired by famous screens and other retro terminal
+emulators (cool-retro-term's community themes were the color
+reference): `pipboy`, `nostromo`, `wopr`, `matrix`, `replicant`,
+`tron`, `synthwave`, `c64`, `terminator`, `vertigo`, `ibm-3278`,
+`arcade`, `radar-p7`.
+
+All of the monochrome themes render under whatever `[monochrome]` mode
+is set (it is outside both axes) — with `spectrum`, part of each cell's
+real color is mixed back in, so e.g. directory blues show through a red
+or orange theme.
 
 ### Built-in presets
 
-`modern` (every CRT effect off) · `ibm-5151` · `ibm-5153` ·
-`zenith-zvm-1220` · `apple-monitor-iii` · `commodore-1084s` ·
-`princeton-hx12` · `cyberpunk` (also every CRT effect off — a sharp,
-modern digital feel, not a real monitor) · `neon` (a neon-sign look:
-selective text glow, low block bloom, a faint RGB fringe and scanlines)
+Presets are effects only. Every one of them works with every theme.
+
+| Preset              | Look |
+| ------------------- | ---- |
+| `modern`            | Every CRT effect off (the default). |
+| `daily-driver`      | The author's own look: soft bloom, medium scanlines, deep inset shadow. |
+| `ibm-5151`          | IBM 5151 monochrome data display: sharp, long persistence. Pairs with `green-p39`. |
+| `ibm-5153`          | IBM 5153 digital RGB monitor: shadow mask. Pairs with `cga`. |
+| `zenith-zvm-1220`   | Zenith ZVM-1220 amber monitor. Pairs with `amber`. |
+| `apple-monitor-iii` | Apple Monitor III soft composite white. Pairs with `white-p4`. |
+| `commodore-1084s`   | Commodore 1084S analog RGB: shadow mask, soft. |
+| `princeton-hx12`    | Princeton HX-12 analog RGB, a higher quality tier. |
+| `cyberpunk`         | A sharp, modern digital feel, not a real monitor. Pairs with `cyberpunk`. |
+| `neon`              | A neon-sign look: selective text glow, low block bloom, a faint RGB fringe and scanlines. Pairs with `neon`. |
 
 Each `ibm-*`/`zenith-*`/`apple-*`/`commodore-*`/`princeton-*` preset
 models one real 1980s monitor's curvature, phosphor persistence, noise,
 and (where applicable) shadow-mask convergence error, tuned from that
-display's own service manual. Six of them have one theme pairing
-(selecting the preset in `tubeless config` switches the theme too):
-
-| Preset              | Paired theme |
-| ------------------- | ------------ |
-| `ibm-5151`          | `green-p39`  |
-| `ibm-5153`          | `cga`        |
-| `zenith-zvm-1220`   | `amber`      |
-| `apple-monitor-iii` | `white-p4`   |
-| `cyberpunk`         | `cyberpunk`  |
-| `neon`              | `neon`       |
-
-(`commodore-1084s` and `princeton-hx12` have no fixed native palette —
-real analog RGB monitors that just rendered whatever the host sent
-them — so picking one leaves the active theme alone.)
+display's own service manual. "Pairs with" is only a suggestion: pick
+the theme yourself.
 
 ## Reference
 

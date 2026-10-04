@@ -36,17 +36,28 @@ block's own rendered pixels, not a fixed overlay image.
 - Real italic/bold glyphs and ligatures shaped by HarfBuzz straight
   from the loaded font's own GSUB table
 - Native Wayland and X11 backends on Linux; native Cocoa on macOS
-- True-color rendering with 15 built-in themes (rosepine,
+- True-color rendering with 54 built-in themes (rosepine,
   rosepine-moon, gruvbox-dark-hard, nord, dracula, catppuccin-mocha,
   tokyo-night, one-dark, green, amber, green-p39, white-p4, cga,
-  cyberpunk, neon) plus a custom theme editor
+  cyberpunk, neon, seven retro monochromes — nixie, vfd, dmg, scope,
+  ember, sepia, ultraviolet — eight duotone palettes — rose-gold,
+  seafoam, lavender-haze, sunset, sage, glacier, mulberry, gold-leaf —
+  eight darker night variants — green-night, moss, emerald-noir,
+  amber-night, bronze-night, ice-night, p4-night, crimson-night — and
+  three MS-DOS themes — msdos-blue, msdos-black, turbo-blue — and
+  thirteen screen-inspired ones: pipboy, nostromo, wopr, matrix,
+  replicant, tron, synthwave, c64, terminator, vertigo, ibm-3278,
+  arcade, radar-p7) plus a custom theme editor
 - Period-accurate 80s monitor effect presets (IBM 5151/5153, Zenith
   ZVM-1220, Apple Monitor III, Commodore 1084S, Princeton HX-12) for
   curvature, phosphor persistence, and scanlines — off by default
 - A `neon` preset whose text glow lights up only colorful text, so
   prompts, keywords and git status glow while plain output stays crisp
-- A tabbed, in-terminal config UI (`tubeless config`) with a live
-  preview, covering every setting above
+- A VS Code-style, in-terminal config UI (`tubeless config`): category
+  sidebar, searchable settings with descriptions, modified markers and
+  a live theme preview, covering every setting above. Themes (colors)
+  and effect presets are independent: picking one never changes the
+  other
 - Scrollback, fast scroll/insert-line/delete-line, sixel image output
 - Mouse selection and clipboard copy/paste (Cmd+C/V on macOS,
   Ctrl+Shift+C/V on Linux), aware of apps that request their own mouse
@@ -59,10 +70,13 @@ block's own rendered pixels, not a fixed overlay image.
 
 `tubeless config` runs as a normal VT program: it edits and previews
 every setting (theme, font, cursor, CRT effects) through the same
-rendering pipeline your shell uses, with a live preview strip — no
-separate GUI window, no restart required.
+rendering pipeline your shell uses — no separate GUI window, no restart
+required. A sidebar lists the categories (General, Font, Theme, Effects,
+Cursor, CRT); `/` searches every setting, a dot marks anything changed
+from its default, and `enter` opens a searchable picker for themes,
+presets and fonts, with a live preview as you move through the list.
 
-![The in-terminal config UI's Fonts & Theme tab with a live preview](assets/screenshots/config-ui.png)
+![The in-terminal config UI (screenshot predates the sidebar layout)](assets/screenshots/config-ui.png)
 
 ## Install
 
