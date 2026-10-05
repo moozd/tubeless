@@ -379,7 +379,7 @@ func ThemeNames() []string {
 		"rosepine", "rosepine-moon", "gruvbox-dark-hard", "nord", "dracula",
 		"catppuccin-mocha", "tokyo-night", "one-dark", "green", "amber",
 		"green-p39", "white-p4", "cga", "cyberpunk", "neon",
-		"nixie", "vfd", "dmg", "gba", "scope", "ember", "sepia", "ultraviolet",
+		"nixie", "vfd", "dmg", "scope", "ember", "sepia", "ultraviolet",
 		"rose-gold", "seafoam", "lavender-haze", "sunset", "sage", "glacier",
 		"mulberry", "gold-leaf",
 		"green-night", "moss", "emerald-noir", "amber-night", "bronze-night",
@@ -393,7 +393,7 @@ func ThemeNames() []string {
 		"neural-net", "acid-rain", "clean-room",
 		"e-ink", "parchment", "newsprint", "legal-pad", "sakura",
 		"mint-lcd", "sandstone", "lavender-paper", "receipt", "cloud-deck", "typewriter", "matcha",
-		"ti-83", "hp-48", "casio-fx", "indiglo", "backlit-amber", "led-7seg", "sharp-vfd",
+		"casio-lcd",
 	}
 }
 
@@ -424,8 +424,6 @@ func Theme(name string) ThemeColors {
 		return vfdTheme()
 	case "dmg":
 		return dmgTheme()
-	case "gba":
-		return gbaTheme()
 	case "scope":
 		return scopeTheme()
 	case "ember":
@@ -546,20 +544,8 @@ func Theme(name string) ThemeColors {
 		return typewriterTheme()
 	case "matcha":
 		return matchaTheme()
-	case "ti-83":
-		return ti83Theme()
-	case "hp-48":
-		return hp48Theme()
-	case "casio-fx":
-		return casioFxTheme()
-	case "indiglo":
-		return indigloTheme()
-	case "backlit-amber":
-		return backlitAmberTheme()
-	case "led-7seg":
-		return led7SegTheme()
-	case "sharp-vfd":
-		return sharpVfdTheme()
+	case "casio-lcd":
+		return casioLcdTheme()
 	case "rosepine-moon":
 		return rosepineMoonTheme()
 	case "gruvbox-dark-hard":

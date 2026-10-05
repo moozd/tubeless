@@ -36,10 +36,10 @@ block's own rendered pixels, not a fixed overlay image.
 - Real italic/bold glyphs and ligatures shaped by HarfBuzz straight
   from the loaded font's own GSUB table
 - Native Wayland and X11 backends on Linux; native Cocoa on macOS
-- True-color rendering with 86 built-in themes (rosepine,
+- True-color rendering with 80 built-in themes (rosepine,
   rosepine-moon, gruvbox-dark-hard, nord, dracula, catppuccin-mocha,
   tokyo-night, one-dark, green, amber, green-p39, white-p4, cga,
-  cyberpunk, neon, eight retro monochromes — nixie, vfd, dmg, gba, scope,
+  cyberpunk, neon, seven retro monochromes — nixie, vfd, dmg, scope,
   ember, sepia, ultraviolet — eight duotone palettes — rose-gold,
   seafoam, lavender-haze, sunset, sage, glacier, mulberry, gold-leaf —
   eight darker night variants — green-night, moss, emerald-noir,
@@ -52,8 +52,7 @@ block's own rendered pixels, not a fixed overlay image.
   chrome-noir, bioluminescence, solar-flare, neural-net, acid-rain,
   clean-room — and twelve light paper-and-screen ones: e-ink,
   parchment, newsprint, legal-pad, sakura, mint-lcd, sandstone,
-  lavender-paper, receipt, cloud-deck, typewriter, matcha — and seven calculator displays: ti-83,
-  hp-48, casio-fx, indiglo, backlit-amber, led-7seg, sharp-vfd) plus a custom theme editor
+  lavender-paper, receipt, cloud-deck, typewriter, matcha — and a Casio LCD: casio-lcd) plus a custom theme editor
 - Period-accurate 80s monitor effect presets (IBM 5151/5153, Zenith
   ZVM-1220, Apple Monitor III, Commodore 1084S, Princeton HX-12) for
   curvature, phosphor persistence, and scanlines — off by default

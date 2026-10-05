@@ -57,7 +57,7 @@ preset = "modern"
 `rosepine` (default) · `rosepine-moon` · `gruvbox-dark-hard` · `nord` ·
 `dracula` · `catppuccin-mocha` · `tokyo-night` · `one-dark` · `green` ·
 `amber` · `green-p39` · `white-p4` · `cga` · `cyberpunk` · `neon` ·
-`nixie` · `vfd` · `dmg` · `gba` · `scope` · `ember` · `sepia` · `ultraviolet` ·
+`nixie` · `vfd` · `dmg` · `scope` · `ember` · `sepia` · `ultraviolet` ·
 `rose-gold` · `seafoam` · `lavender-haze` · `sunset` · `sage` · `glacier` ·
 `mulberry` · `gold-leaf` · `green-night` · `moss` · `emerald-noir` ·
 `amber-night` · `bronze-night` · `ice-night` · `p4-night` · `crimson-night` ·
@@ -68,8 +68,7 @@ preset = "modern"
 `bioluminescence` · `solar-flare` · `neural-net` · `acid-rain` · `clean-room` ·
 `e-ink` · `parchment` · `newsprint` · `legal-pad` · `sakura` · `mint-lcd` ·
 `sandstone` · `lavender-paper` · `receipt` · `cloud-deck` · `typewriter` ·
-`matcha` · `ti-83` · `hp-48` · `casio-fx` · `indiglo` · `backlit-amber` ·
-`led-7seg` · `sharp-vfd`
+`matcha` · `casio-lcd`
 
 The next twelve are invented true-color themes, each with its own
 background: polar-night teal (`aurora`), indigo void (`deep-space`),
@@ -87,11 +86,8 @@ paper, a pale sky (`cloud-deck`), ivory `typewriter` paper and a
 `matcha` latte. Palette slots 7 and 15 are dark so every color stays
 readable on the light ground.
 
-The calculator set mimics small displays: `ti-83`, `hp-48` and `casio-fx`
-are gray-green LCDs with dark pixels, `indiglo` a glowing teal watch
-backlight, `backlit-amber` an orange pager or stereo panel, `led-7seg` a
-red seven-segment LED and `sharp-vfd` an icy blue vacuum-fluorescent
-calculator display. They pair well with the `gba` preset's pixel grid.
+`casio-lcd` is a Casio calculator or watch display: a flat gray-olive
+LCD with black segments. It pairs with the `lcd` preset.
 
 The monochrome and fixed-palette themes (`green`, `amber`, `green-p39`,
 `white-p4`, `cga`, `cyberpunk`) pair naturally with the monitor presets
@@ -149,7 +145,7 @@ Presets are effects only. Every one of them works with every theme.
 | `commodore-1084s`   | Commodore 1084S analog RGB: shadow mask, soft. |
 | `princeton-hx12`    | Princeton HX-12 analog RGB, a higher quality tier. |
 | `cyberpunk`         | A sharp, modern digital feel, not a real monitor. Pairs with `cyberpunk`. |
-| `gba`               | Game Boy Advance LCD: pixel-grid mesh, flat reflective face, slight ghosting. Pairs with `gba` (or `dmg`). |
+| `lcd`               | Casio-style reflective LCD: faint pixel mesh, flat face, recessed bezel, slight ghosting. Pairs with `casio-lcd`. |
 | `neon`              | A neon-sign look: selective text glow, low block bloom, a faint RGB fringe and scanlines. Pairs with `neon`. |
 
 Each `ibm-*`/`zenith-*`/`apple-*`/`commodore-*`/`princeton-*` preset
