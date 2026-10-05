@@ -820,6 +820,7 @@ func Default() Config {
 	cfg.CRT = CRT{
 		Scanlines:  Scanlines{Period: 4.0},
 		ShadowMask: ShadowMask{CellSize: 1.0},
+		PixelGrid:  PixelGrid{CellSize: 4.0, Gap: 0.2},
 		Flicker:    Flicker{Speed: 0.5},
 	}
 	return cfg

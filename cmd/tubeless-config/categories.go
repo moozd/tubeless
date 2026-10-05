@@ -481,6 +481,17 @@ func crtRows() []panelRow {
 		func(c *config.Config) float64 { return float64(c.CRT.ShadowMask.CellSize) },
 		func(c *config.Config, v float64) { c.CRT.ShadowMask.CellSize = float32(v) })))
 
+	section("Pixel grid")
+	add(asEffect(newSlider("crt.pixel_grid.intensity", "intensity", "dark gaps between pixel cells; 0 = off", "", 2, 0.01, 0, 1,
+		func(c *config.Config) float64 { return float64(c.CRT.PixelGrid.Intensity) },
+		func(c *config.Config, v float64) { c.CRT.PixelGrid.Intensity = float32(v) })))
+	add(asEffect(newSlider("crt.pixel_grid.cell_size", "cell size", "device px per pixel cell", "px", 1, 0.5, 2, 12,
+		func(c *config.Config) float64 { return float64(c.CRT.PixelGrid.CellSize) },
+		func(c *config.Config, v float64) { c.CRT.PixelGrid.CellSize = float32(v) })))
+	add(asEffect(newSlider("crt.pixel_grid.gap", "gap", "border width as a fraction of a cell", "", 2, 0.01, 0, 0.5,
+		func(c *config.Config) float64 { return float64(c.CRT.PixelGrid.Gap) },
+		func(c *config.Config, v float64) { c.CRT.PixelGrid.Gap = float32(v) })))
+
 	section("Noise")
 	add(asEffect(newSlider("crt.noise.intensity", "intensity", "analog signal noise; 0 = off", "", 3, 0.005, 0, 0.2,
 		func(c *config.Config) float64 { return float64(c.CRT.Noise.Intensity) },

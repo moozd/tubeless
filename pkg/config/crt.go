@@ -11,6 +11,7 @@ type CRT struct {
 	Scanlines     Scanlines     `toml:"scanlines"`
 	Aberration    Aberration    `toml:"aberration"`
 	ShadowMask    ShadowMask    `toml:"shadow_mask"`
+	PixelGrid     PixelGrid     `toml:"pixel_grid"`
 	Noise         Noise         `toml:"noise"`
 	Flicker       Flicker       `toml:"flicker"`
 	PhosphorDecay PhosphorDecay `toml:"phosphor_decay"`
@@ -59,6 +60,19 @@ type Aberration struct {
 type ShadowMask struct {
 	Intensity float32 `toml:"intensity"`
 	CellSize  float32 `toml:"cell_size"`
+}
+
+// PixelGrid darkens a square mesh of gaps between pixel cells on both
+// axes, like an LCD's visible pixel borders (a Game Boy Advance's
+// screen-door look). Unlike Scanlines (horizontal only) or ShadowMask
+// (vertical RGB columns), each cell reads as one lit dot. CellSize is
+// device pixels per cell; Gap is the fraction of a cell, 0..0.5, that
+// the dark border takes up on its top and left edge. Only read once
+// Intensity > 0.
+type PixelGrid struct {
+	Intensity float32 `toml:"intensity"`
+	CellSize  float32 `toml:"cell_size"`
+	Gap       float32 `toml:"gap"`
 }
 
 // Noise adds a faint per-pixel, per-frame brightness jitter — analog

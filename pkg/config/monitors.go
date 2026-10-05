@@ -28,7 +28,7 @@ func EffectsPresetNames() []string {
 	return []string{
 		"modern", "daily-driver", "ibm-5151", "ibm-5153",
 		"commodore-1084s", "apple-monitor-iii", "zenith-zvm-1220",
-		"princeton-hx12", "cyberpunk", "neon",
+		"princeton-hx12", "cyberpunk", "neon", "gba",
 	}
 }
 
@@ -52,6 +52,8 @@ func EffectsPreset(name string) Effects {
 		return cyberpunkEffects()
 	case "neon":
 		return neonEffects()
+	case "gba":
+		return gbaEffects()
 	case "daily-driver":
 		return dailyDriverEffects()
 	default:
@@ -337,4 +339,21 @@ func cgaTheme() ThemeColors {
 			srgb3(0x4e, 0x4e, 0x4e), srgb3(0x4e, 0x4e, 0xdc), srgb3(0x4e, 0xdc, 0x4e), srgb3(0x4e, 0xf3, 0xf3),
 			srgb3(0xdc, 0x4e, 0x4e), srgb3(0xf3, 0x4e, 0xf3), srgb3(0xf3, 0xf3, 0x4e), srgb3(0xff, 0xff, 0xff),
 		})
+}
+
+// gbaEffects models a Game Boy Advance's reflective LCD: a visible
+// square pixel grid (the screen-door mesh), a flat face with no tube
+// shading or bloom, a lifted background (an LCD is never dead black), and
+// the slow liquid-crystal response that smears fast motion, modeled as a
+// short phosphor decay. Pairs with dmgTheme.
+func gbaEffects() Effects {
+	e := modernEffects()
+	e.Surface = Surface{Radius: 0.8}
+	e.Blur = Blur{Radius: 0.8, Strength: 0.1}
+	e.Face = Face{BgTint: 0.12, InsetShadow: 0.05}
+	e.CRT = CRT{
+		PixelGrid:     PixelGrid{Intensity: 0.3, CellSize: 3.0, Gap: 0.34},
+		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.12},
+	}
+	return e
 }

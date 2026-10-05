@@ -121,6 +121,7 @@ Presets are effects only. Every one of them works with every theme.
 | `commodore-1084s`   | Commodore 1084S analog RGB: shadow mask, soft. |
 | `princeton-hx12`    | Princeton HX-12 analog RGB, a higher quality tier. |
 | `cyberpunk`         | A sharp, modern digital feel, not a real monitor. Pairs with `cyberpunk`. |
+| `gba`               | Game Boy Advance LCD: pixel-grid mesh, flat reflective face, slight ghosting. Pairs with `dmg`. |
 | `neon`              | A neon-sign look: selective text glow, low block bloom, a faint RGB fringe and scanlines. Pairs with `neon`. |
 
 Each `ibm-*`/`zenith-*`/`apple-*`/`commodore-*`/`princeton-*` preset
@@ -228,6 +229,9 @@ Every field defaults to off (`0`) under the `modern` preset.
 | `[crt.aberration]`    | `amount`        | Red/blue channel offset from center, in UV units (lens chromatic aberration). |
 | `[crt.shadow_mask]`   | `intensity`     | Procedural RGB triad overlay (shadow-mask subpixel structure).       |
 |                       | `cell_size`     | Device pixels per triad column.                                      |
+| `[crt.pixel_grid]`    | `intensity`     | Dark gaps between pixel cells on both axes (LCD screen-door look). |
+|                       | `cell_size`     | Device pixels per pixel cell.                                        |
+|                       | `gap`           | Border width as a fraction of a cell, `0..0.5`.                      |
 | `[crt.noise]`         | `intensity`     | Per-pixel, per-frame brightness jitter (analog signal noise).        |
 | `[crt.flicker]`       | `amount`        | Whole-screen brightness variation over time (unstable power supply). |
 |                       | `speed`         | Flicker rate, roughly in Hz.                                         |
