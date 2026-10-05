@@ -51,6 +51,18 @@ func dmgTheme() ThemeColors {
 	}}
 }
 
+// gbaTheme is the Game Boy Advance's unlit reflective LCD: a cool
+// slate-blue dim end and a pale blue-gray bright end, bluer and
+// colder than dmgTheme's olive-lime (the face tint washes the screen a
+// washed-out lavender-gray). Hand-picked, like dmgTheme. Pairs with the
+// "gba" effects preset.
+func gbaTheme() ThemeColors {
+	return ThemeColors{Phosphor: Phosphor{
+		Low:  srgb3(0x4a, 0x58, 0x7a),
+		High: srgb3(0xd0, 0xe0, 0xea),
+	}}
+}
+
 // scopeTheme is a radar or oscilloscope tube's cyan-blue, near 480nm.
 func scopeTheme() ThemeColors {
 	x, y := dominantWavelengthChromaticity(480, 0.8)

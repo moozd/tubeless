@@ -150,7 +150,7 @@ func TestFilePresetOverridesEffectsPerField(t *testing.T) {
 // published palette.
 func TestThemesPopulated(t *testing.T) {
 	monochrome := map[string]bool{"green": true, "amber": true, "green-p39": true, "white-p4": true, "cyberpunk": true,
-		"nixie": true, "vfd": true, "dmg": true, "scope": true, "ember": true, "sepia": true, "ultraviolet": true,
+		"nixie": true, "vfd": true, "dmg": true, "led-7seg": true, "sharp-vfd": true, "gba": true, "scope": true, "ember": true, "sepia": true, "ultraviolet": true,
 		"rose-gold": true, "seafoam": true, "lavender-haze": true, "sunset": true, "sage": true,
 		"glacier": true, "mulberry": true, "gold-leaf": true,
 		"green-night": true, "moss": true, "emerald-noir": true, "amber-night": true, "bronze-night": true,

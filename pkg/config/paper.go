@@ -112,3 +112,58 @@ func matchaTheme() ThemeColors {
 		"1e2e14 a83a22 2e6a22 8a6a16 2a4a72 6a3a5a 2a6a58 4a5a3a "+
 			"6a7a52 c4482e 3e8230 a4821e 3a5e8e 824a70 3a8270 0e1a08")
 }
+
+// The calculator set: LCD, backlit and LED displays from calculators and
+// small devices. The LCDs are light paper themes (a gray-green panel,
+// dark pixels); the LED and VFD ones are duotones that glow on black.
+
+// ti83Theme is a graphing calculator's LCD: a greenish gray panel with dark blue-black pixels, like a TI-83 left on a desk.
+func ti83Theme() ThemeColors {
+	return paperTheme("9fb4a0", "16241e", "1a3a5a",
+		"16241e 8a2a2a 1e5a2e 6a5a10 1a3a6a 5a2a62 1a5a5e 3a4a42 "+
+			"4a5a52 a03434 2a6e3a 826e18 2a4a82 723a7a 2a6e72 081410")
+}
+
+// hp48Theme is a scientific calculator: a pale gray-olive LCD with near-black segments and the red of a shift-key legend.
+func hp48Theme() ThemeColors {
+	return paperTheme("bbc0a4", "1e2216", "a02a1a",
+		"1e2216 a02a1a 2e5a22 7a5e14 24407a 62325a 245a58 464a3a "+
+			"6a6e5a b83a28 3e7230 927214 345296 7a427a 347270 0c0e08")
+}
+
+// casioFxTheme is a pocket solar calculator: a cool blue-gray LCD under a solar cell strip, with soft black digits.
+func casioFxTheme() ThemeColors {
+	return paperTheme("b1bfb8", "1a2420", "c87a14",
+		"1a2420 a03030 2a6040 7a6218 2a487a 5a3a70 2a6270 3c4a46 "+
+			"66726c b84040 3a7650 927a20 3a5a92 724a88 3a7a88 0a1410")
+}
+
+// inTheme is a watch's electroluminescent backlight: a glowing pale green-teal panel with deep teal-black ink.
+func indigloTheme() ThemeColors {
+	return paperTheme("bfe9d3", "0e2a26", "0a7a62",
+		"0e2a26 b0303a 12683a 7a6a10 1a4a8a 6a2a82 0a6a7a 3a5a54 "+
+			"5e7e76 c84450 1e7e4a 927e1a 2a5ea4 823e9a 1a8294 041612")
+}
+
+// backlitAmberTheme is an amber-backlit LCD, like a pager or a car stereo: a glowing orange-gold panel with dark brown pixels.
+func backlitAmberTheme() ThemeColors {
+	return paperTheme("eba838", "2a1400", "7a2a00",
+		"2a1400 8a1e14 2a5a14 6a4a00 1a3a6a 5a1a52 1a5a5a 4a3010 "+
+			"7a5a20 a42a1e 3a6e1e 826000 2a4e82 722e6a 2a6e6e 140a00")
+}
+
+// led7SegTheme is a calculator's red seven-segment LED: a deep dark-red dim end and a hot red bright end.
+func led7SegTheme() ThemeColors {
+	return ThemeColors{Phosphor: Phosphor{
+		Low:  srgb3(0x5a, 0x08, 0x08),
+		High: srgb3(0xff, 0x2a, 0x1a),
+	}}
+}
+
+// sharpVfdTheme is an 80s desk calculator's vacuum-fluorescent display: a deep blue-teal dim end and an icy blue-white glow, bluer than vfdTheme's aqua-green.
+func sharpVfdTheme() ThemeColors {
+	return ThemeColors{Phosphor: Phosphor{
+		Low:  srgb3(0x10, 0x50, 0x6a),
+		High: srgb3(0x9a, 0xf0, 0xff),
+	}}
+}
