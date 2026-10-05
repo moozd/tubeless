@@ -391,6 +391,8 @@ func ThemeNames() []string {
 		"aurora", "deep-space", "hologram", "plasma-core", "mars-colony",
 		"cryo-lab", "chrome-noir", "bioluminescence", "solar-flare",
 		"neural-net", "acid-rain", "clean-room",
+		"e-ink", "parchment", "newsprint", "legal-pad", "sakura",
+		"mint-lcd", "sandstone", "lavender-paper", "receipt", "cloud-deck", "typewriter", "matcha",
 	}
 }
 
@@ -517,6 +519,30 @@ func Theme(name string) ThemeColors {
 		return acidRainTheme()
 	case "clean-room":
 		return cleanRoomTheme()
+	case "e-ink":
+		return eInkTheme()
+	case "parchment":
+		return parchmentTheme()
+	case "newsprint":
+		return newsprintTheme()
+	case "legal-pad":
+		return legalPadTheme()
+	case "sakura":
+		return sakuraTheme()
+	case "mint-lcd":
+		return mintLcdTheme()
+	case "sandstone":
+		return sandstoneTheme()
+	case "lavender-paper":
+		return lavenderPaperTheme()
+	case "receipt":
+		return receiptTheme()
+	case "cloud-deck":
+		return cloudDeckTheme()
+	case "typewriter":
+		return typewriterTheme()
+	case "matcha":
+		return matchaTheme()
 	case "rosepine-moon":
 		return rosepineMoonTheme()
 	case "gruvbox-dark-hard":

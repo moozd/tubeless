@@ -65,15 +65,26 @@ preset = "modern"
 `matrix` · `replicant` · `tron` · `synthwave` · `c64` · `terminator` ·
 `vertigo` · `ibm-3278` · `arcade` · `radar-p7` · `aurora` · `deep-space` ·
 `hologram` · `plasma-core` · `mars-colony` · `cryo-lab` · `chrome-noir` ·
-`bioluminescence` · `solar-flare` · `neural-net` · `acid-rain` · `clean-room`
+`bioluminescence` · `solar-flare` · `neural-net` · `acid-rain` · `clean-room` ·
+`e-ink` · `parchment` · `newsprint` · `legal-pad` · `sakura` · `mint-lcd` ·
+`sandstone` · `lavender-paper` · `receipt` · `cloud-deck` · `typewriter` ·
+`matcha`
 
-The last twelve are invented true-color themes, each with its own
+The next twelve are invented true-color themes, each with its own
 background: polar-night teal (`aurora`), indigo void (`deep-space`),
 steel blue (`hologram`), violet-black (`plasma-core`), rust brown
 (`mars-colony`), frozen blue-black (`cryo-lab`), gunmetal (`chrome-noir`),
 abyss (`bioluminescence`), dark corona (`solar-flare`), slate blue
 (`neural-net`), olive-black (`acid-rain`) and a pale lab white
-(`clean-room`, the one light theme).
+(`clean-room`).
+
+The final twelve are light themes that mimic a physical surface rather
+than plain white: an e-ink panel, vellum (`parchment`), gray newsprint,
+a yellow legal pad, pink `sakura` paper, a gray-green calculator LCD
+(`mint-lcd`), ochre `sandstone`, lilac stationery, thermal `receipt`
+paper, a pale sky (`cloud-deck`), ivory `typewriter` paper and a
+`matcha` latte. Palette slots 7 and 15 are dark so every color stays
+readable on the light ground.
 
 The monochrome and fixed-palette themes (`green`, `amber`, `green-p39`,
 `white-p4`, `cga`, `cyberpunk`) pair naturally with the monitor presets
