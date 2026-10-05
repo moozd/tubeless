@@ -36,7 +36,7 @@ block's own rendered pixels, not a fixed overlay image.
 - Real italic/bold glyphs and ligatures shaped by HarfBuzz straight
   from the loaded font's own GSUB table
 - Native Wayland and X11 backends on Linux; native Cocoa on macOS
-- True-color rendering with 54 built-in themes (rosepine,
+- True-color rendering with 66 built-in themes (rosepine,
   rosepine-moon, gruvbox-dark-hard, nord, dracula, catppuccin-mocha,
   tokyo-night, one-dark, green, amber, green-p39, white-p4, cga,
   cyberpunk, neon, seven retro monochromes — nixie, vfd, dmg, scope,
@@ -47,7 +47,10 @@ block's own rendered pixels, not a fixed overlay image.
   three MS-DOS themes — msdos-blue, msdos-black, turbo-blue — and
   thirteen screen-inspired ones: pipboy, nostromo, wopr, matrix,
   replicant, tron, synthwave, c64, terminator, vertigo, ibm-3278,
-  arcade, radar-p7) plus a custom theme editor
+  arcade, radar-p7 — and twelve invented futuristic ones: aurora,
+  deep-space, hologram, plasma-core, mars-colony, cryo-lab,
+  chrome-noir, bioluminescence, solar-flare, neural-net, acid-rain,
+  clean-room) plus a custom theme editor
 - Period-accurate 80s monitor effect presets (IBM 5151/5153, Zenith
   ZVM-1220, Apple Monitor III, Commodore 1084S, Princeton HX-12) for
   curvature, phosphor persistence, and scanlines — off by default

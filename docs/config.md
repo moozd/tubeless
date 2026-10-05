@@ -63,7 +63,17 @@ preset = "modern"
 `amber-night` · `bronze-night` · `ice-night` · `p4-night` · `crimson-night` ·
 `msdos-blue` · `msdos-black` · `turbo-blue` · `pipboy` · `nostromo` · `wopr` ·
 `matrix` · `replicant` · `tron` · `synthwave` · `c64` · `terminator` ·
-`vertigo` · `ibm-3278` · `arcade` · `radar-p7`
+`vertigo` · `ibm-3278` · `arcade` · `radar-p7` · `aurora` · `deep-space` ·
+`hologram` · `plasma-core` · `mars-colony` · `cryo-lab` · `chrome-noir` ·
+`bioluminescence` · `solar-flare` · `neural-net` · `acid-rain` · `clean-room`
+
+The last twelve are invented true-color themes, each with its own
+background: polar-night teal (`aurora`), indigo void (`deep-space`),
+steel blue (`hologram`), violet-black (`plasma-core`), rust brown
+(`mars-colony`), frozen blue-black (`cryo-lab`), gunmetal (`chrome-noir`),
+abyss (`bioluminescence`), dark corona (`solar-flare`), slate blue
+(`neural-net`), olive-black (`acid-rain`) and a pale lab white
+(`clean-room`, the one light theme).
 
 The monochrome and fixed-palette themes (`green`, `amber`, `green-p39`,
 `white-p4`, `cga`, `cyberpunk`) pair naturally with the monitor presets

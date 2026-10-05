@@ -388,6 +388,9 @@ func ThemeNames() []string {
 		"pipboy", "nostromo", "wopr", "matrix", "replicant",
 		"tron", "synthwave", "c64", "terminator", "vertigo",
 		"ibm-3278", "arcade", "radar-p7",
+		"aurora", "deep-space", "hologram", "plasma-core", "mars-colony",
+		"cryo-lab", "chrome-noir", "bioluminescence", "solar-flare",
+		"neural-net", "acid-rain", "clean-room",
 	}
 }
 
@@ -490,6 +493,30 @@ func Theme(name string) ThemeColors {
 		return arcadeTheme()
 	case "radar-p7":
 		return radarP7Theme()
+	case "aurora":
+		return auroraTheme()
+	case "deep-space":
+		return deepSpaceTheme()
+	case "hologram":
+		return hologramTheme()
+	case "plasma-core":
+		return plasmaCoreTheme()
+	case "mars-colony":
+		return marsColonyTheme()
+	case "cryo-lab":
+		return cryoLabTheme()
+	case "chrome-noir":
+		return chromeNoirTheme()
+	case "bioluminescence":
+		return bioluminescenceTheme()
+	case "solar-flare":
+		return solarFlareTheme()
+	case "neural-net":
+		return neuralNetTheme()
+	case "acid-rain":
+		return acidRainTheme()
+	case "clean-room":
+		return cleanRoomTheme()
 	case "rosepine-moon":
 		return rosepineMoonTheme()
 	case "gruvbox-dark-hard":
