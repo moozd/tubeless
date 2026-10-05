@@ -79,26 +79,6 @@ vec2 curveUV(vec2 uv, float amount) {
 	return c * 0.5 + 0.5;
 }
 
-// sampleCell box-averages the scene over the grid cell containing this
-// pixel (3x3 taps), so every pixel in a cell gets the same flat color
-// and a thin glyph stroke survives as a shade instead of being skipped
-// by a single point sample. dFdx/dFdy of vUV is the UV step per device
-// pixel, so this needs no size uniform.
-vec3 sampleCell(vec2 uv) {
-	float size = max(uGridCellSize, 2.0);
-	vec2 center = (floor(gl_FragCoord.xy / size) + 0.5) * size;
-	vec2 perPixel = vec2(dFdx(vUV.x), dFdy(vUV.y));
-	vec2 base = uv + (center - gl_FragCoord.xy) * perPixel;
-	vec3 sum = vec3(0.0);
-	for (int i = -1; i <= 1; i++) {
-		for (int j = -1; j <= 1; j++) {
-			vec2 off = vec2(i, j) * size / 3.0 * perPixel;
-			sum += texture(uScene, base + off).rgb;
-		}
-	}
-	return sum / 9.0;
-}
-
 void main() {
 	vec2 uv = vUV;
 	if (uCurvature > 0.0) {
@@ -110,9 +90,7 @@ void main() {
 	}
 
 	vec3 scene;
-	if (uGridIntensity > 0.0) {
-		scene = sampleCell(uv);
-	} else if (uAberration > 0.0) {
+	if (uAberration > 0.0) {
 		vec2 dir = uv - 0.5;
 		scene = vec3(
 			texture(uScene, uv - dir * uAberration).r,

@@ -345,7 +345,8 @@ func cgaTheme() ThemeColors {
 // square pixel grid (the screen-door mesh), a flat face with no tube
 // shading or bloom, a lifted background (an LCD is never dead black), and
 // the slow liquid-crystal response that smears fast motion, modeled as a
-// short phosphor decay. Pairs with dmgTheme.
+// short phosphor decay. Pairs with gbaTheme (or dmgTheme for the
+// original Game Boy's green).
 func gbaEffects() Effects {
 	e := modernEffects()
 	e.Surface = Surface{Radius: 0.8}
@@ -353,7 +354,7 @@ func gbaEffects() Effects {
 	e.Face = Face{BgTint: 0.12, InsetShadow: 0.05}
 	e.CRT = CRT{
 		PixelGrid:     PixelGrid{Intensity: 0.3, CellSize: 3.0, Gap: 0.34},
-		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.12},
+		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.05},
 	}
 	return e
 }

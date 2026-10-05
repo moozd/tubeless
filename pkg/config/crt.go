@@ -64,7 +64,8 @@ type ShadowMask struct {
 
 // PixelGrid darkens a square mesh of gaps between pixel cells on both
 // axes, like an LCD's visible pixel borders (a Game Boy Advance's
-// screen-door look). Unlike Scanlines (horizontal only) or ShadowMask
+// screen-door look) laid over the full-resolution image, so text
+// stays sharp. Unlike Scanlines (horizontal only) or ShadowMask
 // (vertical RGB columns), each cell reads as one lit dot. CellSize is
 // device pixels per cell; Gap is the fraction of a cell, 0..0.5, that
 // the dark border takes up on its top and left edge. Only read once
