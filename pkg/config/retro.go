@@ -163,6 +163,50 @@ func crimsonNightTheme() ThemeColors {
 	return duotone([3]int{0x3a, 0x0e, 0x18}, [3]int{0xe0, 0x50, 0x60})
 }
 
+// The bright night set: the night grounds kept dark, but the text end of
+// the ramp pushed to full brightness so nothing reads muted.
+
+// brightPhosphor is a phosphorColor-style theme with a dark ground and
+// full-peak text.
+func brightPhosphor(peak [3]float32) ThemeColors {
+	return ThemeColors{Phosphor: Phosphor{Low: scale3(peak, 0.2), High: peak}}
+}
+
+// greenBrightTheme is P1 green on black at full brightness.
+func greenBrightTheme() ThemeColors { return brightPhosphor(phosphorColor(0.21, 0.71)) }
+
+// amberBrightTheme is amber on black at full brightness.
+func amberBrightTheme() ThemeColors {
+	x, y := dominantWavelengthChromaticity(590, 0.8)
+	return brightPhosphor(phosphorColor(x, y))
+}
+
+// p4BrightTheme is cool TV white on black at full brightness.
+func p4BrightTheme() ThemeColors { return brightPhosphor(phosphorColor(0.283, 0.297)) }
+
+// mossBrightTheme runs deep forest into vivid mint.
+func mossBrightTheme() ThemeColors {
+	return duotone([3]int{0x12, 0x2e, 0x16}, [3]int{0xb4, 0xff, 0xc4})
+}
+
+// emeraldBrightTheme runs deep pine into bright emerald.
+func emeraldBrightTheme() ThemeColors {
+	return duotone([3]int{0x08, 0x2e, 0x22}, [3]int{0x7a, 0xff, 0xc8})
+}
+
+// bronzeBrightTheme runs dark brown into bright amber-gold.
+func bronzeBrightTheme() ThemeColors {
+	return duotone([3]int{0x2e, 0x1c, 0x0c}, [3]int{0xff, 0xc2, 0x74})
+}
+
+// iceBrightTheme runs midnight blue into near-white sky.
+func iceBrightTheme() ThemeColors { return duotone([3]int{0x0c, 0x20, 0x38}, [3]int{0xb4, 0xe8, 0xff}) }
+
+// crimsonBrightTheme runs oxblood into bright coral-red.
+func crimsonBrightTheme() ThemeColors {
+	return duotone([3]int{0x2e, 0x0a, 0x12}, [3]int{0xff, 0x7a, 0x8a})
+}
+
 // The MS-DOS set: true-color themes on the real VGA text palette (the
 // standard 16 colors every PC's text mode drew with).
 

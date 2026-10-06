@@ -155,6 +155,8 @@ func TestThemesPopulated(t *testing.T) {
 		"glacier": true, "mulberry": true, "gold-leaf": true,
 		"green-night": true, "moss": true, "emerald-noir": true, "amber-night": true, "bronze-night": true,
 		"ice-night": true, "p4-night": true, "crimson-night": true,
+		"green-bright": true, "moss-bright": true, "emerald-bright": true, "amber-bright": true,
+		"bronze-bright": true, "ice-bright": true, "p4-bright": true, "crimson-bright": true,
 		"pipboy": true, "nostromo": true, "wopr": true, "matrix": true, "replicant": true, "tron": true,
 		"synthwave": true, "c64": true, "terminator": true, "vertigo": true, "ibm-3278": true,
 		"arcade": true, "radar-p7": true}
@@ -288,6 +290,17 @@ func TestNightThemesStayDim(t *testing.T) {
 		high := Theme(name).Phosphor.High
 		if peak := max(high[0], high[1], high[2]); peak > 0.8 {
 			t.Errorf("%s text peaks at %.2f, want at most 0.8", name, peak)
+		}
+	}
+}
+
+// TestBrightThemesStayBright checks the bright night palettes keep
+// text well above the muted night ceiling.
+func TestBrightThemesStayBright(t *testing.T) {
+	for _, name := range []string{"green-bright", "moss-bright", "emerald-bright", "amber-bright", "bronze-bright", "ice-bright", "p4-bright", "crimson-bright"} {
+		high := Theme(name).Phosphor.High
+		if peak := max(high[0], high[1], high[2]); peak < 0.9 {
+			t.Errorf("%s text peaks at %.2f, want at least 0.9", name, peak)
 		}
 	}
 }

@@ -383,7 +383,10 @@ func ThemeNames() []string {
 		"rose-gold", "seafoam", "lavender-haze", "sunset", "sage", "glacier",
 		"mulberry", "gold-leaf",
 		"green-night", "moss", "emerald-noir", "amber-night", "bronze-night",
-		"ice-night", "p4-night", "crimson-night", "msdos-blue", "msdos-black",
+		"ice-night", "p4-night", "crimson-night",
+		"green-bright", "moss-bright", "emerald-bright", "amber-bright",
+		"bronze-bright", "ice-bright", "p4-bright", "crimson-bright",
+		"msdos-blue", "msdos-black",
 		"turbo-blue",
 		"pipboy", "nostromo", "wopr", "matrix", "replicant",
 		"tron", "synthwave", "c64", "terminator", "vertigo",
@@ -464,6 +467,22 @@ func Theme(name string) ThemeColors {
 		return p4NightTheme()
 	case "crimson-night":
 		return crimsonNightTheme()
+	case "green-bright":
+		return greenBrightTheme()
+	case "moss-bright":
+		return mossBrightTheme()
+	case "emerald-bright":
+		return emeraldBrightTheme()
+	case "amber-bright":
+		return amberBrightTheme()
+	case "bronze-bright":
+		return bronzeBrightTheme()
+	case "ice-bright":
+		return iceBrightTheme()
+	case "p4-bright":
+		return p4BrightTheme()
+	case "crimson-bright":
+		return crimsonBrightTheme()
 	case "msdos-blue":
 		return msdosBlueTheme()
 	case "msdos-black":
