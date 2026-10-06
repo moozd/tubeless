@@ -114,12 +114,12 @@ func matchaTheme() ThemeColors {
 }
 
 // casioLcdTheme is a Casio calculator or watch display: a flat
-// gray-olive reflective LCD with black segments. Real segments are
+// dull gray-olive reflective LCD (an unlit one, never bright) with black segments. Real segments are
 // pure on/off black, so the palette is a ladder of near-black shades
 // with only a trace of hue, not colors; the dark ladder keeps every
 // slot readable on the gray ground. Pairs with the "lcd" preset.
 func casioLcdTheme() ThemeColors {
-	return paperTheme("aeb4a6", "0e120c", "0e120c",
+	return paperTheme("98a08e", "12160e", "12160e",
 		"0e120c 1c2018 262a22 303428 3a3e32 444838 4e5242 585c4c "+
 			"6c7060 1c2018 262a22 303428 3a3e32 444838 4e5242 0a0c08")
 }

@@ -350,7 +350,7 @@ func lcdEffects() Effects {
 	e := modernEffects()
 	e.Surface = Surface{Radius: 0.4}
 	e.Blur = Blur{Radius: 0.5, Strength: 0.05}
-	e.Face = Face{BgTint: 0.0, InsetShadow: 0.22}
+	e.Face = Face{BgTint: 0.0, InsetShadow: 0.4}
 	e.CRT = CRT{
 		PixelGrid:     PixelGrid{Intensity: 0.12, CellSize: 3.0, Gap: 0.3},
 		PhosphorDecay: PhosphorDecay{DecaySeconds: 0.06},
