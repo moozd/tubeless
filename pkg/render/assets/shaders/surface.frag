@@ -120,6 +120,18 @@ float cornerCoverage(float left, float right, float up, float down, float radius
 	return sum / float(SS * SS);
 }
 
+// outsideColor samples just past the nearest corner, diagonally out of the
+// block. A block nested inside another fill (a changed word inside a diff
+// line) finds that fill there, and its trimmed corner blends into it
+// instead of opening a transparent hole down to the scene background. A
+// free-standing block finds transparency, which keeps the plain alpha fade.
+vec4 outsideColor(float left, float right, float up, float down) {
+	float sx = left < right ? -1.0 : 1.0;
+	float sy = up < down ? -1.0 : 1.0;
+	vec2 reach = vec2(min(left, right), min(up, down)) + 1.5;
+	return texture(uScene, vUV + vec2(sx, sy) * reach * uTexel);
+}
+
 // Fragment-space corner radius and top-lit gradient over a literal
 // non-text surface image. The renderer feeds this pass only
 // block/background/border pixels, never text, and this shader only
@@ -166,5 +178,10 @@ void main() {
 		rgb = max(base * (1.0 + shade), 0.0);
 	}
 
-	fragColor = vec4(rgb * src.a * keep, src.a * keep);
+	vec4 inside = vec4(rgb * src.a, src.a);
+	if (keep >= 1.0) {
+		fragColor = inside;
+		return;
+	}
+	fragColor = mix(outsideColor(left, right, up, down), inside, keep);
 }

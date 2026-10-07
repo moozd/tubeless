@@ -30,7 +30,9 @@ block's own rendered pixels, not a fixed overlay image.
   jumps, with a rounded-rect glow and a breathing pulse, instead of a
   static block
 - Rounded corners, a soft drop shadow, and a bloom glow on every
-  block/border surface
+  block/border surface; a block nested inside another fill (a changed
+  word in a diff line) rounds into that fill instead of punching a
+  hole to the background
 - An experimental frosted-glass cursor that refracts and blurs the
   scene behind it (`cursor.glass`)
 - Real italic/bold glyphs and ligatures shaped by HarfBuzz straight
