@@ -50,6 +50,8 @@ type CellPass struct {
 	bgScratch        []float32
 	blockScratch     []float32
 	underlineScratch []float32
+	emojiScratch     []emojiCell
+	emoji            *emojiCache
 	cols, rows       int
 }
 
@@ -73,6 +75,7 @@ func NewCellPass(faces *font.Faces) (*CellPass, error) {
 		progGlyph:       progGlyph,
 		progRect:        progRect,
 		progUnderline:   progUnderline,
+		emoji:           newEmojiCache(faces.Regular.CellHeight),
 	}
 	cp.atlasTex[styleRegular] = uploadAtlas(faces.Regular)
 	cp.atlasTex[styleBold] = uploadAtlas(faces.Bold)
@@ -203,6 +206,7 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 	cp.shapeScratch = cp.shapeScratch[:0]
 	cp.textScratch = cp.textScratch[:0]
 	cp.underlineScratch = cp.underlineScratch[:0]
+	cp.emojiScratch = cp.emojiScratch[:0]
 	cp.cols, cp.rows = scr.Cols, scr.Rows
 	empty := ambientBG(cfg)
 	grid := scr.VisibleWindow(scrollOffset)
@@ -231,7 +235,10 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, rx, ry, rw, rh, fg, [4]float32{})
 				continue
 			}
-			if cell.Rune == ' ' || cell.Rune == screen.SlotRune {
+			if cell.Rune == ' ' || cell.Rune == screen.SlotRune || cell.Rune == screen.WideSpacer {
+				continue
+			}
+			if isEmojiCandidate(grid, scr.Cols, x, y) && cp.appendEmoji(grid, scr.Cols, x, y) {
 				continue
 			}
 			if font.IsShapeRune(cell.Rune) {
@@ -274,6 +281,9 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				atlas, style, shear = cp.faces.Regular, styleRegular, 0
 				g, ok = atlas.Glyphs[cell.Rune]
 				if !ok {
+					// No face has it: a narrow emoji like a bare ❤
+					// may still have a color glyph.
+					cp.appendEmoji(grid, scr.Cols, x, y)
 					continue
 				}
 			}

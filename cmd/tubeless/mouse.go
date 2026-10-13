@@ -352,11 +352,14 @@ func copySelectionToClipboard(win *render.Window, shared *atomic.Pointer[screen.
 		if y == y1 {
 			endX = min(x1, scr.Cols-1)
 		}
-		line := make([]rune, 0, endX-startX+1)
+		var line strings.Builder
 		for x := startX; x <= endX && x < len(row); x++ {
-			line = append(line, row[x].Rune)
+			if row[x].Rune == screen.WideSpacer {
+				continue
+			}
+			line.WriteString(row[x].Text())
 		}
-		b.WriteString(strings.TrimRight(string(line), " "))
+		b.WriteString(strings.TrimRight(line.String(), " "))
 		if y < y1 {
 			b.WriteByte('\n')
 		}

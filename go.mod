@@ -15,6 +15,8 @@ require (
 
 require golang.org/x/sys v0.39.0
 
+require github.com/rivo/uniseg v0.4.7
+
 require (
 	github.com/go-gl/glfw/v3.4/glfw v0.1.0-pre.2
 	github.com/soniakeys/quant v1.0.0 // indirect

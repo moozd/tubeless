@@ -268,6 +268,8 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	r.cellPass.DrawUnderline(r.sceneFBO, cellW, cellH)
 	r.drawTextGlow(outW, outH, cellW, cellH, cfg.TextGlow)
 	r.cellPass.DrawText(r.sceneFBO, cellW, cellH)
+	gridX, gridY := GridOffset(float32(outW), float32(outH), r.cols, r.rows, cellW, cellH)
+	r.imagePass.DrawEmoji(r.sceneFBO, r.cellPass.emojiScratch, cellW, cellH, gridX, gridY)
 	r.imagePass.DrawSlots(r.sceneFBO, r.slotSpans, r.slotTex, cellW, cellH)
 }
 

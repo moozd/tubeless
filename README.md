@@ -37,6 +37,9 @@ block's own rendered pixels, not a fixed overlay image.
   scene behind it (`cursor.glass`)
 - Real italic/bold glyphs and ligatures shaped by HarfBuzz straight
   from the loaded font's own GSUB table
+- Color emoji from the system emoji font (Apple Color Emoji, Noto
+  Color Emoji), two columns wide like tmux and other terminals expect,
+  with skin tones, flags and ZWJ sequences kept as one cell
 - Native Wayland and X11 backends on Linux; native Cocoa on macOS
 - True-color rendering with 80 built-in themes (rosepine,
   rosepine-moon, gruvbox-dark-hard, nord, dracula, catppuccin-mocha,

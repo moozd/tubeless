@@ -14,9 +14,10 @@ import (
 // the same CRT post-processing (bloom, soften, phosphor tint) as everything
 // else instead of looking like a flat overlay.
 type ImagePass struct {
-	prog  uint32
-	vao   uint32
-	cache map[*image.RGBA]uint32
+	prog       uint32
+	vao        uint32
+	cache      map[*image.RGBA]uint32
+	emojiCache map[*image.RGBA]uint32
 }
 
 func NewImagePass() (*ImagePass, error) {
@@ -32,7 +33,7 @@ func NewImagePass() (*ImagePass, error) {
 	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointerWithOffset(0, 2, gl.FLOAT, false, 2*4, 0)
 	gl.BindVertexArray(0)
-	return &ImagePass{prog: prog, vao: vao, cache: make(map[*image.RGBA]uint32)}, nil
+	return &ImagePass{prog: prog, vao: vao, cache: make(map[*image.RGBA]uint32), emojiCache: make(map[*image.RGBA]uint32)}, nil
 }
 
 // getTexture uploads img once and caches by pointer identity — a Screen

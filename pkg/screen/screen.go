@@ -351,14 +351,41 @@ func (s *Screen) charset() Charset {
 
 // Put writes r at the cursor using the current attribute and charset,
 // then advances the cursor, wrapping/scrolling as VT340 autowrap dictates.
+// A rune that extends the previous cell's grapheme cluster (see
+// joinPrevious) joins that cell instead, and a 2-column rune (see
+// runeWidth) takes the cursor cell plus a WideSpacer after it — the same
+// widths tmux and apps like Claude Code lay their output out with.
 func (s *Screen) Put(r rune) {
-	if s.pendingWrap {
-		s.CursorX = 0
-		s.lineFeed()
-		s.pendingWrap = false
+	r = translateRune(s.charset(), r)
+	if s.joinPrevious(r) {
+		return
 	}
-	s.Grid[s.CursorY][s.CursorX] = Cell{Rune: translateRune(s.charset(), r), Attr: s.CurAttr}
+	width := runeWidth(r)
+	if width == 0 {
+		return
+	}
+	if s.pendingWrap {
+		s.wrapLine()
+	}
+	if width == 2 && s.CursorX == s.Cols-1 {
+		if !s.AutoWrap {
+			return
+		}
+		s.putCell(Cell{Rune: ' ', Attr: s.CurAttr})
+		s.wrapLine()
+	}
+	s.putCell(Cell{Rune: r, Attr: s.CurAttr})
+	if width == 2 {
+		s.CursorX++
+		s.putCell(Cell{Rune: WideSpacer, Attr: s.CurAttr})
+	}
 	s.advanceCursor()
+}
+
+func (s *Screen) wrapLine() {
+	s.CursorX = 0
+	s.lineFeed()
+	s.pendingWrap = false
 }
 
 func (s *Screen) advanceCursor() {

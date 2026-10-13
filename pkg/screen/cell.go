@@ -62,9 +62,23 @@ const (
 )
 
 // Cell is one grid position: a rune plus the attributes it was written with.
+// Tail holds the runes that joined Rune into one grapheme cluster after it
+// was written — a VS16, a skin tone, a ZWJ chain, a flag's second regional
+// indicator, a combining accent — and is empty for almost every cell.
 type Cell struct {
 	Rune rune
+	Tail string
 	Attr Attr
+}
+
+// WideSpacer fills the right half of a 2-column cell (an emoji, a CJK
+// character). It draws nothing itself: the cell to its left owns the
+// glyph and paints it across both columns.
+const WideSpacer rune = 0x10EEED
+
+// Text returns the cell's full grapheme cluster: Rune plus its Tail.
+func (c Cell) Text() string {
+	return string(c.Rune) + c.Tail
 }
 
 func blankCell() Cell {
