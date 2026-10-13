@@ -171,6 +171,15 @@ func TestThemesPopulated(t *testing.T) {
 		if !tc.TrueColor {
 			t.Errorf("Theme(%q).TrueColor = false, want true", name)
 		}
+		// Popular themes are copied verbatim from upstream, where pure
+		// black is a real slot value (one-light's 0 and 8, say), not a
+		// dropped hex triple.
+		if _, isPopular := popularTheme(name); isPopular {
+			if tc.Colors.DefaultFg == tc.Colors.DefaultBg {
+				t.Errorf("Theme(%q) has the same foreground and background", name)
+			}
+			continue
+		}
 		for i, c := range tc.Colors.Palette {
 			// cga's index 0 is authentically black (see cgaTheme) — a
 			// real all-zero slot, not a dropped hex triple.

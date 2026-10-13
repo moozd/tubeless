@@ -375,7 +375,7 @@ type ThemeColors struct {
 // TUI's theme cycler steps through them — the single source of truth both
 // Theme's switch and the TUI cycle are built from, so they can't drift.
 func ThemeNames() []string {
-	return []string{
+	names := []string{
 		"rosepine", "rosepine-moon", "gruvbox-dark-hard", "nord", "dracula",
 		"catppuccin-mocha", "tokyo-night", "one-dark", "green", "amber",
 		"green-p39", "white-p4", "cga", "cyberpunk", "neon",
@@ -398,6 +398,7 @@ func ThemeNames() []string {
 		"mint-lcd", "sandstone", "lavender-paper", "receipt", "cloud-deck", "typewriter", "matcha",
 		"casio-lcd",
 	}
+	return append(names, popularThemeNames()...)
 }
 
 // Theme returns the color values a named theme seeds. Unknown or empty
@@ -406,6 +407,9 @@ func ThemeNames() []string {
 // monitors.go). Themes and presets are chosen independently; neither
 // ever seeds the other.
 func Theme(name string) ThemeColors {
+	if colors, ok := popularTheme(name); ok {
+		return colors
+	}
 	switch name {
 	case "amber":
 		return amberTheme()

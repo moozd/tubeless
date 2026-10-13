@@ -70,6 +70,24 @@ preset = "modern"
 `sandstone` · `lavender-paper` · `receipt` · `cloud-deck` · `typewriter` ·
 `matcha` · `casio-lcd`
 
+The popular editor and terminal palettes are copied as-is from
+[iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes):
+
+`solarized-dark` · `solarized-light` · `selenized-dark` · `selenized-light`
+· `gruvbox-dark` · `gruvbox-light` · `gruvbox-material` · `catppuccin-latte`
+· `catppuccin-frappe` · `catppuccin-macchiato` · `tokyo-night-storm` ·
+`tokyo-night-moon` · `tokyo-night-day` · `rosepine-dawn` · `one-light` ·
+`one-half-dark` · `one-half-light` · `monokai` · `monokai-pro` ·
+`everforest-dark` · `everforest-light` · `kanagawa-wave` · `kanagawa-dragon`
+· `kanagawa-lotus` · `ayu` · `ayu-mirage` · `ayu-light` · `material-darker`
+· `material-ocean` · `nightfox` · `carbonfox` · `dayfox` · `github-dark` ·
+`github-dark-dimmed` · `github-light` · `nord-light` · `horizon` · `snazzy`
+· `oceanic-next` · `zenburn` · `night-owl` · `cobalt2` · `iceberg-dark` ·
+`iceberg-light` · `tomorrow-night` · `tomorrow-night-eighties` · `tomorrow`
+· `oxocarbon` · `poimandres` · `vesper` · `sonokai` · `moonfly` ·
+`jellybeans` · `flexoki-dark` · `flexoki-light` · `melange-dark` ·
+`melange-light` · `modus-vivendi` · `modus-operandi` · `spacegray`
+
 The next twelve are invented true-color themes, each with its own
 background: polar-night teal (`aurora`), indigo void (`deep-space`),
 steel blue (`hologram`), violet-black (`plasma-core`), rust brown
