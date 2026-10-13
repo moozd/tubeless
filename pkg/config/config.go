@@ -28,10 +28,10 @@ import (
 //
 //   - Theme governs color: TrueColor, Colors, Phosphor.
 //   - Preset governs every other visual effect: Surface, Blur,
-//     TextGlow, Cursor, Face, Contrast, CRT. Font/Atlas/Padding/Scrolling/Monochrome sit
-//     outside both axes — always user-set directly, never reseeded by
-//     either (see the config TUI's "experimental" tab for Scrolling
-//     specifically).
+//     TextGlow, TextShadow, Cursor, Face, Contrast, CRT.
+//     Font/Atlas/Padding/Scrolling/Monochrome sit outside both axes —
+//     always user-set directly, never reseeded by either (see the
+//     config TUI's "experimental" tab for Scrolling specifically).
 type Config struct {
 	Theme      string     `toml:"theme"`
 	Preset     string     `toml:"preset"`
@@ -45,6 +45,7 @@ type Config struct {
 	Surface    Surface    `toml:"surface"`
 	Blur       Blur       `toml:"blur"`
 	TextGlow   TextGlow   `toml:"text_glow"`
+	TextShadow TextShadow `toml:"text_shadow"`
 	Cursor     Cursor     `toml:"cursor"`
 	Face       Face       `toml:"face"`
 	Contrast   Contrast   `toml:"contrast"`
@@ -249,6 +250,30 @@ type TextGlow struct {
 	// glow ramps up to full over the next 0.25 above it. 0 glows every
 	// non-black glyph.
 	Threshold float32 `toml:"threshold"`
+}
+
+// TextShadow is Surface.Shadow's counterpart for text: every glyph casts
+// a shadow along (OffsetX, OffsetY). Depth stacks copies of the glyph
+// along that offset, nearest in front and each one a bit darker, so the
+// shadow reads as a solid extrusion — text that looks raised off the
+// screen in 3D. Depth 1 is a plain drop shadow. Zero Strength is off,
+// matching TextGlow's convention.
+type TextShadow struct {
+	Strength float32 `toml:"strength"` // 0..1 shadow opacity
+	OffsetX  float32 `toml:"offset_x"` // px the shadow reaches right (negative: left)
+	OffsetY  float32 `toml:"offset_y"` // px the shadow reaches down (negative: up)
+	Depth    float32 `toml:"depth"`    // copies stacked along the offset: 1 drop shadow, more extrudes
+	Blur     float32 `toml:"blur"`     // px softness of the shadow's edges
+	// Tint colors the shadow from each glyph's own color: 0 is black,
+	// 1 a darkened shade of the glyph — the usual look for 3D text.
+	Tint float32 `toml:"tint"`
+}
+
+// defaultTextShadow is off (Strength 0) but already shaped, so raising
+// Strength alone gives a short 3D extrusion down-right instead of a
+// shadow hidden under its own glyph at offset 0.
+func defaultTextShadow() TextShadow {
+	return TextShadow{OffsetX: 2, OffsetY: 2, Depth: 4, Blur: 0.5, Tint: 0.5}
 }
 
 // Cursor is the animated cursor's shape, corner rounding, and breathing
@@ -889,6 +914,7 @@ func Default() Config {
 	cfg.Preset = "custom"
 	cfg.Surface = Surface{Radius: 5.0, Gradient: 0.25, Shadow: 0.46}
 	cfg.Blur = Blur{Radius: 1.1, Strength: 0.4}
+	cfg.TextShadow = defaultTextShadow()
 	cfg.Cursor = Cursor{
 		Glow: 1.4, PulsePeriod: 0.45, Shape: "block", BlinkStyle: "static",
 		Glass: Glass{Tint: 0.23, Blur: 0.2, Refract: 0.2, Opacity: 0.57},
@@ -935,7 +961,7 @@ func applyEffectsPreset(cfg *Config, name string) {
 	}
 	e := EffectsPreset(name)
 	cfg.Surface, cfg.Blur, cfg.Cursor = e.Surface, e.Blur, e.Cursor
-	cfg.TextGlow = e.TextGlow
+	cfg.TextGlow, cfg.TextShadow = e.TextGlow, e.TextShadow
 	cfg.Face, cfg.Contrast, cfg.CRT = e.Face, e.Contrast, e.CRT
 }
 

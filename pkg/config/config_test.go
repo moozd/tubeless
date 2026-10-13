@@ -338,3 +338,27 @@ func TestUnknownNamesBecomeCustom(t *testing.T) {
 		t.Errorf("got preset %q theme %q, want custom for both", cfg.Preset, cfg.Theme)
 	}
 }
+
+// TestTextShadowSeededShape catches a text shadow that is off but also
+// has a zero offset: raising strength alone would then hide the shadow
+// under its own glyph. Both seeding paths must give the shape — a
+// preset, and a "custom" config, which never passes through one.
+func TestTextShadowSeededShape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.toml")
+	custom := "preset = \"custom\"\n[text_shadow]\nstrength = 0.8\n"
+	if err := os.WriteFile(path, []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path, "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TextShadow != (TextShadow{Strength: 0.8, OffsetX: 2, OffsetY: 2, Depth: 4, Blur: 0.5, Tint: 0.5}) {
+		t.Errorf("custom config text shadow = %+v, want the default shape at strength 0.8", cfg.TextShadow)
+	}
+	for _, name := range EffectsPresetNames() {
+		if s := EffectsPreset(name).TextShadow; s.OffsetX == 0 && s.OffsetY == 0 {
+			t.Errorf("preset %q seeds a text shadow with no offset", name)
+		}
+	}
+}

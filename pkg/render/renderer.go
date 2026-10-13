@@ -31,6 +31,7 @@ type Loading struct {
 //	-> optional bloom over surfaceFBO/shadowFBO             -> sceneFBO
 //	-> sixel images                                       -> sceneFBO
 //	-> underline decorations                              -> sceneFBO
+//	-> optional text shadow: glyphs -> textShadowFBO, shadow -> sceneFBO
 //	-> optional text glow: colorful glyphs -> textGlowFBO, halo -> sceneFBO
 //	-> text glyphs                                        -> sceneFBO
 //
@@ -47,6 +48,7 @@ type Renderer struct {
 	blurPass    *BlurPass
 	surfacePass *SurfacePass
 	shadowPass  *ShadowPass
+	textShadow  *TextShadowPass
 	copyPass    *CopyPass
 	cursorPass  *CursorPass
 	insetPass   *InsetPass
@@ -58,6 +60,7 @@ type Renderer struct {
 	blurFBO     *FBO
 	textGlowFBO *FBO
 	haloFBO     *FBO
+	textLayer   *FBO
 	sceneFBO    *FBO
 	cursorFBO   *FBO
 	persistFBO  [2]*FBO
@@ -175,6 +178,10 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("shadow pass: %w", err)
 	}
+	textShadow, err := NewTextShadowPass()
+	if err != nil {
+		return nil, fmt.Errorf("text shadow pass: %w", err)
+	}
 	copyPass, err := NewCopyPass()
 	if err != nil {
 		return nil, fmt.Errorf("copy pass: %w", err)
@@ -201,6 +208,7 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 		blurPass:    blurPass,
 		surfacePass: surfacePass,
 		shadowPass:  shadowPass,
+		textShadow:  textShadow,
 		copyPass:    copyPass,
 		cursorPass:  cursorPass,
 		insetPass:   insetPass,
@@ -212,6 +220,7 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 		blurFBO:     newSRGBFBO(2, 2),
 		textGlowFBO: newSRGBFBO(2, 2),
 		haloFBO:     newSRGBFBO(2, 2),
+		textLayer:   newSRGBFBO(2, 2),
 		sceneFBO:    newSRGBFBO(2, 2),
 		cursorFBO:   newSRGBFBO(2, 2),
 		persistFBO:  [2]*FBO{newFloatFBO(2, 2), newFloatFBO(2, 2)},
@@ -266,11 +275,27 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	}
 	r.imagePass.Draw(r.sceneFBO, r.pendingImages, cellW, cellH)
 	r.cellPass.DrawUnderline(r.sceneFBO, cellW, cellH)
+	r.drawTextShadow(outW, outH, cellW, cellH, cfg.TextShadow)
 	r.drawTextGlow(outW, outH, cellW, cellH, cfg.TextGlow)
 	r.cellPass.DrawText(r.sceneFBO, cellW, cellH)
 	gridX, gridY := GridOffset(float32(outW), float32(outH), r.cols, r.rows, cellW, cellH)
 	r.imagePass.DrawEmoji(r.sceneFBO, r.cellPass.emojiScratch, cellW, cellH, gridX, gridY)
 	r.imagePass.DrawSlots(r.sceneFBO, r.slotSpans, r.slotTex, cellW, cellH)
+}
+
+// drawTextShadow casts TextShadow into the scene just before the sharp
+// text: the glyphs and emoji are drawn alone into a transparent layer, and
+// TextShadowPass stacks shifted copies of that layer onto the scene.
+func (r *Renderer) drawTextShadow(outW, outH int, cellW, cellH float32, shadow config.TextShadow) {
+	if shadow.Strength <= 0.001 {
+		return
+	}
+	r.textLayer.Resize(outW, outH)
+	r.textLayer.Clear()
+	r.cellPass.DrawText(r.textLayer, cellW, cellH)
+	gridX, gridY := GridOffset(float32(outW), float32(outH), r.cols, r.rows, cellW, cellH)
+	r.imagePass.DrawEmoji(r.textLayer, r.cellPass.emojiScratch, cellW, cellH, gridX, gridY)
+	r.textShadow.Draw(r.textLayer.tex, r.sceneFBO, outW, outH, shadow)
 }
 
 // drawTextGlow lays TextGlow's halo into the scene just before the sharp

@@ -35,7 +35,7 @@ Every look tubeless ships is built from two independent settings:
 
 - **`theme`** — color. Selects `true_color`, `colors`, and `phosphor`.
 - **`preset`** — every other visual effect: `surface`, `blur`,
-  `text_glow`, `cursor`, `face`, `contrast`, and `crt`.
+  `text_glow`, `text_shadow`, `cursor`, `face`, `contrast`, and `crt`.
 
 Setting either one seeds the fields it governs; hand-editing any of
 those fields afterward (or through the config TUI) flips that axis's
@@ -245,6 +245,12 @@ by switching theme or preset.
 | `[text_glow]` | `radius`       | Gaussian spread, in pixels, of a halo around text in each glyph's own color. |
 |               | `strength`     | `0..1` halo intensity. `0` (every preset but `neon`) is off.         |
 |               | `threshold`    | How colorful a glyph's foreground must be to glow (linear RGB max-min, `0` gray .. `1` pure primary; ramps to full over the next `0.25`). `0` glows all text; higher keeps neutral text crisp. |
+| `[text_shadow]` | `strength`   | `0..1` opacity of the shadow every glyph casts. `0` (every preset) is off. |
+|               | `offset_x`     | Pixels the shadow reaches right (negative: left).                    |
+|               | `offset_y`     | Pixels the shadow reaches down (negative: up).                       |
+|               | `depth`        | Copies stacked along the offset, `1..32`. `1` is a plain drop shadow; more copies extrude the text into a solid, 3D-looking side, each farther copy a bit darker. |
+|               | `blur`         | Pixels of softness on the shadow's edges. `0` is sharp.              |
+|               | `tint`         | `0` is a black shadow; `1` is a darkened shade of each glyph's own color, the usual look for 3D text. |
 | `[cursor]`    | `shape`        | At-rest outline: `block` (default), `bar` (I-beam on the cell's left edge), or `underline`. The speed-reactive ball/tail morph layers on top of whichever is picked. |
 |               | `radius`       | `0..1` at-rest corner rounding, as a fraction of the shape's own short half-dimension. |
 |               | `glow`         | Cursor edge anti-aliasing width, in pixels.                          |

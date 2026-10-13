@@ -40,6 +40,8 @@ block's own rendered pixels, not a fixed overlay image.
 - Color emoji from the system emoji font (Apple Color Emoji, Noto
   Color Emoji), two columns wide like tmux and other terminals expect,
   with skin tones, flags and ZWJ sequences kept as one cell
+- An optional text shadow (`text_shadow`) that stacks darker copies of
+  each glyph along an offset, so text looks extruded in 3D
 - Native Wayland and X11 backends on Linux; native Cocoa on macOS
 - True-color rendering with 147 built-in themes (rosepine,
   rosepine-moon, gruvbox-dark-hard, nord, dracula, catppuccin-mocha,

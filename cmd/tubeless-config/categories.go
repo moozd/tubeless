@@ -365,6 +365,26 @@ func effectsRows() []panelRow {
 		func(c *config.Config) float64 { return float64(c.TextGlow.Threshold) },
 		func(c *config.Config, v float64) { c.TextGlow.Threshold = float32(v) })))
 
+	section("Text shadow")
+	add(asEffect(newSlider("text_shadow.strength", "shadow strength", "opacity of the shadow every glyph casts; 0 is off", "", 2, 0.01, 0, 1,
+		func(c *config.Config) float64 { return float64(c.TextShadow.Strength) },
+		func(c *config.Config, v float64) { c.TextShadow.Strength = float32(v) })))
+	add(asEffect(newSlider("text_shadow.offset_x", "offset x", "px the shadow reaches right; negative reaches left", "px", 1, 0.5, -12, 12,
+		func(c *config.Config) float64 { return float64(c.TextShadow.OffsetX) },
+		func(c *config.Config, v float64) { c.TextShadow.OffsetX = float32(v) })))
+	add(asEffect(newSlider("text_shadow.offset_y", "offset y", "px the shadow reaches down; negative reaches up", "px", 1, 0.5, -12, 12,
+		func(c *config.Config) float64 { return float64(c.TextShadow.OffsetY) },
+		func(c *config.Config, v float64) { c.TextShadow.OffsetY = float32(v) })))
+	add(asEffect(newSlider("text_shadow.depth", "depth", "copies stacked along the offset: 1 is a drop shadow, more extrudes the text in 3D", "", 0, 1, 1, 32,
+		func(c *config.Config) float64 { return float64(c.TextShadow.Depth) },
+		func(c *config.Config, v float64) { c.TextShadow.Depth = float32(v) })))
+	add(asEffect(newSlider("text_shadow.blur", "blur", "px softness of the shadow's edges", "px", 1, 0.1, 0, 6,
+		func(c *config.Config) float64 { return float64(c.TextShadow.Blur) },
+		func(c *config.Config, v float64) { c.TextShadow.Blur = float32(v) })))
+	add(asEffect(newSlider("text_shadow.tint", "tint", "0 is a black shadow, 1 a darkened shade of each glyph's own color", "", 2, 0.01, 0, 1,
+		func(c *config.Config) float64 { return float64(c.TextShadow.Tint) },
+		func(c *config.Config, v float64) { c.TextShadow.Tint = float32(v) })))
+
 	section("Tube face")
 	add(asEffect(newSlider("face.bg_tint", "bg tint", "brightness of the unlit screen", "", 3, 0.005, 0, 0.5,
 		func(c *config.Config) float64 { return float64(c.Face.BgTint) },

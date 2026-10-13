@@ -94,7 +94,7 @@ func applyEffectsPresetCfg(c *config.Config, name string) {
 	e := config.EffectsPreset(name)
 	c.Preset = name
 	c.Surface, c.Blur, c.Cursor = e.Surface, e.Blur, e.Cursor
-	c.TextGlow = e.TextGlow
+	c.TextGlow, c.TextShadow = e.TextGlow, e.TextShadow
 	c.Face, c.Contrast, c.CRT = e.Face, e.Contrast, e.CRT
 }
 

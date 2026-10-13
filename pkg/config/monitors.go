@@ -7,13 +7,14 @@ package config
 // edited by hand, so this package only ever hands back a preset's
 // *starting* values.
 type Effects struct {
-	Surface  Surface
-	Blur     Blur
-	TextGlow TextGlow
-	Cursor   Cursor
-	Face     Face
-	Contrast Contrast
-	CRT      CRT
+	Surface    Surface
+	Blur       Blur
+	TextGlow   TextGlow
+	TextShadow TextShadow
+	Cursor     Cursor
+	Face       Face
+	Contrast   Contrast
+	CRT        CRT
 }
 
 // EffectsPresetNames lists every registered effects preset, in the order
@@ -67,8 +68,9 @@ func EffectsPreset(name string) Effects {
 // doc comment.
 func modernEffects() Effects {
 	return Effects{
-		Surface: Surface{Radius: 1.7},
-		Blur:    Blur{Radius: 2.0, Strength: 0.5},
+		Surface:    Surface{Radius: 1.7},
+		Blur:       Blur{Radius: 2.0, Strength: 0.5},
+		TextShadow: defaultTextShadow(),
 		Cursor: Cursor{
 			Glow: 1.5, PulsePeriod: 0.9, Radius: 0.35,
 			Shape: "block", BlinkStyle: "ease",
