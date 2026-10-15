@@ -24,6 +24,17 @@ block's own rendered pixels, not a fixed overlay image.
 
 ![Neovim's Telescope find-files picker, Nerd Font icons per file type](assets/screenshots/neovim-telescope.png)
 
+Color emoji sit in two columns like tmux expects, and the optional
+text shadow stacks darker copies of each glyph so text looks extruded.
+
+![Color emoji and the 3D text shadow over a git log, catppuccin-mocha theme](assets/screenshots/emoji-shadow.png)
+
+The 80s monitor presets model a real tube: curved glass with rounded
+corners, scanlines, phosphor afterglow, signal noise, and the gray of
+an unlit screen that reflects room light.
+
+![Neovim on the amber theme with the zenith-zvm-1220 monitor preset](assets/screenshots/crt-zenith.png)
+
 ## Features
 
 - A cursor that glides and morphs into a ball-and-tail shape on fast
@@ -65,7 +76,9 @@ block's own rendered pixels, not a fixed overlay image.
   theme editor
 - Period-accurate 80s monitor effect presets (IBM 5151/5153, Zenith
   ZVM-1220, Apple Monitor III, Commodore 1084S, Princeton HX-12) for
-  curvature, phosphor persistence, and scanlines — off by default
+  curvature with rounded tube corners, phosphor persistence,
+  scanlines, and the gray black of an unlit tube that reflects room
+  light (`face.ambient`) — off by default
 - A `neon` preset whose text glow lights up only colorful text, so
   prompts, keywords and git status glow while plain output stays crisp
 - A VS Code-style, in-terminal config UI (`tubeless config`): category
@@ -91,7 +104,7 @@ Cursor, CRT); `/` searches every setting, a dot marks anything changed
 from its default, and `enter` opens a searchable picker for themes,
 presets and fonts, with a live preview as you move through the list.
 
-![The in-terminal config UI (screenshot predates the sidebar layout)](assets/screenshots/config-ui.png)
+![The in-terminal config UI: category sidebar, the theme picker filtered to kanagawa, and the live preview](assets/screenshots/config-ui.png)
 
 ## Install
 
