@@ -43,6 +43,11 @@ var symbolRunes = []rune{
 	0x2606, // ☆ white star
 	0x2726, // ✦ black four-pointed star
 	0x2727, // ✧ white four-pointed star
+	0x2722, // ✢ four teardrop-spoked asterisk (Claude Code spinner)
+	0x2733, // ✳ eight spoked asterisk (Claude Code spinner)
+	0x2736, // ✶ six pointed black star (Claude Code spinner)
+	0x273B, // ✻ teardrop-spoked asterisk (Claude Code spinner)
+	0x273D, // ✽ heavy teardrop-spoked asterisk (Claude Code spinner)
 	0x23F8, // ⏸ pause (TUI media controls)
 	0x23F9, // ⏹ stop (TUI media controls)
 	0x23F5, // ⏵ play (Claude Code's "⏵⏵ auto mode on" icon, doubled up)
@@ -162,6 +167,16 @@ func drawSymbolSprite(r rune, img *image.Alpha, gx, gy, cellW, cellH int) {
 		}
 	case 0x2727: // ✧ outline 4-point star
 		pred = unitStroke(toUnit, starSegments(0.5, 0.5, 0.5, 0.16, 4), halfU)
+	case 0x2722: // ✢ 4 thin spokes
+		pred = filledStar(toUnit, 4, 0.1)
+	case 0x2733: // ✳ 8 stroked spokes
+		pred = unitStroke(toUnit, spokeSegments(0.5, 0.5, 0.46, 8), halfU)
+	case 0x2736: // ✶ filled 6-point star
+		pred = filledStar(toUnit, 6, 0.25)
+	case 0x273B: // ✻ 6 thin spokes
+		pred = filledStar(toUnit, 6, 0.1)
+	case 0x273D: // ✽ 8 thicker spokes
+		pred = filledStar(toUnit, 8, 0.16)
 	default:
 		return
 	}
@@ -207,6 +222,28 @@ func starVertices(cx, cy, rOuter, rInner float64, n int) [][2]float64 {
 		out = append(out, [2]float64{cx + r*math.Cos(ang), cy + r*math.Sin(ang)})
 	}
 	return out
+}
+
+// filledStar is an n-pointed star filling the unit box, with inner
+// radius rInner: a small rInner reads as thin spokes (✢✻), a large one
+// as a solid star (✶).
+func filledStar(toUnit func(x, y float64) (u, v float64), n int, rInner float64) inside {
+	star := starVertices(0.5, 0.5, 0.5, rInner, n)
+	return func(x, y float64) bool {
+		u, v := toUnit(x, y)
+		return inPoly(u, v, star)
+	}
+}
+
+// spokeSegments returns n straight spokes of length r from (cx, cy),
+// starting at the top, for unitStroke to draw an asterisk (✳).
+func spokeSegments(cx, cy, r float64, n int) []segment {
+	segs := make([]segment, 0, n)
+	for i := 0; i < n; i++ {
+		ang := -math.Pi/2 + float64(i)*2*math.Pi/float64(n)
+		segs = append(segs, seg(cx, cy, cx+r*math.Cos(ang), cy+r*math.Sin(ang)))
+	}
+	return segs
 }
 
 // starSegments returns the closed outline segments of an n-pointed star (see

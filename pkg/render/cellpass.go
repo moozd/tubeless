@@ -281,9 +281,9 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				atlas, style, shear = cp.faces.Regular, styleRegular, 0
 				g, ok = atlas.Glyphs[cell.Rune]
 				if !ok {
-					// No face has it: a narrow emoji like a bare ❤
-					// may still have a color glyph.
-					cp.appendEmoji(grid, scr.Cols, x, y)
+					// No face has it. A narrow rune like ✳ asks for
+					// text presentation, so it must not fall back to
+					// its color emoji (a green ✳️ box).
 					continue
 				}
 			}
