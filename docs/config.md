@@ -262,6 +262,7 @@ by switching theme or preset.
 |               | `refract`      | Outward bend of the sampled scene, in pixels.                        |
 |               | `opacity`      | `0..1` core opacity of the glass panel.                              |
 | `[face]`      | `bg_tint`      | `0..1` faint phosphor-tinted background (the CRT "tube face" look).  |
+|               | `ambient`      | `0..1` room light the unlit tube reflects; lifts CRT black to gray.  |
 |               | `inset_shadow` | `0..1` radial falloff toward the screen corners.                     |
 | `[contrast]`  | `min_delta`    | Minimum enforced fg/bg brightness gap on the monochrome ramp, so isoluminant color pairs stay readable. |
 

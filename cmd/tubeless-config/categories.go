@@ -389,6 +389,9 @@ func effectsRows() []panelRow {
 	add(asEffect(newSlider("face.bg_tint", "bg tint", "brightness of the unlit screen", "", 3, 0.005, 0, 0.5,
 		func(c *config.Config) float64 { return float64(c.Face.BgTint) },
 		func(c *config.Config, v float64) { c.Face.BgTint = float32(v) })))
+	add(asEffect(newSlider("face.ambient", "ambient", "room light the unlit tube reflects: why CRT black reads as gray", "", 3, 0.005, 0, 0.2,
+		func(c *config.Config) float64 { return float64(c.Face.Ambient) },
+		func(c *config.Config, v float64) { c.Face.Ambient = float32(v) })))
 	add(asEffect(newSlider("face.inset_shadow", "inset shadow", "radial falloff to the corners", "", 2, 0.01, 0, 1,
 		func(c *config.Config) float64 { return float64(c.Face.InsetShadow) },
 		func(c *config.Config, v float64) { c.Face.InsetShadow = float32(v) })))

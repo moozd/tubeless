@@ -57,6 +57,8 @@ func (i *InsetPass) Draw(sceneTex, cursorTex uint32, cfg config.Config, outW, ou
 	}
 	gl.Uniform3fv(u("uAccent"), 1, &cfg.Phosphor.Low[0])
 	gl.Uniform1f(u("uBgTint"), cfg.Face.BgTint)
+	ambient := ambientColor(cfg.Face.Ambient, cfg.Phosphor.High)
+	gl.Uniform3fv(u("uAmbient"), 1, &ambient[0])
 	gl.Uniform1f(u("uInsetShadow"), cfg.Face.InsetShadow)
 	gl.Uniform1f(u("uAspect"), float32(w)/float32(max(h, 1)))
 	gl.Uniform1f(u("uTime"), float32(elapsed))
@@ -103,4 +105,23 @@ func LetterboxBox(ar config.AspectRatio, outW, outH int) (x, y, w, h int) {
 		y = (outH - h) / 2
 	}
 	return x, y, w, h
+}
+
+// ambientCast is how far the unlit screen's reflected room light leans
+// from neutral gray toward the phosphor's own hue: the coating is a
+// pale powder of that phosphor, so it is only faintly colored.
+const ambientCast = 0.2
+
+// ambientColor is the room light an unlit tube reflects: luminance
+// amount of a near-neutral gray, cast slightly toward accent's hue.
+func ambientColor(amount float32, accent [3]float32) [3]float32 {
+	peak := max(accent[0], accent[1], accent[2])
+	if amount <= 0 || peak <= 0 {
+		return [3]float32{amount, amount, amount}
+	}
+	var c [3]float32
+	for i, v := range accent {
+		c[i] = amount * (1 - ambientCast + ambientCast*v/peak)
+	}
+	return c
 }

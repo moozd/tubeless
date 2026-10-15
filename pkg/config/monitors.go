@@ -98,10 +98,12 @@ func modernEffects() Effects {
 // to sell the barrel curvature visually — a flatter falloff reads as a
 // framed rectangle even with Curvature bowing the geometry. Sources:
 // Wikipedia "IBM 5151", radiomuseum.org's 5151 entry (350 scanlines,
-// P39, 50Hz).
+// P39, 50Hz). Its etched anti-glare faceplate scatters room light
+// back off the pale phosphor, so its unlit screen is a lighter gray
+// than the tinted color tubes (Ambient).
 func ibm5151Effects() Effects {
 	e := modernEffects()
-	e.Face = Face{BgTint: 0.045, InsetShadow: 0.38}
+	e.Face = Face{BgTint: 0.045, Ambient: 0.018, InsetShadow: 0.38}
 	e.Blur = Blur{Radius: 1.5, Strength: 0.4}
 	e.CRT = CRT{
 		Curvature:     Curvature{Amount: 0.02},
@@ -120,10 +122,11 @@ func ibm5151Effects() Effects {
 // InsetShadow raised well past modern's 0.3 to read as a genuinely
 // curved 13" consumer tube. Sources: dfarq.homeip.net's "First
 // generation IBM PC monitors", int10h.org's IBM 5153 true-palette
-// writeup (dot pitch, resolution).
+// writeup (dot pitch, resolution). A color tube's faceplate is tinted
+// glass to hold contrast, so less room light comes back (Ambient).
 func ibm5153Effects() Effects {
 	e := modernEffects()
-	e.Face = Face{BgTint: 0.05, InsetShadow: 0.42}
+	e.Face = Face{BgTint: 0.05, Ambient: 0.011, InsetShadow: 0.42}
 	e.Blur = Blur{Radius: 1.8, Strength: 0.45}
 	e.CRT = CRT{
 		Curvature:     Curvature{Amount: 0.02},
@@ -145,11 +148,12 @@ func ibm5153Effects() Effects {
 // beam). Amber phosphors of this era are medium-persistence — shorter
 // than IBM's long-persistence green P39, longer than a color shadow-mask
 // tube's P22. InsetShadow pushed the highest of any preset here — the
-// least corrected of these tubes. Source: Zenith's ZVM-1220/1230 service
-// manual (bitsavers).
+// least corrected of these tubes. Its plain, glossy faceplate has no
+// tint or filter, so its unlit screen is the grayest here (Ambient).
+// Source: Zenith's ZVM-1220/1230 service manual (bitsavers).
 func zenithZVM1220Effects() Effects {
 	e := modernEffects()
-	e.Face = Face{BgTint: 0.06, InsetShadow: 0.46}
+	e.Face = Face{BgTint: 0.06, Ambient: 0.022, InsetShadow: 0.46}
 	e.Blur = Blur{Radius: 2.5, Strength: 0.6}
 	e.CRT = CRT{
 		Curvature:     Curvature{Amount: 0.02},
@@ -169,10 +173,11 @@ func zenithZVM1220Effects() Effects {
 // movement" — the longest persistence of any preset here, longer even
 // than the 5151's already-long P39. No shadow mask (single beam). Its
 // viewable area is documented as 560x162 pixels.
-// Source: Wikipedia "Apple Monitor III".
+// The dark mesh also absorbs room light, so its unlit screen is the
+// darkest gray here (Ambient). Source: Wikipedia "Apple Monitor III".
 func appleMonitorIIIEffects() Effects {
 	e := modernEffects()
-	e.Face = Face{BgTint: 0.06, InsetShadow: 0.40}
+	e.Face = Face{BgTint: 0.06, Ambient: 0.009, InsetShadow: 0.40}
 	e.Blur = Blur{Radius: 1.6, Strength: 0.35}
 	e.CRT = CRT{
 		Curvature:     Curvature{Amount: 0.02},
@@ -191,10 +196,12 @@ func appleMonitorIIIEffects() Effects {
 // composite inputs (Amiga/C64 owners frequently ran it over composite,
 // hence a bit more signal noise than the digital-only IBM monitors).
 // Source: bigbookofamigahardware.com's 1084S entry (640x200/640x400i,
-// used here in its primary non-interlaced 640x200 mode).
+// used here in its primary non-interlaced 640x200 mode). Its lightly
+// tinted consumer faceplate sits between the clear mono tubes and the
+// darker IBM/NEC color glass (Ambient).
 func commodore1084SEffects() Effects {
 	e := modernEffects()
-	e.Face = Face{BgTint: 0.05, InsetShadow: 0.40}
+	e.Face = Face{BgTint: 0.05, Ambient: 0.014, InsetShadow: 0.40}
 	e.Blur = Blur{Radius: 2.0, Strength: 0.5}
 	e.CRT = CRT{
 		Curvature:     Curvature{Amount: 0.02},
@@ -214,10 +221,11 @@ func commodore1084SEffects() Effects {
 // sharpest, cleanest picture of any color monitor here, so the finest
 // shadow-mask cell and the least blur among the shadow-mask presets.
 // Source: minuszerodegrees.net's HX-12 service manual, vcfed.org forum
-// listings for the HX-12/HX-12E (690x240 interlaced).
+// listings for the HX-12/HX-12E (690x240 interlaced). Its dark-tinted
+// NEC faceplate reflects little room light (Ambient).
 func princetonHX12Effects() Effects {
 	e := modernEffects()
-	e.Face = Face{BgTint: 0.04, InsetShadow: 0.35}
+	e.Face = Face{BgTint: 0.04, Ambient: 0.01, InsetShadow: 0.35}
 	e.Blur = Blur{Radius: 1.4, Strength: 0.35}
 	e.CRT = CRT{
 		Curvature:     Curvature{Amount: 0.02},

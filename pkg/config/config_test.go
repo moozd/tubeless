@@ -362,3 +362,23 @@ func TestTextShadowSeededShape(t *testing.T) {
 		}
 	}
 }
+
+// TestMonitorPresetsReflectRoomLight guards the gray CRT black: every
+// real-monitor preset must lift its unlit screen with Ambient, and the
+// fictional or flat-panel looks must not.
+func TestMonitorPresetsReflectRoomLight(t *testing.T) {
+	monitors := []string{
+		"ibm-5151", "ibm-5153", "commodore-1084s",
+		"apple-monitor-iii", "zenith-zvm-1220", "princeton-hx12",
+	}
+	for _, name := range monitors {
+		if a := EffectsPreset(name).Face.Ambient; a <= 0 || a > 0.1 {
+			t.Errorf("%s: Face.Ambient = %v, want 0 < a <= 0.1", name, a)
+		}
+	}
+	for _, name := range []string{"modern", "cyberpunk", "neon", "lcd"} {
+		if a := EffectsPreset(name).Face.Ambient; a != 0 {
+			t.Errorf("%s: Face.Ambient = %v, want 0", name, a)
+		}
+	}
+}

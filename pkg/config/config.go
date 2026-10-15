@@ -345,10 +345,18 @@ type Glass struct {
 	Opacity float32 `toml:"opacity"`
 }
 
-// Face is the CRT "tube face" look: a faint phosphor-tinted background
-// and a radial falloff toward the screen corners. Both are 0..1.
+// Face is the CRT "tube face" look: a faint phosphor-tinted background,
+// the room light the unlit tube reflects, and a radial falloff toward
+// the screen corners. All are 0..1.
+//
+// Ambient is why a real CRT's "black" reads as gray: the phosphor
+// coating is a pale powder, and the faceplate glass passes room light
+// to it and back. Darker (tinted, black-matrix, mesh-filtered) glass
+// reflects less. It is the linear luminance of that reflection,
+// nearly neutral, with a slight cast of the phosphor's own body color.
 type Face struct {
 	BgTint      float32 `toml:"bg_tint"`
+	Ambient     float32 `toml:"ambient"`
 	InsetShadow float32 `toml:"inset_shadow"`
 }
 

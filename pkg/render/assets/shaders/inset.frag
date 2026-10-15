@@ -10,6 +10,7 @@ uniform float uGlassMode;      // 0 = cursor is an additive glow, 1 = a
                                 // cursor.frag's own uGlassMode branch)
 uniform vec3 uAccent;          // phosphor color (linear) used as the tint hue
 uniform float uBgTint;         // empty-screen brightness, 0..1
+uniform vec3 uAmbient;         // room light the unlit tube reflects (linear)
 uniform float uInsetShadow;    // strength of the radial tube-face falloff, 0..1
 uniform float uAspect;         // screen width / height
 uniform float uTime;           // wrapped elapsed seconds, for noise/flicker
@@ -36,7 +37,10 @@ uniform float uFlickerAmount, uFlickerSpeed;
 //
 // Then the flat render becomes a recessed tube face. The screen is never
 // dead black: empty areas read as a very dim phosphor glow (uAccent *
-// uBgTint).
+// uBgTint), over the room light the pale phosphor coating reflects
+// back through the glass (uAmbient). That reflection is not emitted by
+// the beam, so it is added after the scanline, shadow-mask and pixel-
+// grid gaps: those darken only the light the tube makes itself.
 //
 // The inset is a single continuous radial falloff — distance from the
 // screen center, normalized so the corners (not the edges) are the darkest
@@ -70,23 +74,41 @@ float hash(vec2 p) {
 
 // curveUV bends uv (0..1) toward a barrel-distorted tube face: points near
 // the center are nearly unmoved, points toward the corners bow outward.
-// Callers must check the result is still within [0,1] before sampling —
-// see main()'s early-return, which paints outside that range solid black
-// rather than requiring every upstream FBO to be padded.
+// The result can leave [0,1]; tubeEdge masks that part to the black bezel.
 vec2 curveUV(vec2 uv, float amount) {
 	vec2 c = uv * 2.0 - 1.0;
 	c += c * (c.yx * c.yx) * amount;
 	return c * 0.5 + 0.5;
 }
 
+// TUBE_CORNER is the tube face's corner radius, as a fraction of the
+// screen height: a real CRT's glass has visibly rounded corners.
+const float TUBE_CORNER = 0.035;
+
+// tubeEdge is how much of the curved tube face covers this pixel, 1 in
+// the face and 0 on the bezel. It is a rounded-rectangle distance in
+// aspect-correct units, anti-aliased over one pixel (fwidth), so the
+// bowed edge is smooth instead of a stair-stepped hard cut.
+float tubeEdge(vec2 uv) {
+	vec2 halfSize = vec2(0.5 * uAspect, 0.5);
+	vec2 c = (uv - 0.5) * vec2(uAspect, 1.0);
+	vec2 q = abs(c) - halfSize + TUBE_CORNER;
+	float sd = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - TUBE_CORNER;
+	float aa = max(fwidth(sd), 1e-5);
+	return clamp(0.5 - sd / aa, 0.0, 1.0);
+}
+
 void main() {
 	vec2 uv = vUV;
+	float edge = 1.0;
 	if (uCurvature > 0.0) {
 		uv = curveUV(uv, uCurvature);
-		if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+		edge = tubeEdge(uv);
+		if (edge <= 0.0) {
 			fragColor = vec4(0.0, 0.0, 0.0, 1.0);
 			return;
 		}
+		uv = clamp(uv, 0.0, 1.0);
 	}
 
 	vec3 scene;
@@ -118,6 +140,7 @@ void main() {
 	float d = clamp(length(p) / length(vec2(uAspect, 1.0)), 0.0, 1.0);
 	float shade = 1.0 - uInsetShadow * pow(d, 2.4);
 	color *= shade;
+	vec3 ambient = uAmbient * shade;
 
 	if (uScanIntensity > 0.0) {
 		float scan = 0.5 + 0.5 * sin(gl_FragCoord.y / uScanPeriod * 6.2831853);
@@ -138,8 +161,16 @@ void main() {
 		color *= 1.0 - uGridIntensity * isGap;
 	}
 
+	color += ambient;
+
+	// Signal noise rides on the video voltage, which drives the tube in
+	// its gamma-encoded domain, so it is added there. Added in linear
+	// light, the same amount is a huge step near black and turns an empty
+	// screen into coarse grain.
 	if (uNoiseIntensity > 0.0) {
-		color += (hash(gl_FragCoord.xy + uTime * 1000.0) - 0.5) * uNoiseIntensity;
+		vec3 encoded = pow(max(color, 0.0), vec3(1.0 / 2.2));
+		encoded += (hash(gl_FragCoord.xy + uTime * 1000.0) - 0.5) * uNoiseIntensity;
+		color = pow(max(encoded, 0.0), vec3(2.2));
 	}
 
 	if (uFlickerAmount > 0.0) {
@@ -151,6 +182,7 @@ void main() {
 	// two representable values and the pattern biases each pixel toward the
 	// nearer one instead of all snapping to the same quantization floor.
 	color += (bayer4(gl_FragCoord.xy) - 0.5) * (1.0 / 255.0) * 0.5;
+	color *= edge;
 
 	fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }
