@@ -115,6 +115,8 @@ func main() {
 		runSSHIntegration(os.Args[2:])
 	}
 
+	startSessionLog()
+
 	// Registered before anything else — critically, before any cgo call
 	// (font.Build's FreeType binding is the first one below). Something
 	// in FreeType's C-side initialization resets SIGTERM's process-wide
@@ -130,7 +132,8 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		<-sigCh
+		sig := <-sigCh
+		log.Printf("exit: received signal %v", sig)
 		closeRequested.Store(true)
 	}()
 
@@ -339,6 +342,7 @@ func main() {
 	load := &fontLoad{}
 	req, res := startRebuilder(maxTextureSize, load)
 	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef, req, res, load, hub)
+	log.Printf("exit: run loop ended (window closed=%v)", win.ShouldClose())
 }
 
 // probeMaxTextureSizeWithRetry is render.ProbeMaxTextureSize with retries:
@@ -665,6 +669,7 @@ func ptyCoordinator(ref *sessionRef, shared *atomic.Pointer[screen.Screen], resi
 			if !ok {
 				if respawn != nil {
 					if newSess, ok := respawn(work.Cols, work.Rows); ok {
+						log.Printf("shell exited; restarted tmux")
 						ref.p.Store(newSess)
 						work.Reset()
 						shared.Store(work.Clone())
@@ -677,6 +682,7 @@ func ptyCoordinator(ref *sessionRef, shared *atomic.Pointer[screen.Screen], resi
 				// readCh) — without this, runLoop would never learn the
 				// shell is gone and the window would sit open forever with
 				// the shell left unreaped as a zombie.
+				log.Printf("exit: shell exited")
 				closeRequested.Store(true)
 				return
 			}
