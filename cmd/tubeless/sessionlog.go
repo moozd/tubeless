@@ -53,6 +53,10 @@ func startSessionLog() {
 	if err := debug.SetCrashOutput(f, debug.CrashOptions{}); err != nil {
 		log.Printf("set crash output: %v", err)
 	}
+	// A native abort (SIGABRT in AppKit/GLFW) has no C stack in Go's
+	// trace. "crash" re-raises the signal after the trace, so macOS
+	// writes an .ips report with the ObjC stack and abort reason.
+	debug.SetTraceback("crash")
 	log.Printf("start: tubeless %s pid=%d args=%q", version, os.Getpid(), os.Args[1:])
 }
 
