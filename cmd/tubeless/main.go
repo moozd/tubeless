@@ -281,13 +281,12 @@ func main() {
 	// platforms (observed on macOS) where GLFW doesn't deliver the real
 	// scale via GetContentScale until well after the window opens,
 	// sometimes not until a later, unrelated event (a real resize,
-	// entering fullscreen) prods it. CurrentMonitorContentScale (see its
-	// own doc comment) sidesteps that staleness by asking the monitor
-	// directly instead of the window.
-	dpiX, dpiY := win.CurrentMonitorContentScale()
+	// entering fullscreen) prods it. DisplayScale (see its own doc
+	// comment) sidesteps that staleness.
+	dpiX, dpiY := win.DisplayScale()
 	for i := 0; i < 5 && dpiX == 1 && dpiY == 1; i++ {
 		glfw.WaitEventsTimeout(0.05)
-		dpiX, dpiY = win.CurrentMonitorContentScale()
+		dpiX, dpiY = win.DisplayScale()
 	}
 	if dpiX != initDpiX {
 		// The pre-window guess didn't match this display — rebuild now
@@ -788,7 +787,7 @@ func drainPending(readCh <-chan []byte, parser *vtparse.Parser) {
 func wireResize(win *render.Window, resizeCh chan resizeReq, cs *cellSize, cfgRef *atomic.Pointer[config.Config], renderFrame func()) {
 	win.SetFramebufferSizeCallback(func(_ *glfw.Window, width, height int) {
 		lw, lh := win.GetSize()
-		sx, sy := win.CurrentMonitorContentScale()
+		sx, sy := win.DisplayScale()
 		log.Printf("debug resize: fb=%dx%d logical=%dx%d contentScale=%.4fx%.4f cellPx=%.4fx%.4f", width, height, lw, lh, sx, sy, cs.w, cs.h)
 		c := cfgRef.Load()
 		pushResizeSize(resizeCh, cs, width, height, c.CRT.AspectRatio, c.Padding.Size)
@@ -1397,17 +1396,15 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		// (see effectiveAtlasScale) and needs rebuilding, not just a
 		// proportional resize of cs — a stale-resolution atlas is what
 		// used to make text look sharp on one display and soft on
-		// another even after cs.w/h caught up. CurrentMonitorContentScale
-		// (not the window's own GetContentScale) is what actually makes
-		// this catch a plain drag to a differently-scaled monitor: on
-		// macOS the window's own cached scale can keep reporting the old
+		// another even after cs.w/h caught up. DisplayScale (not the
+		// window's own GetContentScale) is what actually makes this
+		// catch a plain drag to a differently-scaled monitor: on macOS
+		// the window's own cached scale can keep reporting the old
 		// monitor's value indefinitely if the user never triggers a real
-		// resize/fullscreen afterward, which is exactly the "still
-		// degrades on the second monitor" gap the window-level check
-		// alone left open. The comparison is two float reads plus a
-		// monitor-bounds scan — free next to everything else this loop
-		// already does per frame.
-		if x, y := win.CurrentMonitorContentScale(); x != reqDpiX || y != reqDpiY {
+		// resize/fullscreen afterward. It reads two sizes off the
+		// window — free next to everything else this loop already does
+		// per frame.
+		if x, y := win.DisplayScale(); x != reqDpiX || y != reqDpiY {
 			reqDpiX, reqDpiY = x, y
 			g := load.begin("Display scale change")
 			requestFontBuild(req, fontBuildReq{gen: g, cfg: cfg, dx: x, dy: y})

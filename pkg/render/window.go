@@ -2,6 +2,8 @@ package render
 
 import (
 	"fmt"
+	"math"
+	"runtime"
 
 	"github.com/go-gl/gl/v3.3-core/gl"
 	"github.com/go-gl/glfw/v3.4/glfw"
@@ -158,21 +160,41 @@ func (w *Window) CurrentMonitor() *glfw.Monitor {
 	return nil
 }
 
-// CurrentMonitorContentScale reports the content scale of
-// CurrentMonitor — unlike the window's own GetContentScale (embedded
-// from glfw.Window), which on macOS can keep reporting a stale scale
-// after the window is dragged from one monitor to another with a
-// different backing scale until some unrelated event (a real resize,
-// entering fullscreen) happens to refresh GLFW's cached value. Querying
-// the monitor directly sidesteps that staleness entirely — this is what
-// runLoop's per-frame content-scale check and newRendererFor should use
-// instead of the window's own GetContentScale. Falls back to the
-// window's own GetContentScale when CurrentMonitor finds no match.
-func (w *Window) CurrentMonitorContentScale() (float32, float32) {
+// DisplayScale reports the window's display scale (1 on a standard
+// display, 2 on Retina). On macOS it is the framebuffer-to-window size
+// ratio, read from the window's own view: it follows a drag to another
+// monitor at once, and it never touches GLFW's monitor list. GLFW's
+// Cocoa monitors hold an unretained NSScreen, which dangles while macOS
+// reconfigures displays, and a monitor content scale query then crashed
+// the process (SIGSEGV in glfwGetMonitorContentScale, 2026-10-26).
+// Elsewhere the framebuffer and window sizes match even on a scaled
+// display, so it is the content scale of CurrentMonitor, or the
+// window's own when no monitor matches.
+func (w *Window) DisplayScale() (float32, float32) {
+	if runtime.GOOS == "darwin" {
+		return w.backingScale()
+	}
 	if m := w.CurrentMonitor(); m != nil {
 		return m.GetContentScale()
 	}
 	return w.GetContentScale()
+}
+
+// backingScale is the framebuffer-to-window size ratio, rounded to two
+// decimals so a one-frame lag between the two sizes mid-resize does not
+// read as a scale change (and an atlas rebuild). A zero size, as when
+// minimized, falls back to the window's own content scale.
+func (w *Window) backingScale() (float32, float32) {
+	fw, fh := w.GetFramebufferSize()
+	ww, wh := w.GetSize()
+	if fw <= 0 || fh <= 0 || ww <= 0 || wh <= 0 {
+		return w.GetContentScale()
+	}
+	return roundScale(fw, ww), roundScale(fh, wh)
+}
+
+func roundScale(pixels, points int) float32 {
+	return float32(math.Round(float64(pixels)/float64(points)*100) / 100)
 }
 
 // PrimaryMonitorContentScale reports the primary monitor's content
