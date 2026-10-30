@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+
+	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 // maxSessionLogBytes is the size past which startSessionLog rotates the
@@ -33,8 +36,8 @@ func sessionLogPath() (string, error) {
 	return filepath.Join(state, "tubeless", "tubeless.log"), nil
 }
 
-// startSessionLog tees the standard logger into a log file and points
-// the Go runtime's crash output at it too. An app launched from the
+// startSessionLog sends the standard logger, the Go runtime's crash
+// output and native stderr to a log file. An app launched from the
 // Finder/Dock has its stderr going nowhere, so without this a panic in
 // any goroutine (exit code 2) closes the window and leaves no trace.
 func startSessionLog() {
@@ -48,16 +51,41 @@ func startSessionLog() {
 		log.Printf("session log disabled: %v", err)
 		return
 	}
-	log.SetOutput(io.MultiWriter(os.Stderr, f))
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	debug.SetTraceback("all")
+	if isStderrRedirected(f) {
+		log.SetOutput(os.Stderr)
+	} else {
+		log.SetOutput(io.MultiWriter(os.Stderr, f))
+		setCrashOutput(f)
+	}
+	log.Printf("start: tubeless %s pid=%d args=%q", version, os.Getpid(), os.Args[1:])
+}
+
+// isStderrRedirected points fd 2 at f when stderr is not a terminal,
+// so the Go runtime's crash trace and native output both land in the
+// log. A native abort in AppKit/GLFW writes its reason (an uncaught
+// exception, a failed assert) to fd 2 and nowhere else: Go's trace has
+// no C frames, and the .ips report macOS writes after it has no native
+// stack either, since the runtime raises the signal again from its own
+// handler.
+func isStderrRedirected(f *os.File) bool {
+	if term.IsTerminal(int(os.Stderr.Fd())) {
+		return false
+	}
+	if err := unix.Dup2(int(f.Fd()), int(os.Stderr.Fd())); err != nil {
+		log.Printf("redirect stderr to session log: %v", err)
+		return false
+	}
+	return true
+}
+
+// setCrashOutput copies the Go runtime's crash trace to f, next to the
+// copy on stderr.
+func setCrashOutput(f *os.File) {
 	if err := debug.SetCrashOutput(f, debug.CrashOptions{}); err != nil {
 		log.Printf("set crash output: %v", err)
 	}
-	// A native abort (SIGABRT in AppKit/GLFW) has no C stack in Go's
-	// trace. "crash" re-raises the signal after the trace, so macOS
-	// writes an .ips report with the ObjC stack and abort reason.
-	debug.SetTraceback("crash")
-	log.Printf("start: tubeless %s pid=%d args=%q", version, os.Getpid(), os.Args[1:])
 }
 
 // openSessionLog opens path for appending, creating its directory and
