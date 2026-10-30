@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"runtime"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
@@ -33,8 +34,21 @@ func toggleFullscreen(win *render.Window, fs *fullscreenState) {
 	if mon == nil {
 		mon = glfw.GetPrimaryMonitor()
 	}
-	mode := mon.GetVideoMode()
+	mode := videoMode(mon)
+	if mode == nil {
+		log.Printf("fullscreen: no display mode for the current monitor")
+		return
+	}
 	win.SetMonitor(mon, 0, 0, mode.Width, mode.Height, mode.RefreshRate)
+}
+
+// videoMode is m's current display mode, nil when m is nil or GLFW
+// cannot query it (a sleeping or reconfiguring display on macOS).
+func videoMode(m *glfw.Monitor) *glfw.VidMode {
+	if m == nil {
+		return nil
+	}
+	return m.GetVideoMode()
 }
 
 // nearMonitorSize reports whether fbw/fbh are close enough to modeW/modeH

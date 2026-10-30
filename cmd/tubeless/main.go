@@ -1160,17 +1160,11 @@ const unfocusedFrame = time.Second / 30
 // frameBudget is how long one presented frame should take: the display's
 // refresh period while focused (60Hz when GLFW can't tell), a slower
 // fixed period otherwise.
-func frameBudget(win *render.Window, isFocused bool) time.Duration {
+func frameBudget(win *render.Window, rate *refreshRate, isFocused bool) time.Duration {
 	if !isFocused {
 		return unfocusedFrame
 	}
-	hz := 60
-	if m := win.CurrentMonitor(); m != nil {
-		if mode := m.GetVideoMode(); mode != nil && mode.RefreshRate > 0 {
-			hz = mode.RefreshRate
-		}
-	}
-	return time.Second / time.Duration(hz)
+	return time.Second / time.Duration(rate.get(win))
 }
 
 // pumpFrame pumps window events until one frame budget has passed since
@@ -1179,8 +1173,8 @@ func frameBudget(win *render.Window, isFocused bool) time.Duration {
 // Hyprland workspace) stops getting frame callbacks, and a swap waiting
 // on one never returns — the compositor then shows its "application not
 // responding" dialog.
-func pumpFrame(win *render.Window, isFocused bool, lastPresent time.Time) {
-	deadline := lastPresent.Add(frameBudget(win, isFocused))
+func pumpFrame(win *render.Window, rate *refreshRate, isFocused bool, lastPresent time.Time) {
+	deadline := lastPresent.Add(frameBudget(win, rate, isFocused))
 	for time.Now().Before(deadline) {
 		wait := time.Until(deadline).Seconds()
 		pumpEvents(func() { glfw.WaitEventsTimeout(wait) })
@@ -1212,6 +1206,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 	watch := &cfgWatch{path: cfgPath}
 	reload := false
 	lastPresent := time.Now()
+	rate := watchRefreshRate(win)
 	// reqDpiX/reqDpiY remember the scale the newest font build was
 	// *requested* for. cs.dpiX/dpiY only catch up once that build lands and
 	// installs, so comparing the monitor's scale against cs below would
@@ -1335,13 +1330,12 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 		if mon == nil {
 			mon = glfw.GetPrimaryMonitor()
 		}
-		if mon != nil {
-			mode := mon.GetVideoMode()
+		if mode := videoMode(mon); mode != nil {
 			fbw, fbh := win.FramebufferPixelSize()
 			if (fbw != mode.Width || fbh != mode.Height) && nearMonitorSize(fbw, fbh, mode.Width, mode.Height) {
 				// SetSize only sends the request; the compositor's
 				// confirming configure is its own round trip, same as
-				// CurrentMonitorContentScale below — without pumping
+				// DisplayScale below — without pumping
 				// events here, the loop's first frame renders before
 				// that configure ever arrives and the shortfall this
 				// block exists to fix goes uncorrected.
@@ -1385,7 +1379,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 			lastFrame = time.Now()
 			continue
 		}
-		pumpFrame(win, *focused, lastPresent)
+		pumpFrame(win, rate, *focused, lastPresent)
 
 		// A one-off content-scale check right after window creation isn't
 		// always enough — observed on macOS, where GLFW can keep reporting
