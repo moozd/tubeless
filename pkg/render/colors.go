@@ -586,8 +586,32 @@ func ambientBG(cfg config.Config) [3]float32 {
 // independently, and two instances that are merely flush (not overlapping)
 // at a shared edge each fade out just short of it, leaving a faint seam
 // even though nothing should be visible there.
+//
+// The diagonal fields say whether the diagonal neighbor has the same
+// fill too. Growing on two adjacent edges also grows into that diagonal
+// cell's corner, so hasForeignCorner tells when that corner is not ours.
 type edgeCont struct {
-	Up, Right, Down, Left bool
+	Up, Right, Down, Left                bool
+	UpLeft, UpRight, DownRight, DownLeft bool
+}
+
+// hasForeignCorner reports whether growing the rect on two adjacent
+// continuing edges would paint over a diagonal neighbor with another
+// fill.
+func (e edgeCont) hasForeignCorner() bool {
+	return (e.Up && e.Left && !e.UpLeft) ||
+		(e.Up && e.Right && !e.UpRight) ||
+		(e.Down && e.Right && !e.DownRight) ||
+		(e.Down && e.Left && !e.DownLeft)
+}
+
+// edgesFrom builds an edgeCont by asking joins about all 8 neighbors.
+func edgesFrom(joins func(dx, dy int) bool) edgeCont {
+	return edgeCont{
+		Up: joins(0, -1), Right: joins(1, 0), Down: joins(0, 1), Left: joins(-1, 0),
+		UpLeft: joins(-1, -1), UpRight: joins(1, -1),
+		DownRight: joins(1, 1), DownLeft: joins(-1, 1),
+	}
 }
 
 // sameSurfaceColor is bgRectEdges/blockRectEdges' color-match test: exact
@@ -611,7 +635,7 @@ func bgRectEdges(grid [][]screen.Cell, cols, rows int, cfg config.Config, x, y i
 		_, nbg := cellColors(grid[ny][nx].Attr, cfg)
 		return sameSurfaceColor(nbg, bg)
 	}
-	return edgeCont{Up: same(0, -1), Right: same(1, 0), Down: same(0, 1), Left: same(-1, 0)}
+	return edgesFrom(same)
 }
 
 // blockRectEdges is bgRectEdges' counterpart for a single-rect block glyph
@@ -636,6 +660,8 @@ func blockRectEdges(grid [][]screen.Cell, cols, rows int, cfg config.Config, x, 
 			return false
 		}
 		switch {
+		case dx != 0 && dy != 0:
+			return coversCorner(nx0, ny0, nx1, ny1, dx, dy)
 		case dx < 0:
 			return x0 == 0 && nx1 == 1 && ny0 <= y0 && y1 <= ny1
 		case dx > 0:
@@ -646,5 +672,14 @@ func blockRectEdges(grid [][]screen.Cell, cols, rows int, cfg config.Config, x, 
 			return y1 == 1 && ny0 == 0 && nx0 <= x0 && x1 <= nx1
 		}
 	}
-	return edgeCont{Up: joins(0, -1), Right: joins(1, 0), Down: joins(0, 1), Left: joins(-1, 0)}
+	return edgesFrom(joins)
+}
+
+// coversCorner reports whether a diagonal neighbor's block sub-rect
+// fills its corner that touches this cell. (dx, dy) points from this
+// cell to the neighbor, so the touching corner is on the opposite side.
+func coversCorner(x0, y0, x1, y1 float32, dx, dy int) bool {
+	isXCovered := (dx > 0 && x0 == 0) || (dx < 0 && x1 == 1)
+	isYCovered := (dy > 0 && y0 == 0) || (dy < 0 && y1 == 1)
+	return isXCovered && isYCovered
 }

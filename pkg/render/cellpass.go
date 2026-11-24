@@ -226,13 +226,13 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 			}
 			if bg != empty {
 				e := bgRectEdges(grid, scr.Cols, scr.Rows, cfg, x, y, bg)
-				rx, ry, rw, rh := expandRect(0, 0, 1, 1, cw, ch, e)
-				cp.bgScratch = appendRectInstance(cp.bgScratch, px, py, rx, ry, rw, rh, bg, [4]float32{})
+				cell := cellRect{px: px, py: py, w: 1, h: 1}
+				cp.bgScratch = appendFillRects(cp.bgScratch, cell, cw, ch, e, bg)
 			}
 			if x0, y0, x1, y1, ok := font.BlockRect(cell.Rune); ok {
 				e := blockRectEdges(grid, scr.Cols, scr.Rows, cfg, x, y, fg, x0, y0, x1, y1)
-				rx, ry, rw, rh := expandRect(x0, y0, x1-x0, y1-y0, cw, ch, e)
-				cp.blockScratch = appendRectInstance(cp.blockScratch, px, py, rx, ry, rw, rh, fg, [4]float32{})
+				block := cellRect{px: px, py: py, x: x0, y: y0, w: x1 - x0, h: y1 - y0}
+				cp.blockScratch = appendFillRects(cp.blockScratch, block, cw, ch, e, fg)
 				continue
 			}
 			if cell.Rune == ' ' || cell.Rune == screen.SlotRune || cell.Rune == screen.WideSpacer {
@@ -386,6 +386,32 @@ func glyphUV(atlas *font.Atlas, g font.Glyph) (u0, v0, us, vs float32) {
 
 func appendRectInstance(dst []float32, px, py, rx, ry, rw, rh float32, color [3]float32, radii [4]float32) []float32 {
 	return append(dst, px, py, rx, ry, rw, rh, color[0], color[1], color[2], radii[0], radii[1], radii[2], radii[3])
+}
+
+// cellRect places a fill rect: (px, py) is the cell's top-left in
+// pixels, and x, y, w, h are the rect's offset and size as cell
+// fractions.
+type cellRect struct {
+	px, py, x, y, w, h float32
+}
+
+// appendFillRects adds a fill rect grown into its same-fill neighbors
+// (see expandRect). Growing on two adjacent edges also covers the
+// diagonal cell's corner. When that cell has another fill, the grown
+// corner paints over it: a page fill on the next row cuts a square
+// notch into the bottom corners of a highlighted span above it. In
+// that case the fill goes out as two rects, one grown across and one
+// grown along, so the diagonal corner stays untouched.
+func appendFillRects(dst []float32, r cellRect, cw, ch float32, e edgeCont, color [3]float32) []float32 {
+	grow := func(dst []float32, e edgeCont) []float32 {
+		rx, ry, rw, rh := expandRect(r.x, r.y, r.w, r.h, cw, ch, e)
+		return appendRectInstance(dst, r.px, r.py, rx, ry, rw, rh, color, [4]float32{})
+	}
+	if !e.hasForeignCorner() {
+		return grow(dst, e)
+	}
+	dst = grow(dst, edgeCont{Left: e.Left, Right: e.Right})
+	return grow(dst, edgeCont{Up: e.Up, Down: e.Down})
 }
 
 // rectOverlapPx is how far a rect's own geometry overshoots into a
