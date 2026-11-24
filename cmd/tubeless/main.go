@@ -1173,11 +1173,19 @@ func frameBudget(win *render.Window, rate *refreshRate, isFocused bool) time.Dur
 // Hyprland workspace) stops getting frame callbacks, and a swap waiting
 // on one never returns — the compositor then shows its "application not
 // responding" dialog.
+//
+// The wait is read from the clock once per pass: checking the deadline
+// and then reading the time left again lets the deadline pass in
+// between, and GLFW asserts timeout >= 0 — a negative wait aborts the
+// process (SIGABRT, exit 2).
 func pumpFrame(win *render.Window, rate *refreshRate, isFocused bool, lastPresent time.Time) {
 	deadline := lastPresent.Add(frameBudget(win, rate, isFocused))
-	for time.Now().Before(deadline) {
-		wait := time.Until(deadline).Seconds()
-		pumpEvents(func() { glfw.WaitEventsTimeout(wait) })
+	for {
+		wait := time.Until(deadline)
+		if wait <= 0 {
+			break
+		}
+		pumpEvents(func() { glfw.WaitEventsTimeout(wait.Seconds()) })
 	}
 	pumpEvents(glfw.PollEvents)
 }
