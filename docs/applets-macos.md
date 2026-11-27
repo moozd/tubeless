@@ -13,7 +13,13 @@ and the decisions behind it are in the vault note
 1. Download the `macosarm64` (or `macosx64`) "minimal" build of CEF
    158 from cef-builds.spotifycdn.com. Extract it to `CEF_ROOT`
    (default `~/.cache/tubeless/cef`).
-2. Run `make install-darwin APPLETS=1`, then `make install-applets`.
+2. Run `make install-darwin APPLETS=1`.
+
+The build uses the CEF headers in `third_party/cef`. `CEF_ROOT` gives
+only the framework that goes in the bundle. `APPLETS=1` also puts the
+prebuilt applets (`make applets-dist`, needs node) in
+`Contents/Resources/applets`. An applet with the same name in
+`~/.config/tubeless/applets` replaces it.
 
 `APPLETS=1` also works with `package-darwin`. Without it, the two targets
 make the same bundle as before, with no applets. The release packages
@@ -90,9 +96,9 @@ scale 1:
 
 | # | Test | Result |
 |---|------|--------|
-| 1 | Not in a bundle, or with no framework, the log shows `applets disabled` | OK |
-| 2 | In the bundle, the log shows `applets: cef started` | OK |
-| 3 | `tubeless exec demo` shows the shader at the display frame rate | Not looked at. The page sends a new frame on each loop: 27 to 28 per second without window focus (the loop limit is 30 then). Focused rate not measured |
+| 1 | Not in a bundle, or with no framework, the first `tubeless exec` shows `applets are off in this window` | OK |
+| 2 | In the bundle, the first `tubeless exec` logs `applets: cef started` | OK |
+| 3 | `tubeless exec demo` shows the shader at the display frame rate | Not looked at. The page sends a new frame on each loop: 27 to 28 frames each second without window focus (the loop limit is 30 then). Focused rate not measured |
 | 4 | Text in the demo is sharp on a Retina display | Not done |
 | 5 | Keys, the tmux prefix and pane focus work as on Linux | Not done |
 | 6 | Cmd+C and Cmd+V work in excalidraw and markdown | Not done |
@@ -100,6 +106,7 @@ scale 1:
 | 8 | `q` in pdf prints the page, and `tubeless exec` exits with 0 | Not done |
 | 9 | The helper processes stop when the window closes | OK |
 | - | Start through a symlink to the bundle binary | OK |
+| - | demo and markdown open from `Contents/Resources/applets`, with no user applets | OK |
 
 Do tests 3 to 8 by hand.
 
@@ -108,4 +115,4 @@ Do tests 3 to 8 by hand.
 - The GPU path (IOSurface) as an alternative to the CPU copy of each
   frame.
 - The CEF sandbox.
-- Applets in the release packages.
+- Applets in the macOS release packages.

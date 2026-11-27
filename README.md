@@ -235,13 +235,15 @@ no download. The Linux builds use the CEF headers in `third_party/cef`.
 On macOS, CEF loads only from the app bundle:
 
 ```sh
-make install-darwin APPLETS=1   # Tubeless.app with the CEF framework and helpers
-make install-applets
+make install-darwin APPLETS=1   # Tubeless.app with the CEF framework, helpers and applets
 ```
 
 On macOS, `CEF_ROOT` is an unpacked CEF "minimal" package from
-cef-builds.spotifycdn.com (version 158, `macosarm64` or `macosx64`).
-The macOS release packages have no applets at this time. Without the runtime,
+cef-builds.spotifycdn.com (version 158, `macosarm64` or `macosx64`):
+the bundle gets the framework from it. The build itself uses the
+headers in `third_party/cef`. `APPLETS=1` puts the prebuilt applets in
+`Tubeless.app/Contents/Resources/applets` (needs node). The macOS
+release packages have no applets at this time. Without the runtime,
 tubeless starts with applets off. A window starts CEF only when its
 first applet opens. [docs/applets-macos.md](docs/applets-macos.md)
 tells how applets work on macOS and gives the test list.

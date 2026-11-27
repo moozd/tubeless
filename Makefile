@@ -61,15 +61,15 @@ endif
 APPLETS_DIST = $(BIN_DIR)/applets
 
 # APPLETS=1 makes install-darwin and package-darwin build tubeless with
-# applet support and put the CEF framework and its helper apps in the
-# bundle (see packaging/darwin/add-cef.sh). Off by default: the release
-# packages are built without applets.
+# applet support, put the CEF framework (from CEF_ROOT) and its helper
+# apps in the bundle (see packaging/darwin/add-cef.sh), and the
+# prebuilt applets in Contents/Resources/applets. Off by default: the
+# release packages are built without applets.
 APPLETS ?= 0
 CEF_HELPER_DARWIN = $(BIN_DIR)/tubeless-cef-helper
 ifeq ($(APPLETS),1)
 DARWIN_TUBELESS = tubeless-cef cef-helper-darwin
 DARWIN_GO_TAGS = -tags cef
-DARWIN_CGO_CFLAGS = CGO_CFLAGS="-I$(CEF_ROOT)"
 else
 DARWIN_TUBELESS = tubeless
 endif
@@ -120,7 +120,7 @@ help:
 	@echo "                        actual Mac of that architecture."
 	@echo "  make clean          - Remove build artifacts"
 	@echo "  Add APPLETS=1 to install-darwin or package-darwin for applet"
-	@echo "  support (needs CEF_ROOT, default $(CEF_ROOT))."
+	@echo "  support (needs CEF_ROOT, default $(CEF_ROOT), and node for the applets)."
 
 build: tubeless tubeless-config tektest tubeless-icons
 
@@ -134,12 +134,10 @@ tubeless: $(TUBELESS_EXTRA)
 	go build -tags "$(TUBELESS_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME)"
 
-# tubeless-cef is tubeless with applet support, compiled against the
-# CEF headers in CEF_ROOT: the macOS APPLETS=1 build uses it. On Linux,
-# `make tubeless` already has applet support.
+# tubeless-cef is tubeless with applet support: the macOS APPLETS=1
+# build uses it. On Linux, `make tubeless` already has applet support.
 tubeless-cef: $(TUBELESS_EXTRA)
 	@mkdir -p $(BIN_DIR)
-	CGO_CFLAGS="-I$(CEF_ROOT)" \
 	go build -tags "wayland cef" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME) (with applets)"
 
@@ -177,10 +175,8 @@ applets-dist:
 # cef-helper-darwin builds the helper binary for the macOS bundle. It
 # loads the framework at run time, so it does not link it.
 cef-helper-darwin:
-	@test -d "$(CEF_ROOT)/Release/Chromium Embedded Framework.framework" || \
-	    { echo "CEF_ROOT=$(CEF_ROOT) has no Release/Chromium Embedded Framework.framework"; exit 1; }
 	@mkdir -p $(BIN_DIR)
-	cc -O2 -fno-stack-protector -I$(CEF_ROOT) -DCEF_API_VERSION=$(CEF_API_VERSION) \
+	cc -O2 -fno-stack-protector -I$(CEF_HEADERS) -DCEF_API_VERSION=$(CEF_API_VERSION) \
 	    -Ipkg/applet/cef $(CEF_HELPER_SRC) pkg/applet/cef/cefload.c \
 	    -o $(CEF_HELPER_DARWIN)
 	@echo "Built $(CEF_HELPER_DARWIN)"
@@ -331,6 +327,12 @@ install-darwin: $(DARWIN_TUBELESS) tubeless-config $(ICNS)
 	fi
 	@if [ "$(APPLETS)" = 1 ]; then \
 		packaging/darwin/add-cef.sh $(APP_BUNDLE) $(CEF_ROOT) $(CEF_HELPER_DARWIN) $(VERSION) || exit 1; \
+		if command -v npm >/dev/null 2>&1; then \
+			$(MAKE) applets-dist && rm -rf $(APP_BUNDLE)/Contents/Resources/applets && \
+			cp -R $(APPLETS_DIST) $(APP_BUNDLE)/Contents/Resources/applets || exit 1; \
+		else \
+			echo "npm not found: applets not installed (applets-dist needs node)"; \
+		fi; \
 	fi
 	codesign --force --deep --sign - $(APP_BUNDLE)
 	ln -sf $(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME) $(CLI_BIN_DIR)/$(BINARY_NAME)
@@ -393,9 +395,9 @@ package-linux: cef-helper applets-dist
 # install-darwin) with its .icns, and zips it into dist/. Run per-arch on
 # an actual Mac of that architecture (arm64 and amd64 each need their own
 # runner in CI — see .github/workflows/release.yml).
-package-darwin: $(ICNS) $(if $(filter 1,$(APPLETS)),cef-helper-darwin)
+package-darwin: $(ICNS) $(if $(filter 1,$(APPLETS)),cef-helper-darwin applets-dist)
 	@mkdir -p $(DIST_DIR)
-	$(DARWIN_CGO_CFLAGS) GOARCH=$(GOARCH_TARGET) go build $(DARWIN_GO_TAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	GOARCH=$(GOARCH_TARGET) go build $(DARWIN_GO_TAGS) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	GOARCH=$(GOARCH_TARGET) go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/tubeless-config ./cmd/tubeless-config
 	@rm -rf $(DIST_DIR)/Tubeless.app
 	@mkdir -p $(DIST_DIR)/Tubeless.app/Contents/MacOS $(DIST_DIR)/Tubeless.app/Contents/Resources
@@ -410,6 +412,7 @@ package-darwin: $(ICNS) $(if $(filter 1,$(APPLETS)),cef-helper-darwin)
 	fi
 	@if [ "$(APPLETS)" = 1 ]; then \
 		packaging/darwin/add-cef.sh $(DIST_DIR)/Tubeless.app $(CEF_ROOT) $(CEF_HELPER_DARWIN) $(VERSION) || exit 1; \
+		cp -R $(APPLETS_DIST) $(DIST_DIR)/Tubeless.app/Contents/Resources/applets || exit 1; \
 	fi
 	codesign --force --deep --sign - $(DIST_DIR)/Tubeless.app
 	cd $(DIST_DIR) && zip -qr tubeless-$(VERSION)-darwin-$(GOARCH_TARGET).zip Tubeless.app && rm -rf Tubeless.app
