@@ -142,6 +142,24 @@ func charEvents(r rune, mods glfw.ModifierKey) []cef.KeyEvent {
 	return events
 }
 
+// withNativeChars gives the key down and key up events the characters
+// of the native key event, on macOS. Chromium there makes its own
+// NSEvent from them: with none, it takes the event for a modifier
+// change, and the page never sees the key. The characters also follow
+// the keyboard layout, which GLFW key codes do not.
+func withNativeChars(events []cef.KeyEvent) []cef.KeyEvent {
+	chars, unmodified, ok := cef.CurrentKeyChars()
+	if !ok {
+		return events
+	}
+	for i := range events {
+		if events[i].Type != cef.KeyChar {
+			events[i].Character, events[i].UnmodifiedCharacter = chars, unmodified
+		}
+	}
+	return events
+}
+
 // editShortcuts are the macOS edit keys. An offscreen page has no menu
 // bar to turn them into edit commands, so tubeless sends the commands.
 var editShortcuts = map[keyChord]cef.EditCommand{

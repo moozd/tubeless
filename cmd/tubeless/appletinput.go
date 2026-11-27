@@ -255,7 +255,8 @@ func (h *appletHost) Key(key glfw.Key, scancode int, action glfw.Action, mods gl
 		runEdit(a, cmd, action)
 		return true
 	}
-	for _, ev := range keyEvents(key, scancode+h.input.scanOffset, action, mods) {
+	events := keyEvents(key, scancode+h.input.scanOffset, action, mods)
+	for _, ev := range withNativeChars(events) {
 		a.browser.Key(ev)
 	}
 	return true

@@ -50,6 +50,22 @@ void tb_app_prepare(void) {
 	}
 }
 
+// firstUnit is the first UTF-16 unit of s, or 0 for an empty string.
+static unsigned short firstUnit(NSString* s) {
+	return [s length] > 0 ? [s characterAtIndex:0] : 0;
+}
+
+int tb_current_key_chars(unsigned short* chars, unsigned short* unmodified) {
+	NSEvent* event = [NSApp currentEvent];
+	NSEventType type = [event type];
+	if (event == nil || (type != NSEventTypeKeyDown && type != NSEventTypeKeyUp)) {
+		return 0;
+	}
+	*chars = firstUnit([event characters]);
+	*unmodified = firstUnit([event charactersIgnoringModifiers]);
+	return 1;
+}
+
 int tb_app_is_ready(void) {
 	return [NSApp conformsToProtocol:@protocol(CefAppProtocol)] ? 1 : 0;
 }

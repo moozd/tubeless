@@ -11,4 +11,9 @@ void tb_app_prepare(void);
 // tb_app_is_ready reports whether NSApp conforms to CefAppProtocol.
 int tb_app_is_ready(void);
 
+// tb_current_key_chars gives the first UTF-16 unit of the characters
+// and of the unmodified characters of the key event AppKit is handling.
+// It returns 0 when that event is not a key down or key up.
+int tb_current_key_chars(unsigned short* chars, unsigned short* unmodified);
+
 #endif

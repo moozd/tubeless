@@ -6,6 +6,7 @@ import "time"
 
 func Available() bool                                            { return false }
 func PrepareApplication()                                        {}
+func CurrentKeyChars() (uint16, uint16, bool)                    { return 0, 0, false }
 func Init(Options) error                                         { return ErrUnavailable }
 func Shutdown()                                                  {}
 func SetWake(func())                                             {}
