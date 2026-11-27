@@ -175,7 +175,7 @@ func sshIntegrationBlock() string {
 	payload := base64.StdEncoding.EncodeToString(ptyio.TerminfoSource())
 
 	remoteCmd := `infocmp ` + term + ` >/dev/null 2>&1 || { command -v tic >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 && printf %%s "` + payload + `" | base64 -d | tic -x -o ~/.terminfo - >/dev/null 2>&1; }; exec "${SHELL:-/bin/sh}" -l`
-	matchLine := `Match exec "test \"$TERM\" = ` + term + `"`
+	matchLine := `Match user "*,!git" exec "test \"$TERM\" = ` + term + `"`
 
 	return strings.Join([]string{
 		sshIntegrationBegin,
@@ -184,7 +184,8 @@ func sshIntegrationBlock() string {
 		"# resolves the same way it does locally instead of leaving the",
 		"# remote's ncurses unable to find it. Only applies to sessions",
 		"# started from inside tubeless (TERM=" + term + " locally) — any",
-		"# other terminal is untouched.",
+		"# other terminal is untouched. Git hosts (user \"git\") are skipped:",
+		"# they reject any remote command.",
 		"#",
 		"# Managed by `tubeless ssh-integration` — edits here are",
 		"# overwritten by install/remove.",

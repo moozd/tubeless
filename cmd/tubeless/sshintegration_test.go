@@ -19,8 +19,15 @@ func TestSSHIntegrationBlockEscapesPercentForSSHConfig(t *testing.T) {
 
 func TestSSHIntegrationBlockGatesOnLocalTerm(t *testing.T) {
 	block := sshIntegrationBlock()
-	if !strings.Contains(block, `Match exec "test \"$TERM\" = tubeless"`) {
+	if !strings.Contains(block, `Match user "*,!git" exec "test \"$TERM\" = tubeless"`) {
 		t.Errorf("block missing expected Match exec gate:\n%s", block)
+	}
+}
+
+func TestSSHIntegrationBlockSkipsGitUser(t *testing.T) {
+	block := sshIntegrationBlock()
+	if !strings.Contains(block, `user "*,!git"`) {
+		t.Errorf("block must exclude user git, which rejects remote commands:\n%s", block)
 	}
 }
 
