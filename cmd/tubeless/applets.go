@@ -78,6 +78,8 @@ type appletHost struct {
 	input      appletInput
 	server     *applet.Server
 	theme      applet.Theme
+	isStarted  bool
+	startErr   error
 }
 
 // appletsDir is where applets are installed, one folder per applet.
@@ -98,44 +100,61 @@ func xdgDir(env string, fallback ...string) string {
 
 // startAppletHost starts CEF. It returns nil when this build has no
 // applet support or CEF failed to start; the terminal works either way.
+// startAppletHost prepares applet support. CEF itself starts only on
+// the first `tubeless exec` (see startCEF): it costs about a second and
+// close to a gigabyte across its processes, which a window with no
+// applet must not pay. It returns nil when this build has no applet
+// support.
 func startAppletHost(background [3]float32, requests <-chan []byte) *appletHost {
 	if !cef.Available() {
 		return nil
 	}
-	h, err := newAppletHost(argb(background), requests)
-	if err != nil {
-		log.Printf("applets disabled: %v", err)
-		return nil
-	}
+	h := &appletHost{background: argb(background), requests: requests}
+	h.applets = make(map[int]*openApplet)
+	h.server = applet.NewServer()
+	h.input.scanOffset = scancodeOffset()
 	return h
 }
 
-func newAppletHost(background uint32, requests <-chan []byte) (*appletHost, error) {
+// startCEF starts CEF once, on the main thread. A failure is kept:
+// CEF cannot start twice in one process, and every later request gets
+// the same reason.
+func (h *appletHost) startCEF() error {
+	if h.isStarted || h.startErr != nil {
+		return h.startErr
+	}
+	h.startErr = h.initCEF()
+	if h.startErr != nil {
+		log.Printf("applets disabled: %v", h.startErr)
+		return h.startErr
+	}
+	h.isStarted = true
+	h.input.prefix = readTmuxPrefix()
+	return nil
+}
+
+func (h *appletHost) initCEF() error {
 	opts, err := cefOptions()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	cache, err := os.MkdirTemp("", "tubeless-cef-")
 	if err != nil {
-		return nil, fmt.Errorf("cef cache dir: %w", err)
+		return fmt.Errorf("cef cache dir: %w", err)
 	}
 	opts.CacheDir = cache
 	opts.LogFile = filepath.Join(cache, "cef.log")
-	opts.Background = background
+	opts.Background = h.background
 	cef.SetWake(glfw.PostEmptyEvent)
-	if err := cef.Init(opts); err != nil {
-		os.RemoveAll(cache)
-		return nil, err
-	}
-	log.Printf("applets: cef started from %s", filepath.Dir(opts.LibPath))
-	h := &appletHost{cacheDir: cache, background: background, requests: requests}
-	h.applets = make(map[int]*openApplet)
-	h.server = applet.NewServer()
 	cef.SetSchemeHandler(h.serveScheme)
 	cef.SetConsoleHandler(h.logConsole)
-	h.input.prefix = readTmuxPrefix()
-	h.input.scanOffset = scancodeOffset()
-	return h, nil
+	if err := cef.Init(opts); err != nil {
+		os.RemoveAll(cache)
+		return err
+	}
+	h.cacheDir = cache
+	log.Printf("applets: cef started from %s", filepath.Dir(opts.LibPath))
+	return nil
 }
 
 // serveScheme answers tubeless:// requests. CEF calls it on its IO
@@ -217,6 +236,11 @@ func (h *appletHost) open(payload []byte, cs *cellSize) {
 	conn, err := net.DialTimeout("unix", req.Socket, appletDialWait)
 	if err != nil {
 		log.Printf("applets: dial %s: %v", req.Socket, err)
+		return
+	}
+	if err := h.startCEF(); err != nil {
+		sendApplet(conn, applet.Message{Type: applet.MsgError, Error: "applets are off in this window: " + err.Error()})
+		conn.Close()
 		return
 	}
 	a, err := h.start(req, conn, cs)
@@ -352,6 +376,9 @@ func sendApplet(conn net.Conn, m applet.Message) {
 // pump runs CEF's message loop once per frame while pages are open,
 // and otherwise only when CEF asked for work.
 func (h *appletHost) pump() {
+	if !h.isStarted {
+		return
+	}
 	_, isDue := cef.NextPump(time.Now())
 	if !isDue && len(h.applets) == 0 {
 		return
@@ -446,7 +473,7 @@ func (h *appletHost) sizes() map[int]appletGrid {
 // Shutdown closes every page, waits for CEF to confirm, and stops CEF.
 // Safe on nil.
 func (h *appletHost) Shutdown() {
-	if h == nil {
+	if h == nil || !h.isStarted {
 		return
 	}
 	for _, a := range h.applets {
