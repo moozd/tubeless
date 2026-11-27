@@ -217,9 +217,7 @@ tubeless exec excalidraw sketch.excalidraw # drawing editor
 tubeless exec demo                        # WebGL test page
 ```
 
-Linux only at this time; [docs/applets-macos.md](docs/applets-macos.md)
-lists the work for macOS. The default build has no applets. To use
-them:
+The default build has no applets. To use them on Linux:
 
 ```sh
 make cef-runtime       # links a CEF build (CEF_ROOT) into ~/.local/share/tubeless/cef
@@ -227,9 +225,18 @@ make tubeless-cef      # tubeless with applet support
 make install-applets   # copies applets/ to ~/.config/tubeless/applets
 ```
 
+On macOS, CEF loads only from the app bundle:
+
+```sh
+make install-darwin APPLETS=1   # Tubeless.app with the CEF framework and helpers
+make install-applets
+```
+
 `CEF_ROOT` is an unpacked CEF "minimal" package from
-cef-builds.spotifycdn.com (tested with 158). Without the runtime,
-tubeless starts with applets off.
+cef-builds.spotifycdn.com (tested with 158; on macOS, the
+`macosarm64` or `macosx64` package). Without the runtime, tubeless
+starts with applets off. [docs/applets-macos.md](docs/applets-macos.md)
+tells how applets work on macOS and gives the test list.
 
 In tmux, set `allow-passthrough on`, `focus-events on` and
 `extended-keys on`. The pane that runs the applet gets the keyboard

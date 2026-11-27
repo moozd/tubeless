@@ -1,42 +1,27 @@
 # Applets on macOS
 
-Applets (`tubeless exec`) work on Linux only at this time. This page
-lists the work that makes them work on macOS. Do it on a Mac: each
-step needs a build and a run to check it.
+Applets (`tubeless exec`) work on macOS when tubeless runs from an app
+bundle that holds the CEF framework. This page tells how the macOS
+part works and which tests are done.
 
 The Linux design is in [the README](../README.md#applets). The plan
 and the decisions behind it are in the vault note
 `exo/tubeless/js-applets-idea.md`.
 
-## Parts that stay the same
+## Install
 
-These parts have no Linux-only code. Do not change them for macOS:
+1. Download the `macosarm64` (or `macosx64`) "minimal" build of CEF
+   158 from cef-builds.spotifycdn.com. Extract it to `CEF_ROOT`
+   (default `~/.cache/tubeless/cef`).
+2. Run `make install-darwin APPLETS=1`, then `make install-applets`.
 
-- `pkg/applet`: the bridge server, the `tubeless://` pages, esbuild,
-  the theme and the permissions.
-- `cmd/tubeless/exec.go`: the OSC 7777 request, the placeholder cells
-  and the exec socket. Without `XDG_RUNTIME_DIR`, the socket goes in
-  `$TMPDIR`, which macOS makes for each user.
-- `pkg/render/applettexture.go` and `DrawApplets`: the page texture
-  (BGRA, `SRGB8_ALPHA8`) and its position in the scene.
-- `cmd/tubeless/appletkeys.go`: on macOS the GLFW scancode is the
-  native key code that CEF wants. Thus `scanOffset` stays 0.
-- `pkg/applet/cef/cefload.c`: libcef loads with `dlopen`, and the
-  framework binary loads with the same procedure.
-- The applets in `applets/`.
+`APPLETS=1` also works with `package-darwin`. Without it, the two targets
+make the same bundle as before, with no applets. The release packages
+do not use it.
 
-## What to do
+## The app bundle
 
-### 1. Get the CEF build
-
-Download the `macosarm64` "minimal" build of the same CEF version
-(158) from cef-builds.spotifycdn.com. It holds
-`Release/Chromium Embedded Framework.framework` and the headers.
-Use `CEF_ROOT` for it, as on Linux.
-
-### 2. Make the app bundle
-
-CEF on macOS loads only from an app bundle with this layout:
+CEF on macOS loads only from this layout:
 
 ```
 Tubeless.app/Contents/
@@ -48,107 +33,79 @@ Tubeless.app/Contents/
   Frameworks/tubeless Helper (Plugin).app
 ```
 
-- Each helper app holds the same helper binary, renamed, and its own
-  `Info.plist` with a unique `CFBundleIdentifier` and `LSUIElement`
-  set to true.
-- Extend `install-darwin` and `package-darwin` in the Makefile to copy
-  the framework and to make the four helpers. Add a `tubeless-cef`
-  build for macOS: the same `cef` build tag, with `CGO_CFLAGS` set to
-  `-I$(CEF_ROOT)`.
-- Sign the bundle ad hoc (`codesign --force --deep -s -`). Remove the
-  quarantine flag from the downloaded framework
-  (`xattr -dr com.apple.quarantine`).
+- `packaging/darwin/add-cef.sh` copies the framework and makes the
+  four helper apps. Each helper holds the same binary with its own
+  name, with its own `CFBundleIdentifier` and `LSUIElement`.
+- The Makefile signs the full bundle ad hoc after this step.
+- `make cef-helper-darwin` builds the helper binary. It does not link
+  the framework.
 
-### 3. Find and open the framework
+## How tubeless finds CEF
 
-- In `cmd/tubeless/applets.go`, `newAppletHost` sets
-  `LibPath` to `libcef.so`. On macOS, set it to
-  `<bundle>/Contents/Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework`.
-  Find `<bundle>` from the path of the binary that runs. `tubeless`
-  in `~/.local/bin` is a symlink into the bundle. Thus resolve the
-  symlink first.
-- Set `SubprocessPath` to
-  `<bundle>/Contents/Frameworks/tubeless Helper.app/Contents/MacOS/tubeless Helper`.
-- In `tb_cef_init` (`pkg/applet/cef/shim.c`), also set
-  `framework_dir_path` and `main_bundle_path` in `cef_settings_t`.
-  Send them through `tb_options` and `cef.Options`.
-- Make `cefRuntimeDir` give the bundle's `Frameworks` folder on
-  macOS, so `ResourcesDir` and `LocalesDir` point into the framework's
-  `Resources`.
+- `cmd/tubeless/cefpaths_darwin.go` finds the bundle from the path of
+  the binary that runs. It resolves symlinks first, because
+  `~/.local/bin/tubeless` is a symlink into the bundle.
+- `TUBELESS_CEF_DIR` can point at the `Frameworks` folder of a
+  different bundle.
+- tubeless sends `framework_dir_path` and `main_bundle_path` to CEF.
+  Thus CEF does not use `NSBundle mainBundle`, which is incorrect when
+  tubeless starts through the symlink.
+- CEF loads its resources and locales from the framework itself.
 
-### 4. Make the helper load the framework
+## The helper
 
-`pkg/applet/cef/helper/helper.c` links libcef directly. On macOS it
-must load the framework with `dlopen` before it calls
-`cef_execute_process`. The framework path is relative to the helper:
-`../../../Chromium Embedded Framework.framework/Chromium Embedded Framework`.
-Use `cefload.h` and `cefload.c` for this, the same as the browser
-process. Keep `-fno-stack-protector` on the helper.
+`pkg/applet/cef/helper/helper.c` loads the framework with `dlopen`
+before it runs `cef_execute_process`. The path is
+`@executable_path/../../../Chromium Embedded Framework.framework/...`.
+The Linux helper continues to link `libcef.so`.
 
-### 5. Give NSApplication the protocol CEF needs
+## NSApp
 
-This is the step with the most risk. On macOS, CEF requires that
-`NSApp` conforms to `CrAppControlProtocol`: the methods
-`isHandlingSendEvent` and `setHandlingSendEvent:`, and a `sendEvent:`
-that sets the flag while it runs. If it does not, CEF stops the process
-at start.
+CEF stops the process at start when `NSApp` does not conform to
+`CefAppProtocol`.
 
-GLFW makes `NSApp` with `[NSApplication sharedApplication]` in
-`glfw.Init` (`pkg/render/window.go`). Before `glfw.Init`, on the main
-thread, make the shared application from a subclass that has these
-methods:
+- `pkg/applet/cef/app_darwin.m` declares `TubelessApplication`, an
+  `NSApplication` subclass with that protocol. Its `sendEvent:` sets
+  the "handling send event" flag while it runs.
+- `main` runs `cef.PrepareApplication` before anything starts GLFW.
+  GLFW then keeps this `NSApp`.
+- `cef.Init` makes sure that `NSApp` conforms before it starts CEF. If
+  it does not, the log shows `applets disabled` and the process does
+  not stop.
 
-- Add an Objective-C file to `pkg/applet/cef` with build tags `cef`
-  and `darwin`. Declare `TubelessApplication : NSApplication
-  <CrAppControlProtocol>` in it.
-- Run `[TubelessApplication sharedApplication]` from a Go function in
-  that package, before `glfw.Init`. GLFW then uses this `NSApp`.
-- On other builds, that Go function does nothing.
+The message loop is the same as on Linux: `external_message_pump`
+on the main thread.
 
-If GLFW replaces `NSApp`, the alternative is to add the methods and the
-protocol to GLFW's class at run time with `class_addMethod` and
-`class_addProtocol`, before `cef_initialize`.
+## Edit shortcuts
 
-### 6. Keep the message loop on the main thread
-
-Do not change the design: `external_message_pump`,
-`cef_do_message_loop_work` on the main thread, and
-`glfw.PostEmptyEvent` to wake the loop. macOS does not let you use
-`multi_threaded_message_loop`. Check that `cef.Init` runs after
-`glfw.Init` and on the main OS thread.
-
-### 7. Send the edit shortcuts to CEF
-
-In offscreen mode on macOS, Cmd+C, Cmd+V, Cmd+X, Cmd+A, Cmd+Z and
-Shift+Cmd+Z do not work as plain key events. In `appletHost.Key`
-(`cmd/tubeless/appletinput.go`), on macOS, send these shortcuts to the
-frame's `copy`, `paste`, `cut`, `select_all`, `undo` and `redo`.
-Add a `tb_browser_edit` function to the shim for them.
-
-### 8. Check the Retina scale
-
-`cs.dpiX` is 2 on a Retina display. The page view is
-`pixels / scale` in DIPs, and `get_screen_info` gives CEF the scale.
-This code is not tested at a scale other than 1.
+An offscreen page has no menu bar. Thus Cmd+C, Cmd+V, Cmd+X, Cmd+A,
+Cmd+Z and Shift+Cmd+Z do not work as plain key events. On macOS,
+`appletHost.Key` sends them to the focused frame as edit commands
+(`tb_browser_edit`).
 
 ## Test list
 
-Do these on the Mac, in this sequence:
+Done on an arm64 Mac (macOS 27) with CEF 158.0.6, on a display at
+scale 1:
 
-1. `tubeless` starts with no framework installed and logs
-   `applets disabled`.
-2. With the bundle installed, the log shows `applets: cef started`.
-3. `tubeless exec demo` shows the shader at the display frame rate.
-4. Text in the demo is sharp on a Retina display.
-5. Keys, the tmux prefix and pane focus work as on Linux.
-6. Cmd+C and Cmd+V work in the excalidraw and markdown applets.
-7. Mouse clicks, drag and the wheel work in excalidraw and image.
-8. `q` in pdf prints the page, and `tubeless exec` exits with 0.
-9. The helper processes stop when the window closes.
+| # | Test | Result |
+|---|------|--------|
+| 1 | Not in a bundle, or with no framework, the log shows `applets disabled` | OK |
+| 2 | In the bundle, the log shows `applets: cef started` | OK |
+| 3 | `tubeless exec demo` shows the shader at the display frame rate | Not looked at. The page sends a new frame on each loop: 27 to 28 per second without window focus (the loop limit is 30 then). Focused rate not measured |
+| 4 | Text in the demo is sharp on a Retina display | Not done |
+| 5 | Keys, the tmux prefix and pane focus work as on Linux | Not done |
+| 6 | Cmd+C and Cmd+V work in excalidraw and markdown | Not done |
+| 7 | Mouse clicks, drag and the wheel work in excalidraw and image | Not done |
+| 8 | `q` in pdf prints the page, and `tubeless exec` exits with 0 | Not done |
+| 9 | The helper processes stop when the window closes | OK |
+| - | Start through a symlink to the bundle binary | OK |
+
+Do tests 3 to 8 by hand.
 
 ## Not in this work
 
-- The GPU path (IOSurface) instead of the CPU copy of each frame.
+- The GPU path (IOSurface) as an alternative to the CPU copy of each
+  frame.
 - The CEF sandbox.
-- Applets in the release packages: the packages are built without
-  the `cef` tag on all systems.
+- Applets in the release packages.
