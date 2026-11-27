@@ -1269,7 +1269,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 				lastTitle = title
 			}
 		}
-		appletDirty := applets.Frame(r, scr, cs)
+		appletDirty := applets.Frame(r, scr, cs, cfg)
 		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload || appletDirty
 		reload = false
 

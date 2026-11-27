@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -62,6 +61,7 @@ type openApplet struct {
 	// is whether the page has the keyboard (see syncFocus).
 	isPaneFocused bool
 	hasFocus      bool
+	isBound       bool
 }
 
 // appletHost owns CEF for this window. It opens pages for `tubeless
@@ -74,6 +74,8 @@ type appletHost struct {
 	applets    map[int]*openApplet
 	lastR      *render.Renderer
 	input      appletInput
+	server     *applet.Server
+	theme      applet.Theme
 }
 
 // cefRuntimeDir is where `make cef-runtime` puts libcef, its resources
@@ -137,9 +139,18 @@ func newAppletHost(background uint32, requests <-chan []byte) (*appletHost, erro
 	log.Printf("applets: cef started from %s", dir)
 	h := &appletHost{cacheDir: cache, background: background, requests: requests}
 	h.applets = make(map[int]*openApplet)
+	h.server = applet.NewServer()
+	cef.SetSchemeHandler(h.serveScheme)
 	h.input.prefix = readTmuxPrefix()
 	h.input.scanOffset = scancodeOffset()
 	return h, nil
+}
+
+// serveScheme answers tubeless:// requests. CEF calls it on its IO
+// thread; the server locks its own state.
+func (h *appletHost) serveScheme(req cef.SchemeRequest) cef.SchemeResponse {
+	r := h.server.Serve(req.BrowserID, req.URL, req.Method, req.Body)
+	return cef.SchemeResponse{Status: r.Status, MIME: r.MIME, Body: r.Body}
 }
 
 // argb packs a linear-RGB theme color as the opaque sRGB ARGB value CEF
@@ -155,16 +166,19 @@ func argb(linear [3]float32) uint32 {
 // Frame takes new requests, pumps CEF, follows pane changes, uploads
 // new pixels and places every page on its visible cells. It reports
 // whether the scene must be redrawn. Safe on nil.
-func (h *appletHost) Frame(r *render.Renderer, scr *screen.Screen, cs *cellSize) bool {
+func (h *appletHost) Frame(r *render.Renderer, scr *screen.Screen, cs *cellSize, cfg config.Config) bool {
 	if h == nil {
 		return false
 	}
+	h.updateTheme(appletTheme(cfg, cs))
 	h.takeRequests(cs)
 	h.pump()
+	h.takeExits()
 	isNewRenderer := r != h.lastR
 	h.lastR = r
 	dirty := false
 	for _, a := range h.applets {
+		h.bind(a)
 		a.handleEvents()
 		a.resize(cs)
 		dirty = a.upload(r, isNewRenderer) || dirty
@@ -216,14 +230,16 @@ func (h *appletHost) start(req applet.Request, conn net.Conn, cs *cellSize) (*op
 	if _, isUsed := h.applets[req.ID]; isUsed {
 		return nil, fmt.Errorf("applet id %d is in use, run it again", req.ID)
 	}
-	page, err := appletURL(req.Name)
+	inst, err := appletInstance(req)
 	if err != nil {
 		return nil, err
 	}
 	a := &openApplet{id: req.ID, conn: conn, cols: req.Cols, rows: req.Rows, scale: cs.dpiX}
 	a.w, a.h = a.pixelSize(cs)
-	a.browser, err = cef.NewBrowser(page, a.w, a.h, a.scale, h.background, appletFPS)
+	h.server.Add(inst)
+	a.browser, err = cef.NewBrowser(applet.PageURL(req.ID), a.w, a.h, a.scale, h.background, appletFPS)
 	if err != nil {
+		h.server.Remove(req.ID)
 		return nil, err
 	}
 	a.events = make(chan applet.Message, 16)
@@ -231,19 +247,70 @@ func (h *appletHost) start(req applet.Request, conn net.Conn, cs *cellSize) (*op
 	return a, nil
 }
 
-// appletURL finds the page of an installed applet.
-func appletURL(name string) (string, error) {
-	if name == "" || name != filepath.Base(name) {
-		return "", fmt.Errorf("invalid applet name %q", name)
+// appletInstance finds an installed applet and reads its manifest.
+func appletInstance(req applet.Request) (applet.Instance, error) {
+	if req.Name == "" || req.Name != filepath.Base(req.Name) {
+		return applet.Instance{}, fmt.Errorf("invalid applet name %q", req.Name)
 	}
-	page := filepath.Join(appletsDir(), name, "index.html")
-	if _, err := os.Stat(page); err != nil {
+	dir := filepath.Join(appletsDir(), req.Name)
+	if _, err := os.Stat(dir); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("no applet %q (looked for %s)", name, page)
+			return applet.Instance{}, fmt.Errorf("no applet %q (looked for %s)", req.Name, dir)
 		}
-		return "", fmt.Errorf("applet %q: %w", name, err)
+		return applet.Instance{}, fmt.Errorf("applet %q: %w", req.Name, err)
 	}
-	return (&url.URL{Scheme: "file", Path: page}).String(), nil
+	m, err := applet.LoadManifest(dir)
+	if err != nil {
+		return applet.Instance{}, err
+	}
+	return applet.Instance{ID: req.ID, Name: req.Name, Dir: dir, Args: req.Args, Cwd: req.Cwd, Manifest: m}, nil
+}
+
+// bind lets a page call its applet's API once CEF has created it.
+func (h *appletHost) bind(a *openApplet) {
+	if a.isBound || a.browser.ID() == 0 {
+		return
+	}
+	h.server.BindBrowser(a.id, a.browser.ID())
+	a.isBound = true
+}
+
+// takeExits ends every applet that called tubeless.exit().
+func (h *appletHost) takeExits() {
+	for {
+		select {
+		case e := <-h.server.Exits():
+			h.exit(e)
+		default:
+			return
+		}
+	}
+}
+
+func (h *appletHost) exit(e applet.Exit) {
+	a, ok := h.applets[e.ID]
+	if !ok {
+		return
+	}
+	sendApplet(a.conn, applet.Message{Type: applet.MsgExit, Code: e.Code, Output: e.Output})
+	a.close()
+}
+
+// updateTheme hands a changed terminal theme to new and open pages.
+func (h *appletHost) updateTheme(t applet.Theme) {
+	if t == h.theme {
+		return
+	}
+	h.theme = t
+	h.server.SetTheme(t)
+	script, err := applet.ThemeScript(t)
+	if err != nil {
+		log.Printf("applets: %v", err)
+		return
+	}
+	for _, a := range h.applets {
+		a.browser.ExecJS(script)
+	}
 }
 
 func readAppletMessages(conn net.Conn, out chan<- applet.Message) {
@@ -336,6 +403,7 @@ func (h *appletHost) dropClosed(r *render.Renderer) bool {
 		a.browser.Release()
 		a.conn.Close()
 		r.DropApplet(id)
+		h.server.Remove(id)
 		delete(h.applets, id)
 		h.input.forget(a)
 		dropped = true

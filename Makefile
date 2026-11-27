@@ -113,7 +113,7 @@ cef-runtime:
 	@mkdir -p $(CEF_RUNTIME)
 	ln -sfn $(CEF_ROOT)/Release/* $(CEF_ROOT)/Resources/* $(CEF_RUNTIME)/
 	cc -O2 -fno-stack-protector -I$(CEF_ROOT) -DCEF_API_VERSION=$(CEF_API_VERSION) \
-	    $(CEF_HELPER_SRC) -L$(CEF_RUNTIME) -lcef \
+	    -Ipkg/applet/cef $(CEF_HELPER_SRC) -L$(CEF_RUNTIME) -lcef \
 	    -Wl,-rpath,$(CEF_RUNTIME) -o $(CEF_RUNTIME)/tubeless-cef-helper
 	@echo "CEF runtime ready in $(CEF_RUNTIME)"
 

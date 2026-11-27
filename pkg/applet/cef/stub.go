@@ -4,12 +4,13 @@ package cef
 
 import "time"
 
-func Available() bool                          { return false }
-func Init(Options) error                       { return ErrUnavailable }
-func Shutdown()                                {}
-func SetWake(func())                           {}
-func NextPump(time.Time) (time.Duration, bool) { return 0, false }
-func Pump()                                    {}
+func Available() bool                                     { return false }
+func Init(Options) error                                  { return ErrUnavailable }
+func Shutdown()                                           {}
+func SetWake(func())                                      {}
+func NextPump(time.Time) (time.Duration, bool)            { return 0, false }
+func Pump()                                               {}
+func SetSchemeHandler(func(SchemeRequest) SchemeResponse) {}
 
 // Browser is never created in a build without the `cef` tag.
 type Browser struct{}
@@ -27,4 +28,6 @@ func (*Browser) Focus(bool)                                          {}
 func (*Browser) MouseMove(int, int, uint32, bool)                    {}
 func (*Browser) MouseClick(int, int, uint32, MouseButton, bool, int) {}
 func (*Browser) MouseWheel(int, int, uint32, int, int)               {}
+func (*Browser) ID() int                                             { return 0 }
+func (*Browser) ExecJS(string)                                       {}
 func (*Browser) Key(KeyEvent)                                        {}

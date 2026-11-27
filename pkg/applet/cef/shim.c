@@ -17,8 +17,13 @@
 #include "include/capi/cef_client_capi.h"
 #include "include/capi/cef_life_span_handler_capi.h"
 #include "include/capi/cef_render_handler_capi.h"
+#include "include/capi/cef_request_capi.h"
+#include "include/capi/cef_resource_handler_capi.h"
+#include "include/capi/cef_response_capi.h"
+#include "include/capi/cef_scheme_capi.h"
 #include "include/cef_api_hash.h"
 
+#include "scheme.h"
 #include "shim.h"
 
 #include "_cgo_export.h"
@@ -73,15 +78,204 @@ get_browser_process_handler(cef_app_t* self) {
 	return &process_handler;
 }
 
+static void CEF_CALLBACK on_register_custom_schemes(cef_app_t* self,
+		cef_scheme_registrar_t* registrar) {
+	(void)self;
+	tb_register_scheme(registrar);
+}
+
 static void init_app(void) {
 	memset(&app, 0, sizeof(app));
 	init_static_base(&app.base, sizeof(app));
 	app.get_browser_process_handler = get_browser_process_handler;
+	app.on_register_custom_schemes = on_register_custom_schemes;
 
 	memset(&process_handler, 0, sizeof(process_handler));
 	init_static_base(&process_handler.base, sizeof(process_handler));
 	process_handler.on_schedule_message_pump_work =
 		on_schedule_message_pump_work;
+}
+
+// to_utf8 converts a CEF string a getter returned (and frees it) into a
+// malloc'd UTF-8 string, never NULL.
+static char* to_utf8(cef_string_userfree_t s) {
+	cef_string_utf8_t out = {0};
+	if (s != NULL) {
+		cef_string_utf16_to_utf8(s->str, s->length, &out);
+		cef_string_userfree_free(s);
+	}
+	char* copy = malloc(out.length + 1);
+	memcpy(copy, out.str ? out.str : "", out.length);
+	copy[out.length] = '\0';
+	cef_string_utf8_clear(&out);
+	return copy;
+}
+
+// read_post_body copies a request's upload bytes into one malloc'd
+// buffer. File elements are not supported; pages send bytes.
+static uint8_t* read_post_body(cef_request_t* req, size_t* len) {
+	*len = 0;
+	cef_post_data_t* post = req->get_post_data(req);
+	if (post == NULL) {
+		return NULL;
+	}
+	size_t count = post->get_element_count(post);
+	cef_post_data_element_t** elems = calloc(count, sizeof(*elems));
+	post->get_elements(post, &count, elems);
+	size_t total = 0;
+	for (size_t i = 0; i < count; i++) {
+		total += elems[i]->get_bytes_count(elems[i]);
+	}
+	uint8_t* body = malloc(total > 0 ? total : 1);
+	for (size_t i = 0; i < count; i++) {
+		size_t n = elems[i]->get_bytes_count(elems[i]);
+		*len += elems[i]->get_bytes(elems[i], n, body + *len);
+		elems[i]->base.release(&elems[i]->base);
+	}
+	free(elems);
+	post->base.release(&post->base);
+	return body;
+}
+
+// tb_resource answers one tubeless:// request with bytes Go produced.
+typedef struct tb_resource {
+	cef_resource_handler_t handler;
+	atomic_int refs;
+	int browser_id;
+	int status;
+	char* mime;
+	uint8_t* data;
+	size_t len;
+	size_t pos;
+} tb_resource;
+
+static void CEF_CALLBACK resource_add_ref(cef_base_ref_counted_t* s) {
+	atomic_fetch_add(&((tb_resource*)s)->refs, 1);
+}
+
+static int CEF_CALLBACK resource_release(cef_base_ref_counted_t* s) {
+	tb_resource* r = (tb_resource*)s;
+	if (atomic_fetch_sub(&r->refs, 1) != 1) {
+		return 0;
+	}
+	free(r->mime);
+	free(r->data);
+	free(r);
+	return 1;
+}
+
+static int CEF_CALLBACK resource_has_one_ref(cef_base_ref_counted_t* s) {
+	return atomic_load(&((tb_resource*)s)->refs) == 1;
+}
+
+static int CEF_CALLBACK resource_has_refs(cef_base_ref_counted_t* s) {
+	return atomic_load(&((tb_resource*)s)->refs) >= 1;
+}
+
+static int CEF_CALLBACK resource_open(cef_resource_handler_t* self,
+		cef_request_t* req, int* handle_request, cef_callback_t* callback) {
+	tb_resource* r = (tb_resource*)self;
+	char* url = to_utf8(req->get_url(req));
+	char* method = to_utf8(req->get_method(req));
+	size_t body_len = 0;
+	uint8_t* body = read_post_body(req, &body_len);
+	tb_response out = {0};
+	goServeScheme(r->browser_id, url, method, body, body_len, &out);
+	free(url);
+	free(method);
+	free(body);
+	r->status = out.status;
+	r->mime = out.mime;
+	r->data = out.data;
+	r->len = out.len;
+	*handle_request = 1;
+	req->base.release(&req->base);
+	if (callback != NULL) {
+		callback->base.release(&callback->base);
+	}
+	return 1;
+}
+
+static void CEF_CALLBACK resource_headers(cef_resource_handler_t* self,
+		cef_response_t* resp, int64_t* length, cef_string_t* redirect) {
+	(void)redirect;
+	tb_resource* r = (tb_resource*)self;
+	resp->set_status(resp, r->status);
+	cef_string_t mime = {0};
+	set_str(&mime, r->mime);
+	resp->set_mime_type(resp, &mime);
+	cef_string_clear(&mime);
+	cef_string_t key = {0}, value = {0};
+	set_str(&key, "Cache-Control");
+	set_str(&value, "no-store");
+	resp->set_header_by_name(resp, &key, &value, 1);
+	cef_string_clear(&key);
+	cef_string_clear(&value);
+	*length = (int64_t)r->len;
+	resp->base.release(&resp->base);
+}
+
+static int CEF_CALLBACK resource_read(cef_resource_handler_t* self,
+		void* out, int want, int* got, cef_resource_read_callback_t* cb) {
+	tb_resource* r = (tb_resource*)self;
+	if (cb != NULL) {
+		cb->base.release(&cb->base);
+	}
+	size_t left = r->len - r->pos;
+	if (left == 0) {
+		*got = 0;
+		return 0;
+	}
+	size_t n = left < (size_t)want ? left : (size_t)want;
+	memcpy(out, r->data + r->pos, n);
+	r->pos += n;
+	*got = (int)n;
+	return 1;
+}
+
+static void CEF_CALLBACK resource_cancel(cef_resource_handler_t* self) {
+	(void)self;
+}
+
+static cef_scheme_handler_factory_t scheme_factory;
+
+static cef_resource_handler_t* CEF_CALLBACK scheme_create(
+		cef_scheme_handler_factory_t* self, cef_browser_t* browser,
+		cef_frame_t* frame, const cef_string_t* scheme, cef_request_t* req) {
+	(void)self;
+	(void)scheme;
+	tb_resource* r = calloc(1, sizeof(tb_resource));
+	atomic_init(&r->refs, 1);
+	r->browser_id = browser != NULL ? browser->get_identifier(browser) : -1;
+	r->handler.base.size = sizeof(cef_resource_handler_t);
+	r->handler.base.add_ref = resource_add_ref;
+	r->handler.base.release = resource_release;
+	r->handler.base.has_one_ref = resource_has_one_ref;
+	r->handler.base.has_at_least_one_ref = resource_has_refs;
+	r->handler.open = resource_open;
+	r->handler.get_response_headers = resource_headers;
+	r->handler.read = resource_read;
+	r->handler.cancel = resource_cancel;
+	if (browser != NULL) {
+		browser->base.release(&browser->base);
+	}
+	if (frame != NULL) {
+		frame->base.release(&frame->base);
+	}
+	if (req != NULL) {
+		req->base.release(&req->base);
+	}
+	return &r->handler;
+}
+
+static void register_scheme_factory(void) {
+	memset(&scheme_factory, 0, sizeof(scheme_factory));
+	init_static_base(&scheme_factory.base, sizeof(scheme_factory));
+	scheme_factory.create = scheme_create;
+	cef_string_t name = {0};
+	set_str(&name, TB_SCHEME);
+	cef_register_scheme_handler_factory(&name, NULL, &scheme_factory);
+	cef_string_clear(&name);
 }
 
 int tb_cef_init(const tb_options* opts) {
@@ -108,6 +302,9 @@ int tb_cef_init(const tb_options* opts) {
 	static char* argv[] = {"tubeless", NULL};
 	cef_main_args_t args = {1, argv};
 	int ok = cef_initialize(&args, &s, &app, NULL);
+	if (ok) {
+		register_scheme_factory();
+	}
 
 	cef_string_clear(&s.browser_subprocess_path);
 	cef_string_clear(&s.resources_dir_path);
@@ -253,7 +450,7 @@ static void CEF_CALLBACK on_after_created(cef_life_span_handler_t* self,
 	// Keep the reference CEF handed us: it is how every later call
 	// reaches the browser host. on_before_close drops it.
 	b->browser = browser;
-	goOnCreated(b->handle);
+	goOnCreated(b->handle, browser->get_identifier(browser));
 }
 
 static void CEF_CALLBACK on_before_close(cef_life_span_handler_t* self,
@@ -419,4 +616,21 @@ void tb_browser_key(tb_browser* b, const tb_key* key) {
 	ev.unmodified_character = key->unmodified_character;
 	host->send_key_event(host, &ev);
 	release_host(host);
+}
+
+void tb_browser_exec_js(tb_browser* b, const char* code) {
+	if (b->browser == NULL) {
+		return;
+	}
+	cef_frame_t* frame = b->browser->get_main_frame(b->browser);
+	if (frame == NULL) {
+		return;
+	}
+	cef_string_t js = {0}, url = {0};
+	set_str(&js, code);
+	set_str(&url, "tubeless://bridge");
+	frame->execute_java_script(frame, &js, &url, 0);
+	cef_string_clear(&js);
+	cef_string_clear(&url);
+	frame->base.release(&frame->base);
 }

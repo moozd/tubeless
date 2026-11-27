@@ -19,6 +19,22 @@ type Options struct {
 	Background uint32
 }
 
+// SchemeRequest is one tubeless:// request from a page.
+type SchemeRequest struct {
+	// BrowserID is the requesting page's ID (see Browser.ID), or -1.
+	BrowserID int
+	URL       string
+	Method    string
+	Body      []byte
+}
+
+// SchemeResponse answers a SchemeRequest.
+type SchemeResponse struct {
+	Status int
+	MIME   string
+	Body   []byte
+}
+
 // Rect is a dirty rectangle in frame pixels.
 type Rect struct {
 	X, Y, W, H int

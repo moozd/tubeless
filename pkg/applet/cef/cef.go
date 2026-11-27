@@ -103,11 +103,48 @@ func Pump() {
 type Browser struct {
 	c      *C.tb_browser
 	handle cgo.Handle
+	id     atomic.Int32
 
 	mu     sync.Mutex
 	frame  Frame
 	fresh  bool
 	closed bool
+}
+
+var schemeHandler atomic.Pointer[func(SchemeRequest) SchemeResponse]
+
+// SetSchemeHandler installs fn to answer every tubeless:// request. CEF
+// calls it on its IO thread, so fn must be safe for concurrent use.
+func SetSchemeHandler(fn func(SchemeRequest) SchemeResponse) {
+	schemeHandler.Store(&fn)
+}
+
+//export goServeScheme
+func goServeScheme(browserID C.int, url, method *C.char, body *C.uint8_t, bodyLen C.size_t, out *C.tb_response) {
+	req := SchemeRequest{
+		BrowserID: int(browserID),
+		URL:       C.GoString(url),
+		Method:    C.GoString(method),
+		Body:      C.GoBytes(unsafe.Pointer(body), C.int(bodyLen)),
+	}
+	resp := SchemeResponse{Status: 404, MIME: "text/plain", Body: []byte("no handler")}
+	if fn := schemeHandler.Load(); fn != nil {
+		resp = (*fn)(req)
+	}
+	out.status = C.int(resp.Status)
+	out.mime = C.CString(resp.MIME)
+	out.len = C.size_t(len(resp.Body))
+	out.data = (*C.uint8_t)(C.CBytes(resp.Body))
+}
+
+// ID is the page's CEF browser identifier, or 0 until CEF created it.
+func (b *Browser) ID() int { return int(b.id.Load()) }
+
+// ExecJS runs code in the page's main frame.
+func (b *Browser) ExecJS(code string) {
+	ccode := C.CString(code)
+	defer C.free(unsafe.Pointer(ccode))
+	C.tb_browser_exec_js(b.c, ccode)
 }
 
 // NewBrowser opens url in a w x h pixel view at the given device scale.
@@ -126,7 +163,9 @@ func NewBrowser(url string, w, h int, scale float32, background uint32, fps int)
 }
 
 //export goOnCreated
-func goOnCreated(h C.uintptr_t) {}
+func goOnCreated(h C.uintptr_t, browserID C.int) {
+	cgo.Handle(h).Value().(*Browser).id.Store(int32(browserID))
+}
 
 //export goOnClosed
 func goOnClosed(h C.uintptr_t) {

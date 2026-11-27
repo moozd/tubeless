@@ -5,6 +5,7 @@
 #ifndef TUBELESS_CEF_SHIM_H
 #define TUBELESS_CEF_SHIM_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct tb_options {
@@ -17,6 +18,15 @@ typedef struct tb_options {
 } tb_options;
 
 typedef struct tb_browser tb_browser;
+
+// tb_response is Go's answer to a tubeless:// request. mime and data
+// are malloc'd; the resource handler frees them.
+typedef struct tb_response {
+	int status;
+	char* mime;
+	uint8_t* data;
+	size_t len;
+} tb_response;
 
 typedef struct tb_key {
 	int type;
@@ -44,5 +54,6 @@ void tb_browser_mouse_click(tb_browser* b, int x, int y, uint32_t mods,
 void tb_browser_mouse_wheel(tb_browser* b, int x, int y, uint32_t mods,
 	int dx, int dy);
 void tb_browser_key(tb_browser* b, const tb_key* key);
+void tb_browser_exec_js(tb_browser* b, const char* code);
 
 #endif
