@@ -237,9 +237,9 @@ by switching theme or preset.
 
 | Table         | Key            | Meaning                                                              |
 | ------------- | -------------- | ------------------------------------------------------------------------ |
-| `[surface]`   | `radius`       | Block/border corner radius, in pixels.                               |
+| `[surface]`   | `radius`       | Block/border and applet page corner radius, in pixels (max `16`).    |
 |               | `gradient`     | `0..1` top-lit/bottom-shaded sheen on block surfaces.                |
-|               | `shadow`       | `0..1` soft drop shadow cast by block surfaces.                      |
+|               | `shadow`       | `0..1` soft drop shadow cast by block surfaces and applet pages.     |
 | `[blur]`      | `radius`       | Gaussian bloom spread, in pixels, over block/border surfaces.        |
 |               | `strength`     | `0..1` mix of the blurred result.                                    |
 | `[text_glow]` | `radius`       | Gaussian spread, in pixels, of a halo around text in each glyph's own color. |

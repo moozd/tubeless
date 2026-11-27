@@ -216,9 +216,10 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 		for x := 0; x < scr.Cols; x++ {
 			cell := grid[y][x]
 			if _, _, _, isApplet := cell.AppletCell(); isApplet {
-				// An applet page covers this cell (see DrawApplets).
+				// An applet page covers this cell (see AppletPass).
 				// Its colors only encode the applet id: drawing them
 				// would bleed through the surface glow around the page.
+				// AppletPass.DrawCasters fills the hole instead.
 				continue
 			}
 			fg, bg := cellColors(cell.Attr, cfg)

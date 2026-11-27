@@ -27,6 +27,7 @@ type Loading struct {
 //	-> bg fills + block glyphs (literal cells)            -> effectFBO
 //	-> box-drawing/powerline glyphs (literal glyphs)       -> effectFBO
 //	-> fragment-space surface radius                      -> surfaceFBO
+//	-> rounded solid block under each applet page         -> surfaceFBO
 //	-> optional dreamy drop shadow over surfaceFBO's rounded shape -> shadowFBO
 //	-> optional bloom over surfaceFBO/shadowFBO             -> sceneFBO
 //	-> sixel images                                       -> sceneFBO
@@ -34,6 +35,7 @@ type Loading struct {
 //	-> optional text shadow: glyphs -> textShadowFBO, shadow -> sceneFBO
 //	-> optional text glow: colorful glyphs -> textGlowFBO, halo -> sceneFBO
 //	-> text glyphs                                        -> sceneFBO
+//	-> applet pages, clipped to surface radius            -> sceneFBO
 //
 //	(every frame) cursor glow                             -> cursorFBO
 //	-> InsetPass (cursor soft-add + bg tint + tube falloff) -> default framebuffer
@@ -45,6 +47,7 @@ type Loading struct {
 type Renderer struct {
 	cellPass    *CellPass
 	imagePass   *ImagePass
+	appletPass  *AppletPass
 	blurPass    *BlurPass
 	surfacePass *SurfacePass
 	shadowPass  *ShadowPass
@@ -167,6 +170,10 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("image pass: %w", err)
 	}
+	appletPass, err := NewAppletPass()
+	if err != nil {
+		return nil, fmt.Errorf("applet pass: %w", err)
+	}
 	blurPass, err := NewBlurPass()
 	if err != nil {
 		return nil, fmt.Errorf("blur pass: %w", err)
@@ -206,6 +213,7 @@ func New(faces *font.Faces, cols, rows int) (*Renderer, error) {
 	return &Renderer{
 		cellPass:    cellPass,
 		imagePass:   imagePass,
+		appletPass:  appletPass,
 		blurPass:    blurPass,
 		surfacePass: surfacePass,
 		shadowPass:  shadowPass,
@@ -259,11 +267,15 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	r.cellPass.DrawRects(effect, cellW, cellH)
 	r.cellPass.DrawLineArt(effect, cellW, cellH)
 
-	surfaceTex := effect.tex
+	surface := effect
 	if cfg.Surface.Radius > 0.01 || cfg.Surface.Gradient > 0.001 {
 		r.surfacePass.Draw(effect, r.surfaceFBO, cfg.Surface.Radius, cfg.Surface.Gradient)
-		surfaceTex = r.surfaceFBO.tex
+		surface = r.surfaceFBO
 	}
+	gridX, gridY := GridOffset(float32(outW), float32(outH), r.cols, r.rows, cellW, cellH)
+	applets := appletLayout{cellW: cellW, cellH: cellH, gridX: gridX, gridY: gridY, radius: cfg.Surface.Radius}
+	r.appletPass.DrawCasters(surface, r.appletSpans, r.appletTex, applets, ambientBG(cfg))
+	surfaceTex := surface.tex
 	if cfg.Surface.Shadow > 0.001 {
 		r.shadowPass.Draw(surfaceTex, r.shadowFBO, outW, outH, cfg.Surface.Shadow, cfg.Surface.Radius)
 		surfaceTex = r.shadowFBO.tex
@@ -279,9 +291,8 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	r.drawTextShadow(outW, outH, cellW, cellH, cfg.TextShadow)
 	r.drawTextGlow(outW, outH, cellW, cellH, cfg.TextGlow)
 	r.cellPass.DrawText(r.sceneFBO, cellW, cellH)
-	gridX, gridY := GridOffset(float32(outW), float32(outH), r.cols, r.rows, cellW, cellH)
 	r.imagePass.DrawEmoji(r.sceneFBO, r.cellPass.emojiScratch, cellW, cellH, gridX, gridY)
-	r.imagePass.DrawApplets(r.sceneFBO, r.appletSpans, r.appletTex, cellW, cellH)
+	r.appletPass.DrawPages(r.sceneFBO, r.appletSpans, r.appletTex, applets)
 }
 
 // drawTextShadow casts TextShadow into the scene just before the sharp

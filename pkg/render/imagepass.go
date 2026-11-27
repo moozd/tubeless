@@ -25,15 +25,20 @@ func NewImagePass() (*ImagePass, error) {
 	if err != nil {
 		return nil, fmt.Errorf("image program: %w", err)
 	}
-	quadVBO := newQuadVBO()
+	return &ImagePass{prog: prog, vao: newQuadVAO(), cache: make(map[*image.RGBA]uint32), emojiCache: make(map[*image.RGBA]uint32)}, nil
+}
+
+// newQuadVAO binds the unit quad (see newQuadVBO) to attribute 0, the
+// aPos input of image.vert.
+func newQuadVAO() uint32 {
 	var vao uint32
 	gl.GenVertexArrays(1, &vao)
 	gl.BindVertexArray(vao)
-	gl.BindBuffer(gl.ARRAY_BUFFER, quadVBO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, newQuadVBO())
 	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointerWithOffset(0, 2, gl.FLOAT, false, 2*4, 0)
 	gl.BindVertexArray(0)
-	return &ImagePass{prog: prog, vao: vao, cache: make(map[*image.RGBA]uint32), emojiCache: make(map[*image.RGBA]uint32)}, nil
+	return vao
 }
 
 // getTexture uploads img once and caches by pointer identity — a Screen
@@ -91,39 +96,5 @@ func (p *ImagePass) Draw(fbo *FBO, images []screen.PlacedImage, cellW, cellH flo
 
 	gl.BindVertexArray(0)
 	gl.Disable(gl.BLEND)
-	fbo.Unbind()
-}
-
-// DrawApplets paints each span's part of its applet's texture over the
-// cells it covers. Opaque: a page replaces whatever is beneath it.
-func (p *ImagePass) DrawApplets(fbo *FBO, spans []AppletSpan, tex map[int]*AppletTexture, cellW, cellH float32) {
-	if len(spans) == 0 {
-		return
-	}
-	fbo.Bind()
-	gl.UseProgram(p.prog)
-	gl.BindVertexArray(p.vao)
-	gl.Uniform2f(gl.GetUniformLocation(p.prog, gl.Str("uScreenSize\x00")), float32(fbo.W), float32(fbo.H))
-	gl.Uniform1i(gl.GetUniformLocation(p.prog, gl.Str("uImage\x00")), 0)
-	gl.ActiveTexture(gl.TEXTURE0)
-	uPos := gl.GetUniformLocation(p.prog, gl.Str("uPos\x00"))
-	uSize := gl.GetUniformLocation(p.prog, gl.Str("uSize\x00"))
-	uUVPos := gl.GetUniformLocation(p.prog, gl.Str("uUVPos\x00"))
-	uUVSize := gl.GetUniformLocation(p.prog, gl.Str("uUVSize\x00"))
-
-	for _, s := range spans {
-		t, ok := tex[s.ID]
-		if !ok || t.w == 0 {
-			continue
-		}
-		gl.BindTexture(gl.TEXTURE_2D, t.tex)
-		gl.Uniform2f(uPos, float32(s.Col)*cellW, float32(s.Row)*cellH)
-		gl.Uniform2f(uSize, float32(s.Cells)*cellW, cellH)
-		gl.Uniform2f(uUVPos, s.U0, s.V0)
-		gl.Uniform2f(uUVSize, s.U1-s.U0, s.V1-s.V0)
-		gl.DrawArrays(gl.TRIANGLES, 0, 6)
-	}
-
-	gl.BindVertexArray(0)
 	fbo.Unbind()
 }

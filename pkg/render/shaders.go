@@ -29,6 +29,9 @@ var imageVertSrc string
 //go:embed assets/shaders/image.frag
 var imageFragSrc string
 
+//go:embed assets/shaders/applet.frag
+var appletFragSrc string
+
 //go:embed assets/shaders/shapeblur.frag
 var shapeBlurFragSrc string
 

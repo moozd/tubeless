@@ -9,6 +9,7 @@ uniform vec2 uUVPos;
 uniform vec2 uUVSize;
 
 out vec2 vUV;
+out vec2 vPixel; // top-left-origin pixel position, read by applet.frag
 
 void main() {
 	vec2 pixelPos = uPos + aPos * uSize;
@@ -16,4 +17,5 @@ void main() {
 	ndc.y = -ndc.y;
 	gl_Position = vec4(ndc, 0.0, 1.0);
 	vUV = uUVPos + aPos * uUVSize;
+	vPixel = pixelPos;
 }
