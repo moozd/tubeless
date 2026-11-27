@@ -217,18 +217,20 @@ tubeless exec excalidraw sketch.excalidraw # drawing editor
 tubeless exec demo                        # WebGL test page
 ```
 
-The default build has no applets. To use them on Linux:
+On Linux, the release packages and `make build` have applet support.
+The packages also install the applets in `/usr/share/tubeless/applets`,
+prebuilt, with no node needed. From source:
 
 ```sh
-make tubeless-cef      # tubeless and tubeless-cef-helper, with applet support
-make install-applets   # copies applets/ to ~/.config/tubeless/applets
+make tubeless          # tubeless and tubeless-cef-helper, with applet support
+make install-applets   # optional: the applets with their sources, to edit them
 ```
 
-Install `tubeless-cef-helper` next to `tubeless`. The first `tubeless
-exec` on a Linux machine downloads the CEF runtime (about 340 MB, 1.5 GB
-unpacked) into `~/.local/share/tubeless/cef`, and checks its SHA-1.
-Subsequent runs start immediately. `make cef-runtime` makes the same
-runtime from `CEF_ROOT`, with no download.
+The first `tubeless exec` on a Linux machine downloads the CEF runtime
+(about 340 MB, 1.5 GB unpacked) into `~/.local/share/tubeless/cef`, and
+checks its SHA-1. Subsequent runs start immediately. `make cef-runtime`
+makes the same runtime from an unpacked CEF package in `CEF_ROOT`, with
+no download. The Linux builds use the CEF headers in `third_party/cef`.
 
 On macOS, CEF loads only from the app bundle:
 
@@ -237,9 +239,9 @@ make install-darwin APPLETS=1   # Tubeless.app with the CEF framework and helper
 make install-applets
 ```
 
-`CEF_ROOT` is an unpacked CEF "minimal" package from
-cef-builds.spotifycdn.com (version 158; on macOS, the `macosarm64` or
-`macosx64` package). The builds use its headers. Without the runtime,
+On macOS, `CEF_ROOT` is an unpacked CEF "minimal" package from
+cef-builds.spotifycdn.com (version 158, `macosarm64` or `macosx64`).
+The macOS release packages have no applets at this time. Without the runtime,
 tubeless starts with applets off. A window starts CEF only when its
 first applet opens. [docs/applets-macos.md](docs/applets-macos.md)
 tells how applets work on macOS and gives the test list.
@@ -248,11 +250,12 @@ In tmux, set `allow-passthrough on`, `focus-events on` and
 `extended-keys on`. The pane that runs the applet gets the keyboard
 while tmux gives it focus. Your tmux prefix continues to go to tmux.
 
-An applet is a folder in `~/.config/tubeless/applets/<name>/`:
+An applet is a folder in `~/.config/tubeless/applets/<name>/`. An
+applet there replaces the installed applet with the same name.
 
 ```
 main.ts          # or main.tsx, main.js, main.jsx
-applet.toml      # optional: title and permissions
+applet.toml      # optional: title, permissions, static files
 package.json     # optional: npm packages, installed in the folder
 index.html       # optional: replaces the built-in page
 ```
@@ -281,6 +284,14 @@ write = "args"  # none, args, dirs or all
 `dirs` allows the files in the folders of the args and below them.
 The markdown applet uses it to show the images and open the notes next
 to a file.
+
+For the prebuilt applets in the packages, `make applets-dist` keeps
+only the bundle and the files that `static` lists in `applet.toml`:
+the files the page loads at run time, such as a worker or fonts.
+
+```toml
+static = ["node_modules/pdfjs-dist/build/pdf.worker.min.mjs"]
+```
 
 Page console output goes into the session log file.
 
