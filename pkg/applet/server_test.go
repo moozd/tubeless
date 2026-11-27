@@ -113,3 +113,27 @@ func TestLoadManifestRejectsUnknownAccess(t *testing.T) {
 		t.Fatal("read = some was accepted")
 	}
 }
+
+func TestServeReadDirsAllowsFilesNextToArgs(t *testing.T) {
+	s, dir := newTestApplet(t, map[string]string{
+		"main.js": "", "applet.toml": "[permissions]\nread = \"dirs\"\n",
+	}, nil)
+	docs := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(filepath.Join(docs, "img"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docs, "img", "a.png"), []byte("P"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.Add(Instance{ID: 7, Name: "t", Dir: dir, Args: []string{"docs/note.md"}, Cwd: dir, Manifest: Manifest{Permissions: Permissions{Read: AccessDirs}}})
+	s.BindBrowser(7, 3)
+	if r := s.Serve(3, PageURL(7)+"api/read?path=docs/img/a.png", "GET", nil); r.Status != 200 {
+		t.Fatalf("read next to the arg = %d %q", r.Status, r.Body)
+	}
+	if r := s.Serve(3, PageURL(7)+"api/read?path=main.js", "GET", nil); r.Status != 403 {
+		t.Fatalf("read above the arg folder = %d", r.Status)
+	}
+	if r := s.Serve(3, PageURL(7)+"api/read?path=docs/../../x", "GET", nil); r.Status != 403 {
+		t.Fatalf("read that climbs out = %d", r.Status)
+	}
+}

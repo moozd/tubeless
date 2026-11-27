@@ -262,14 +262,42 @@ func allowedPath(inst Instance, access Access, name string) (string, error) {
 	case AccessAll:
 		return full, nil
 	case AccessArgs:
-		for _, arg := range inst.Args {
-			if resolvePath(inst.Cwd, arg) == full {
-				return full, nil
-			}
+		if isArg(inst, full) {
+			return full, nil
 		}
 		return "", fmt.Errorf("%s is not in the applet's args (applet.toml permissions)", name)
+	case AccessDirs:
+		if isInArgDir(inst, full) {
+			return full, nil
+		}
+		return "", fmt.Errorf("%s is not in a folder of the applet's args (applet.toml permissions)", name)
 	}
 	return "", fmt.Errorf("applet %s has no permission for %s", inst.Name, name)
+}
+
+func isArg(inst Instance, full string) bool {
+	for _, arg := range inst.Args {
+		if resolvePath(inst.Cwd, arg) == full {
+			return true
+		}
+	}
+	return false
+}
+
+// isInArgDir reports whether full is in the folder of an arg, or below
+// it. Flags (args that start with -) name no folder.
+func isInArgDir(inst Instance, full string) bool {
+	for _, arg := range inst.Args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		dir := filepath.Dir(resolvePath(inst.Cwd, arg))
+		rel, err := filepath.Rel(dir, full)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			return true
+		}
+	}
+	return false
 }
 
 func resolvePath(cwd, name string) string {

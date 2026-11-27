@@ -17,6 +17,9 @@ const (
 	AccessNone Access = "none"
 	// AccessArgs allows only the files named in the applet's args.
 	AccessArgs Access = "args"
+	// AccessDirs allows the files in the folders of the applet's args
+	// and below them, such as the images a markdown file shows.
+	AccessDirs Access = "dirs"
 	// AccessAll allows every file the user can reach.
 	AccessAll Access = "all"
 )
@@ -48,14 +51,14 @@ func LoadManifest(dir string) (Manifest, error) {
 		return m, fmt.Errorf("parse %s: %w", filepath.Join(dir, "applet.toml"), err)
 	}
 	if !m.Permissions.Read.isValid() || !m.Permissions.Write.isValid() {
-		return m, fmt.Errorf("applet.toml: read and write must be none, args or all")
+		return m, fmt.Errorf("applet.toml: read and write must be none, args, dirs or all")
 	}
 	return m, nil
 }
 
 func (a Access) isValid() bool {
 	switch a {
-	case AccessNone, AccessArgs, AccessAll:
+	case AccessNone, AccessArgs, AccessDirs, AccessAll:
 		return true
 	}
 	return false
