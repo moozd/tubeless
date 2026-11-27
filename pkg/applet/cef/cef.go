@@ -13,7 +13,7 @@ package cef
 
 /*
 #cgo CFLAGS: -DCEF_API_VERSION=15800
-#cgo linux CFLAGS: -I${SRCDIR}/../../../third_party/cef
+#cgo CFLAGS: -I${SRCDIR}/../../../third_party/cef
 #cgo LDFLAGS: -ldl
 #include <stdlib.h>
 #include "shim.h"
