@@ -174,8 +174,11 @@ func (s *execSession) accept(ln net.Listener, sock string) error {
 	return nil
 }
 
+// readExecMessages reads the window's messages until the connection
+// ends. exec closes it itself when it quits; that is not an error.
 func readExecMessages(conn net.Conn, out chan<- applet.Message) {
-	if err := applet.ReadMessages(conn, out); err != nil {
+	err := applet.ReadMessages(conn, out)
+	if err != nil && !errors.Is(err, net.ErrClosed) {
 		fmt.Fprintln(os.Stderr, "tubeless exec:", err)
 	}
 }
