@@ -141,6 +141,7 @@ func newAppletHost(background uint32, requests <-chan []byte) (*appletHost, erro
 	h.applets = make(map[int]*openApplet)
 	h.server = applet.NewServer()
 	cef.SetSchemeHandler(h.serveScheme)
+	cef.SetConsoleHandler(h.logConsole)
 	h.input.prefix = readTmuxPrefix()
 	h.input.scanOffset = scancodeOffset()
 	return h, nil
@@ -151,6 +152,17 @@ func newAppletHost(background uint32, requests <-chan []byte) (*appletHost, erro
 func (h *appletHost) serveScheme(req cef.SchemeRequest) cef.SchemeResponse {
 	r := h.server.Serve(req.BrowserID, req.URL, req.Method, req.Body)
 	return cef.SchemeResponse{Status: r.Status, MIME: r.MIME, Body: r.Body}
+}
+
+// logConsole writes a page's console output to the session log, so
+// applet authors see their logs and errors.
+func (h *appletHost) logConsole(b *cef.Browser, level int, msg, source string, line int) {
+	for _, a := range h.applets {
+		if a.browser == b {
+			log.Printf("applet %d console: %s (%s:%d)", a.id, msg, source, line)
+			return
+		}
+	}
 }
 
 // argb packs a linear-RGB theme color as the opaque sRGB ARGB value CEF

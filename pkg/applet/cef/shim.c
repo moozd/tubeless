@@ -15,6 +15,7 @@
 #include "include/capi/cef_browser_capi.h"
 #include "include/capi/cef_browser_process_handler_capi.h"
 #include "include/capi/cef_client_capi.h"
+#include "include/capi/cef_display_handler_capi.h"
 #include "include/capi/cef_life_span_handler_capi.h"
 #include "include/capi/cef_render_handler_capi.h"
 #include "include/capi/cef_request_capi.h"
@@ -330,6 +331,7 @@ struct tb_browser {
 	cef_client_t client;
 	cef_render_handler_t render;
 	cef_life_span_handler_t life;
+	cef_display_handler_t display;
 	atomic_int refs;
 	uintptr_t handle;
 	int width;
@@ -383,6 +385,7 @@ static int browser_has_refs(tb_browser* b) {
 TB_REFCOUNT(client, client, cef_client_t)
 TB_REFCOUNT(render, render, cef_render_handler_t)
 TB_REFCOUNT(life, life, cef_life_span_handler_t)
+TB_REFCOUNT(display, display, cef_display_handler_t)
 
 static void release_browser_arg(cef_browser_t* browser) {
 	if (browser != NULL) {
@@ -402,6 +405,39 @@ static cef_life_span_handler_t* CEF_CALLBACK get_life_span_handler(
 	tb_browser* b = container_of(self, tb_browser, client);
 	browser_add_ref(b);
 	return &b->life;
+}
+
+static cef_display_handler_t* CEF_CALLBACK get_display_handler(
+		cef_client_t* self) {
+	tb_browser* b = container_of(self, tb_browser, client);
+	browser_add_ref(b);
+	return &b->display;
+}
+
+// string_to_utf8 copies a CEF string CEF still owns into malloc'd UTF-8.
+static char* string_to_utf8(const cef_string_t* s) {
+	cef_string_utf8_t out = {0};
+	if (s != NULL) {
+		cef_string_utf16_to_utf8(s->str, s->length, &out);
+	}
+	char* copy = malloc(out.length + 1);
+	memcpy(copy, out.str ? out.str : "", out.length);
+	copy[out.length] = '\0';
+	cef_string_utf8_clear(&out);
+	return copy;
+}
+
+static int CEF_CALLBACK on_console_message(cef_display_handler_t* self,
+		cef_browser_t* browser, cef_log_severity_t level,
+		const cef_string_t* message, const cef_string_t* source, int line) {
+	tb_browser* b = container_of(self, tb_browser, display);
+	char* msg = string_to_utf8(message);
+	char* src = string_to_utf8(source);
+	goOnConsole(b->handle, (int)level, msg, src, line);
+	free(msg);
+	free(src);
+	release_browser_arg(browser);
+	return 1;
 }
 
 static int dip(int px, float scale) {
@@ -478,6 +514,10 @@ tb_browser* tb_browser_create(uintptr_t handle, const char* url,
 	client_init_base(&b->client.base);
 	b->client.get_render_handler = get_render_handler;
 	b->client.get_life_span_handler = get_life_span_handler;
+	b->client.get_display_handler = get_display_handler;
+
+	display_init_base(&b->display.base);
+	b->display.on_console_message = on_console_message;
 
 	render_init_base(&b->render.base);
 	b->render.get_view_rect = get_view_rect;

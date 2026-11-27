@@ -4,13 +4,14 @@ package cef
 
 import "time"
 
-func Available() bool                                     { return false }
-func Init(Options) error                                  { return ErrUnavailable }
-func Shutdown()                                           {}
-func SetWake(func())                                      {}
-func NextPump(time.Time) (time.Duration, bool)            { return 0, false }
-func Pump()                                               {}
-func SetSchemeHandler(func(SchemeRequest) SchemeResponse) {}
+func Available() bool                                            { return false }
+func Init(Options) error                                         { return ErrUnavailable }
+func Shutdown()                                                  {}
+func SetWake(func())                                             {}
+func NextPump(time.Time) (time.Duration, bool)                   { return 0, false }
+func Pump()                                                      {}
+func SetSchemeHandler(func(SchemeRequest) SchemeResponse)        {}
+func SetConsoleHandler(func(*Browser, int, string, string, int)) {}
 
 // Browser is never created in a build without the `cef` tag.
 type Browser struct{}

@@ -167,6 +167,25 @@ func goOnCreated(h C.uintptr_t, browserID C.int) {
 	cgo.Handle(h).Value().(*Browser).id.Store(int32(browserID))
 }
 
+// consoleHandler receives every page's console messages.
+var consoleHandler atomic.Pointer[func(b *Browser, level int, msg, source string, line int)]
+
+// SetConsoleHandler installs fn to receive console.log and friends from
+// every page, and uncaught errors. It runs on the main thread.
+func SetConsoleHandler(fn func(b *Browser, level int, msg, source string, line int)) {
+	consoleHandler.Store(&fn)
+}
+
+//export goOnConsole
+func goOnConsole(h C.uintptr_t, level C.int, msg, source *C.char, line C.int) {
+	fn := consoleHandler.Load()
+	if fn == nil {
+		return
+	}
+	b := cgo.Handle(h).Value().(*Browser)
+	(*fn)(b, int(level), C.GoString(msg), C.GoString(source), int(line))
+}
+
 //export goOnClosed
 func goOnClosed(h C.uintptr_t) {
 	b := cgo.Handle(h).Value().(*Browser)
