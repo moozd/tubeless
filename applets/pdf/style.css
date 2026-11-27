@@ -79,3 +79,15 @@
 	background: var(--tb-selection-bg);
 	opacity: 0.4;
 }
+
+/* Search matches: the text itself stays invisible (the canvas shows
+   it); only the mark behind it is painted. */
+.textLayer mark {
+	color: transparent;
+	background: color-mix(in srgb, var(--tb-ansi-3) 45%, transparent);
+	border-radius: 0;
+}
+
+.textLayer mark.current {
+	background: color-mix(in srgb, var(--tb-ansi-1) 60%, transparent);
+}

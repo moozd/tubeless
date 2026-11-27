@@ -4,7 +4,7 @@
 //
 // Keys: j/k scroll, d/u half page, space/b full page, g/G first/last
 // page, +/- zoom, 0 fit width, / find text, n/N next/previous match,
-// q quit (prints file:page). Pages use the terminal's own fg/bg, the
+// Esc clear the matches, q quit (prints file:page). Pages use the terminal's own fg/bg, the
 // way the text around the pane looks; --no-recolor shows their own
 // colors.
 import * as pdfjs from 'pdfjs-dist';
@@ -26,6 +26,14 @@ interface PageView {
 	text: HTMLDivElement;
 	renderedScale: number;
 	task?: pdfjs.RenderTask;
+	layer?: pdfjs.TextLayer;
+}
+
+// Match is one occurrence of the search text: its page, and its rank
+// among the matches on that page.
+interface Match {
+	page: number;
+	rank: number;
 }
 
 const pageGap = 8;
@@ -57,10 +65,12 @@ document.body.append(scroller, status);
 
 let pages: PageView[] = [];
 let zoom = 0; // 0 fits the pane width
-let matches: number[] = [];
+let query = '';
+let matches: Match[] = [];
 let matchAt = -1;
+let isScrollPending = false;
 let message = '';
-const texts = new Map<number, string>();
+const texts = new Map<number, string[]>();
 
 function el(tag: string, className: string): HTMLDivElement {
 	const node = document.createElement(tag) as HTMLDivElement;
@@ -159,6 +169,9 @@ async function renderText(view: PageView, vp: pdfjs.PageViewport) {
 		viewport: vp,
 	});
 	await layer.render().catch(ignoreCancel);
+	view.layer = layer;
+	highlight(view);
+	if (isScrollPending && matches[matchAt]?.page === view.index) scrollToCurrent(view);
 }
 
 function ignoreCancel(err: unknown) {
@@ -215,6 +228,7 @@ const keys: Record<string, () => void> = {
 	'/': () => openFinder(),
 	n: () => nextMatch(1),
 	N: () => nextMatch(-1),
+	Escape: () => clearFind(),
 	q: () => quit(0, `${opts.file}:${currentPage()}\n`),
 };
 
@@ -233,7 +247,10 @@ function openFinder() {
 }
 
 finder.addEventListener('keydown', async (e) => {
-	if (e.key === 'Escape') closeFinder();
+	if (e.key === 'Escape') {
+		closeFinder();
+		return;
+	}
 	if (e.key !== 'Enter') return;
 	e.preventDefault();
 	await find(finder.value);
@@ -245,40 +262,114 @@ function closeFinder() {
 	updateStatus();
 }
 
-async function pageText(view: PageView): Promise<string> {
+// pageItems is the page's text, one string per text item, lowercased.
+// The text layer makes one span per item, in the same order.
+async function pageItems(view: PageView): Promise<string[]> {
 	const cached = texts.get(view.index);
 	if (cached !== undefined) return cached;
 	const content = await view.page.getTextContent();
-	const text = content.items.map((i) => ('str' in i ? i.str : '')).join(' ').toLowerCase();
-	texts.set(view.index, text);
-	return text;
+	const items = content.items.filter((i) => 'str' in i).map((i) => (i as { str: string }).str.toLowerCase());
+	texts.set(view.index, items);
+	return items;
 }
 
-async function find(query: string) {
-	const needle = query.toLowerCase();
+// countIn is how many times needle occurs in text.
+function countIn(text: string, needle: string): number {
+	let count = 0;
+	for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length)) {
+		count++;
+	}
+	return count;
+}
+
+async function find(text: string) {
+	query = text.toLowerCase();
 	matches = [];
 	for (const view of pages) {
-		if (needle && (await pageText(view)).includes(needle)) matches.push(view.index);
+		const total = query ? (await pageItems(view)).reduce((n, s) => n + countIn(s, query), 0) : 0;
+		for (let rank = 0; rank < total; rank++) matches.push({ page: view.index, rank });
 	}
 	matchAt = -1;
-	message = matches.length ? '' : `no match: ${query}`;
+	message = matches.length || !query ? '' : `no match: ${text}`;
+	pages.forEach(highlight);
 	nextMatch(1);
 }
 
-function nextMatch(step: number) {
-	if (!matches.length) return;
-	const from = currentPage();
-	const ahead = step > 0 ? matches.findIndex((p) => p > from) : findLastIndex(matches, (p) => p < from);
-	matchAt = ahead >= 0 ? ahead : (step > 0 ? 0 : matches.length - 1);
-	message = `match ${matchAt + 1}/${matches.length}`;
-	goToPage(matches[matchAt]);
+function clearFind() {
+	query = '';
+	matches = [];
+	matchAt = -1;
+	message = '';
+	pages.forEach(highlight);
+	updateStatus();
 }
 
-function findLastIndex<T>(list: T[], fn: (v: T) => boolean): number {
-	for (let i = list.length - 1; i >= 0; i--) {
-		if (fn(list[i])) return i;
+// nextMatch moves to the next match after the current one, or the
+// first match below the current page when none is chosen yet.
+function nextMatch(step: number) {
+	if (!matches.length) return;
+	if (matchAt < 0) {
+		const from = currentPage();
+		const ahead = matches.findIndex((m) => m.page >= from);
+		matchAt = step > 0 ? Math.max(ahead, 0) : (ahead > 0 ? ahead - 1 : matches.length - 1);
+	} else {
+		matchAt = (matchAt + step + matches.length) % matches.length;
 	}
-	return -1;
+	message = `match ${matchAt + 1}/${matches.length}`;
+	showMatch(matches[matchAt]);
+}
+
+// showMatch scrolls the match to the middle of the pane. A page that
+// is not rendered yet scrolls into view first; its text layer then
+// marks the match when it renders.
+function showMatch(m: Match) {
+	const view = pages[m.page - 1];
+	pages.forEach(highlight);
+	isScrollPending = !view.layer || view.renderedScale !== scaleFor(view);
+	if (isScrollPending) goToPage(m.page);
+	else scrollToCurrent(view);
+	updateStatus();
+}
+
+function scrollToCurrent(view: PageView) {
+	isScrollPending = false;
+	view.text.querySelector('mark.current')?.scrollIntoView({ block: 'center' });
+}
+
+// highlight marks every match on a rendered page, and the current
+// match in its own color.
+function highlight(view: PageView) {
+	if (!view.layer) return;
+	const current = matches[matchAt];
+	const currentRank = current?.page === view.index ? current.rank : -1;
+	let rank = 0;
+	view.layer.textDivs.forEach((div, i) => {
+		const text = view.layer!.textContentItemsStr[i] ?? '';
+		rank = markText(div, text, rank, currentRank);
+	});
+}
+
+// markText rebuilds one text span with <mark> around each match. It
+// returns the rank of the next match.
+function markText(div: HTMLElement, text: string, rank: number, currentRank: number): number {
+	if (!query || !text.toLowerCase().includes(query)) {
+		if (div.childElementCount) div.textContent = text;
+		return rank;
+	}
+	const parts: (string | HTMLElement)[] = [];
+	const lower = text.toLowerCase();
+	let from = 0;
+	for (let at = lower.indexOf(query); at >= 0; at = lower.indexOf(query, from)) {
+		const mark = document.createElement('mark');
+		mark.textContent = text.slice(at, at + query.length);
+		mark.classList.toggle('current', rank === currentRank);
+		parts.push(text.slice(from, at), mark);
+		from = at + query.length;
+		rank++;
+	}
+	parts.push(text.slice(from));
+	div.replaceChildren(...parts);
+	return rank;
 }
 
 scroller.addEventListener('scroll', updateStatus);
