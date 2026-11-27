@@ -215,7 +215,7 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 		ligatureSkip := 0 // consecutive continuation cells still owed to an already-drawn ligature this row
 		for x := 0; x < scr.Cols; x++ {
 			cell := grid[y][x]
-			if screen.IsAppletRune(cell.Rune) {
+			if _, _, _, isApplet := cell.AppletCell(); isApplet {
 				// An applet page covers this cell (see DrawApplets).
 				// Its colors only encode the applet id: drawing them
 				// would bleed through the surface glow around the page.

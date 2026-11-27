@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
@@ -124,6 +126,7 @@ func newAppletHost(background uint32, requests <-chan []byte) (*appletHost, erro
 		return nil, fmt.Errorf("cef cache dir: %w", err)
 	}
 	opts := cef.Options{
+		LibPath:        filepath.Join(dir, "libcef.so"),
 		SubprocessPath: filepath.Join(dir, "tubeless-cef-helper"),
 		ResourcesDir:   dir,
 		LocalesDir:     filepath.Join(dir, "locales"),
@@ -219,6 +222,10 @@ func (h *appletHost) open(payload []byte, cs *cellSize) {
 		log.Printf("applets: %v", err)
 		return
 	}
+	if !isExecSocket(req.Socket) {
+		log.Printf("applets: refused request with socket %q (not a local tubeless exec)", req.Socket)
+		return
+	}
 	conn, err := net.DialTimeout("unix", req.Socket, appletDialWait)
 	if err != nil {
 		log.Printf("applets: dial %s: %v", req.Socket, err)
@@ -257,6 +264,23 @@ func (h *appletHost) start(req applet.Request, conn net.Conn, cs *cellSize) (*op
 	a.events = make(chan applet.Message, 16)
 	go readAppletMessages(conn, a.events)
 	return a, nil
+}
+
+// isExecSocket reports whether path is a socket `tubeless exec` on this
+// machine listens on. Any program's output (a file shown with cat,
+// output over ssh) can carry an open request, so the window must never
+// dial an arbitrary socket it names.
+func isExecSocket(path string) bool {
+	dir, name := filepath.Split(path)
+	if filepath.Clean(dir) != execSocketDir() {
+		return false
+	}
+	pid, ok := strings.CutSuffix(strings.TrimPrefix(name, "exec-"), ".sock")
+	if !ok || !strings.HasPrefix(name, "exec-") || pid == "" {
+		return false
+	}
+	_, err := strconv.Atoi(pid)
+	return err == nil
 }
 
 // appletInstance finds an installed applet and reads its manifest.

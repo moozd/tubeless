@@ -74,7 +74,7 @@ func execApplet(name string, args []string) (int, string, error) {
 	if err != nil {
 		return 1, "", err
 	}
-	defer os.Remove(sock)
+	defer removeIfPresent(sock)
 	defer ln.Close()
 
 	saved, err := term.MakeRaw(fd)
@@ -94,16 +94,21 @@ func execApplet(name string, args []string) (int, string, error) {
 		return 1, "", err
 	}
 	paintPlaceholders(s.id, cols, rows)
-	if err := s.accept(ln); err != nil {
+	if err := s.accept(ln, sock); err != nil {
 		return 1, "", err
 	}
 	defer s.conn.Close()
 	return s.run()
 }
 
+// execSocketDir holds the sockets windows dial back on.
+func execSocketDir() string {
+	return filepath.Join(execRuntimeDir(), "tubeless")
+}
+
 // listenExecSocket opens the socket the window dials back on.
 func listenExecSocket() (net.Listener, string, error) {
-	dir := filepath.Join(execRuntimeDir(), "tubeless")
+	dir := execSocketDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, "", fmt.Errorf("socket dir: %w", err)
 	}
@@ -147,13 +152,19 @@ func (s *execSession) sendOpen(name string, args []string, sock string, cols, ro
 }
 
 // accept waits for the window to dial back, then for its first answer.
-func (s *execSession) accept(ln net.Listener) error {
+func (s *execSession) accept(ln net.Listener, sock string) error {
 	if err := ln.(*net.UnixListener).SetDeadline(time.Now().Add(execConnectWait)); err != nil {
 		return fmt.Errorf("socket deadline: %w", err)
 	}
 	conn, err := ln.Accept()
 	if err != nil {
-		return errors.New("no answer from the window; run it in tubeless built with applet support (make tubeless-cef)")
+		return errors.New("no answer from the window. Inside tmux, set `allow-passthrough on`. " +
+			"The window must also be tubeless built with applet support (make tubeless-cef)")
+	}
+	// One window per exec: no later request can reuse this socket.
+	ln.Close()
+	if err := os.Remove(sock); err != nil {
+		fmt.Fprintln(os.Stderr, "tubeless exec: remove socket:", err)
 	}
 	s.conn = conn
 	s.messages = make(chan applet.Message, 16)
@@ -288,4 +299,10 @@ func isPaneActive() bool {
 		return true
 	}
 	return strings.TrimSpace(string(out)) == "1"
+}
+
+func removeIfPresent(path string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(os.Stderr, "tubeless exec: remove socket:", err)
+	}
 }

@@ -24,6 +24,7 @@
 #include "include/capi/cef_scheme_capi.h"
 #include "include/cef_api_hash.h"
 
+#include "cefload.h"
 #include "scheme.h"
 #include "shim.h"
 
@@ -279,7 +280,12 @@ static void register_scheme_factory(void) {
 	cef_string_clear(&name);
 }
 
-int tb_cef_init(const tb_options* opts) {
+// tb_cef_init returns NULL when CEF started, or why it did not.
+const char* tb_cef_init(const tb_options* opts) {
+	const char* err = tb_cef_load(opts->lib_path);
+	if (err != NULL) {
+		return err;
+	}
 	cef_api_hash(CEF_API_VERSION, 0);
 	init_app();
 
@@ -313,7 +319,7 @@ int tb_cef_init(const tb_options* opts) {
 	cef_string_clear(&s.root_cache_path);
 	cef_string_clear(&s.cache_path);
 	cef_string_clear(&s.log_file);
-	return ok;
+	return ok ? NULL : "cef_initialize failed";
 }
 
 void tb_cef_do_work(void) {

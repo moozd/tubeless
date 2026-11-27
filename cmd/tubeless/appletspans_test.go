@@ -49,3 +49,22 @@ func TestAppletSpansSkipClosedApplets(t *testing.T) {
 		t.Fatalf("spans for an applet that is not open: %+v", got)
 	}
 }
+
+func TestIsExecSocketAcceptsOnlyLocalExecSockets(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	cases := map[string]bool{
+		"/run/user/1000/tubeless/exec-123.sock":      true,
+		"/run/user/1000/wayland-1":                   false,
+		"/run/user/1000/bus":                         false,
+		"/var/run/docker.sock":                       false,
+		"/run/user/1000/tubeless/exec-.sock":         false,
+		"/run/user/1000/tubeless/exec-12x.sock":      false,
+		"/run/user/1000/tubeless/../bus/exec-1.sock": false,
+		"/run/user/1000/tubeless/sub/exec-1.sock":    false,
+	}
+	for path, want := range cases {
+		if got := isExecSocket(path); got != want {
+			t.Errorf("isExecSocket(%q) = %v, want %v", path, got, want)
+		}
+	}
+}

@@ -13,7 +13,7 @@ package cef
 
 /*
 #cgo CFLAGS: -DCEF_API_VERSION=15800
-#cgo LDFLAGS: -lcef
+#cgo LDFLAGS: -ldl
 #include <stdlib.h>
 #include "shim.h"
 */
@@ -34,21 +34,22 @@ func Available() bool { return true }
 // Init starts CEF. It must run once, before any NewBrowser.
 func Init(o Options) error {
 	strs := []*C.char{
-		C.CString(o.SubprocessPath), C.CString(o.ResourcesDir),
-		C.CString(o.LocalesDir), C.CString(o.CacheDir),
-		C.CString(o.LogFile),
+		C.CString(o.LibPath), C.CString(o.SubprocessPath),
+		C.CString(o.ResourcesDir), C.CString(o.LocalesDir),
+		C.CString(o.CacheDir), C.CString(o.LogFile),
 	}
 	defer freeStrings(strs)
 	opts := C.tb_options{
-		subprocess_path: strs[0],
-		resources_dir:   strs[1],
-		locales_dir:     strs[2],
-		cache_dir:       strs[3],
-		log_file:        strs[4],
+		lib_path:        strs[0],
+		subprocess_path: strs[1],
+		resources_dir:   strs[2],
+		locales_dir:     strs[3],
+		cache_dir:       strs[4],
+		log_file:        strs[5],
 		background:      C.uint32_t(o.Background),
 	}
-	if C.tb_cef_init(&opts) == 0 {
-		return fmt.Errorf("cef: initialize failed (see %s)", o.LogFile)
+	if msg := C.tb_cef_init(&opts); msg != nil {
+		return fmt.Errorf("cef: %s (log: %s)", C.GoString(msg), o.LogFile)
 	}
 	return nil
 }

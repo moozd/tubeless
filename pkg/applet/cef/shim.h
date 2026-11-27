@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 typedef struct tb_options {
+	const char* lib_path;
 	const char* subprocess_path;
 	const char* resources_dir;
 	const char* locales_dir;
@@ -37,7 +38,7 @@ typedef struct tb_key {
 	uint16_t unmodified_character;
 } tb_key;
 
-int tb_cef_init(const tb_options* opts);
+const char* tb_cef_init(const tb_options* opts);
 void tb_cef_do_work(void);
 void tb_cef_shutdown(void);
 

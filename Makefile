@@ -101,12 +101,12 @@ tubeless:
 	go build -tags wayland -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME)"
 
-# tubeless-cef is tubeless with applet support, linked against
-# $(CEF_RUNTIME)/libcef.so (run `make cef-runtime` first).
+# tubeless-cef is tubeless with applet support. It loads libcef from
+# $(CEF_RUNTIME) at run time (run `make cef-runtime` first) and still
+# starts, with applets off, when that runtime is missing.
 tubeless-cef:
 	@mkdir -p $(BIN_DIR)
 	CGO_CFLAGS="-I$(CEF_ROOT)" \
-	CGO_LDFLAGS="-L$(CEF_RUNTIME) -Wl,-rpath,$(CEF_RUNTIME)" \
 	go build -tags "wayland cef" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME) (with applets)"
 

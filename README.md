@@ -201,6 +201,69 @@ tubeless --version        # print the build version
 See [docs/config.md](docs/config.md) for the full config file
 reference — every theme, preset, and TOML key.
 
+### Applets
+
+An applet is a web page that runs in a tmux pane, in the tubeless
+window itself. Write it in TypeScript or JavaScript, as for a browser:
+`<canvas>`, WebGL, WebGPU, the DOM, workers and npm packages all work.
+tubeless hosts the pages in an embedded Chromium (CEF). It paints them
+on the pane's cells, before the CRT and bloom effects.
+
+```sh
+tubeless exec pdf report.pdf --page 3     # PDF reader
+tubeless exec excalidraw sketch.excalidraw # drawing editor
+tubeless exec demo                        # WebGL test page
+```
+
+Linux only at this time. The default build has no applets. To use
+them:
+
+```sh
+make cef-runtime       # links a CEF build (CEF_ROOT) into ~/.local/share/tubeless/cef
+make tubeless-cef      # tubeless with applet support
+make install-applets   # copies applets/ to ~/.config/tubeless/applets
+```
+
+`CEF_ROOT` is an unpacked CEF "minimal" package from
+cef-builds.spotifycdn.com (tested with 158). Without the runtime,
+tubeless starts with applets off.
+
+In tmux, set `allow-passthrough on`, `focus-events on` and
+`extended-keys on`. The pane that runs the applet gets the keyboard
+while tmux gives it focus. Your tmux prefix continues to go to tmux.
+
+An applet is a folder in `~/.config/tubeless/applets/<name>/`:
+
+```
+main.ts          # or main.tsx, main.js, main.jsx
+applet.toml      # optional: title and permissions
+package.json     # optional: npm packages, installed in the folder
+index.html       # optional: replaces the built-in page
+```
+
+tubeless bundles `main.ts` with esbuild when the page loads. Thus you
+do not compile it. The global `tubeless` object gives:
+
+- `args`, `cwd` and `name` of the `tubeless exec` command
+- `canvas`: a canvas that fills the pane at the device pixel ratio
+- `theme`: the terminal colors, font and cell dimensions; the same values
+  are CSS variables such as `--tb-bg` and `--tb-ansi-4`
+- `readFile`, `readText` and `writeFile`
+- `exit(code, output)`: closes the applet, prints `output` in the pane
+  and sets the exit code of `tubeless exec`
+- `on('resize' | 'focus' | 'blur' | 'theme', fn)`
+
+`applet.toml` limits file access. By default, an applet reads only
+the files in its args and writes nothing:
+
+```toml
+[permissions]
+read = "args"   # none, args or all
+write = "args"  # none, args or all
+```
+
+Page console output goes into the session log file.
+
 ### SSH to remote hosts
 
 A tubeless session runs with `TERM=tubeless`, a terminfo entry that only

@@ -8,6 +8,8 @@ var ErrUnavailable = errors.New("cef: tubeless was built without applet support 
 
 // Options locate the CEF runtime files.
 type Options struct {
+	// LibPath is libcef itself, loaded with dlopen.
+	LibPath string
 	// SubprocessPath is the tubeless-cef-helper binary CEF starts for
 	// its renderer and GPU processes.
 	SubprocessPath string
