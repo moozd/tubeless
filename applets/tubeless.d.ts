@@ -8,7 +8,7 @@ interface TubelessTheme {
 interface Tubeless {
 	name: string; args: string[]; cwd: string; theme: TubelessTheme;
 	readonly canvas: HTMLCanvasElement;
-	readFile(path: string): Promise<Uint8Array>;
+	readFile(path: string): Promise<Uint8Array<ArrayBuffer>>;
 	readText(path: string): Promise<string>;
 	writeFile(path: string, data: Uint8Array | string): Promise<void>;
 	exit(code?: number, output?: string): void;

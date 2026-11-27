@@ -1,11 +1,12 @@
 // pdf: a PDF reader in a tubeless pane.
 //
-//   tubeless exec pdf <file.pdf> [--page N] [--recolor]
+//   tubeless exec pdf <file.pdf> [--page N] [--no-recolor]
 //
 // Keys: j/k scroll, d/u half page, space/b full page, g/G first/last
 // page, +/- zoom, 0 fit width, / find text, n/N next/previous match,
-// q quit (prints file:page). --recolor paints pages in the terminal's
-// own fg/bg, the way the text around the pane looks.
+// q quit (prints file:page). Pages use the terminal's own fg/bg, the
+// way the text around the pane looks; --no-recolor shows their own
+// colors.
 import * as pdfjs from 'pdfjs-dist';
 import './style.css';
 
@@ -31,14 +32,14 @@ const pageGap = 8;
 const zoomStep = 1.2;
 
 function parseArgs(args: string[]): Options {
-	const opts: Options = { file: '', page: 1, isRecolor: false };
+	const opts: Options = { file: '', page: 1, isRecolor: true };
 	for (let i = 0; i < args.length; i++) {
 		switch (args[i]) {
 		case '--page':
 			opts.page = Number(args[++i]) || 1;
 			break;
-		case '--recolor':
-			opts.isRecolor = true;
+		case '--no-recolor':
+			opts.isRecolor = false;
 			break;
 		default:
 			opts.file = args[i];
@@ -73,7 +74,7 @@ function quit(code: number, output: string) {
 
 async function open() {
 	if (!opts.file) {
-		quit(2, 'usage: tubeless exec pdf <file.pdf> [--page N] [--recolor]\n');
+		quit(2, 'usage: tubeless exec pdf <file.pdf> [--page N] [--no-recolor]\n');
 		return;
 	}
 	const data = await tubeless.readFile(opts.file);

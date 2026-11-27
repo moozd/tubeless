@@ -1,0 +1,33 @@
+.stage {
+	position: fixed;
+	inset: 0 0 var(--tb-cell-height) 0;
+	overflow: hidden;
+	cursor: grab;
+	touch-action: none;
+}
+
+.stage img {
+	position: absolute;
+	left: 0;
+	top: 0;
+	transform-origin: 0 0;
+	user-select: none;
+	-webkit-user-drag: none;
+}
+
+.stage img.pixelated {
+	image-rendering: pixelated;
+}
+
+.status {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: var(--tb-cell-height);
+	line-height: var(--tb-cell-height);
+	white-space: pre;
+	overflow: hidden;
+	background: var(--tb-ansi-8);
+	color: var(--tb-fg);
+}

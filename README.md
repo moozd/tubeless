@@ -210,7 +210,8 @@ tubeless hosts the pages in an embedded Chromium (CEF). It paints them
 on the pane's cells, before the CRT and bloom effects.
 
 ```sh
-tubeless exec pdf report.pdf --page 3     # PDF reader
+tubeless exec pdf report.pdf --page 3     # PDF reader, in the terminal colors
+tubeless exec image *.png                 # image viewer
 tubeless exec excalidraw sketch.excalidraw # drawing editor
 tubeless exec demo                        # WebGL test page
 ```
