@@ -14,6 +14,7 @@
 typedef struct tb_cef_fns {
 	__typeof__(&cef_api_hash) api_hash;
 	__typeof__(&cef_initialize) initialize;
+	__typeof__(&cef_execute_process) execute_process;
 	__typeof__(&cef_do_message_loop_work) do_message_loop_work;
 	__typeof__(&cef_shutdown) shutdown;
 	__typeof__(&cef_browser_host_create_browser) create_browser;
@@ -34,6 +35,7 @@ const char* tb_cef_load(const char* path);
 #ifndef TB_CEF_NO_MACROS
 #define cef_api_hash tb_cef.api_hash
 #define cef_initialize tb_cef.initialize
+#define cef_execute_process tb_cef.execute_process
 #define cef_do_message_loop_work tb_cef.do_message_loop_work
 #define cef_shutdown tb_cef.shutdown
 #define cef_browser_host_create_browser tb_cef.create_browser

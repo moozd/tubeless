@@ -15,6 +15,9 @@ typedef struct tb_options {
 	const char* locales_dir;
 	const char* cache_dir;
 	const char* log_file;
+	// framework_dir and main_bundle are for macOS only; empty elsewhere.
+	const char* framework_dir;
+	const char* main_bundle;
 	uint32_t background;
 } tb_options;
 
@@ -28,6 +31,17 @@ typedef struct tb_response {
 	uint8_t* data;
 	size_t len;
 } tb_response;
+
+// tb_edit is an edit command for the focused frame. macOS sends these
+// for Cmd+C and friends: offscreen views get no menu to do it.
+typedef enum tb_edit {
+	TB_EDIT_UNDO,
+	TB_EDIT_REDO,
+	TB_EDIT_CUT,
+	TB_EDIT_COPY,
+	TB_EDIT_PASTE,
+	TB_EDIT_SELECT_ALL,
+} tb_edit;
 
 typedef struct tb_key {
 	int type;
@@ -56,5 +70,6 @@ void tb_browser_mouse_wheel(tb_browser* b, int x, int y, uint32_t mods,
 	int dx, int dy);
 void tb_browser_key(tb_browser* b, const tb_key* key);
 void tb_browser_exec_js(tb_browser* b, const char* code);
+void tb_browser_edit(tb_browser* b, tb_edit cmd);
 
 #endif

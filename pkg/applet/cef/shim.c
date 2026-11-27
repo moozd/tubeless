@@ -305,6 +305,8 @@ const char* tb_cef_init(const tb_options* opts) {
 	set_str(&s.root_cache_path, opts->cache_dir);
 	set_str(&s.cache_path, opts->cache_dir);
 	set_str(&s.log_file, opts->log_file);
+	set_str(&s.framework_dir_path, opts->framework_dir);
+	set_str(&s.main_bundle_path, opts->main_bundle);
 
 	static char* argv[] = {"tubeless", NULL};
 	cef_main_args_t args = {1, argv};
@@ -319,6 +321,8 @@ const char* tb_cef_init(const tb_options* opts) {
 	cef_string_clear(&s.root_cache_path);
 	cef_string_clear(&s.cache_path);
 	cef_string_clear(&s.log_file);
+	cef_string_clear(&s.framework_dir_path);
+	cef_string_clear(&s.main_bundle_path);
 	return ok ? NULL : "cef_initialize failed";
 }
 
@@ -678,5 +682,41 @@ void tb_browser_exec_js(tb_browser* b, const char* code) {
 	frame->execute_java_script(frame, &js, &url, 0);
 	cef_string_clear(&js);
 	cef_string_clear(&url);
+	frame->base.release(&frame->base);
+}
+
+// run_edit runs one edit command on frame.
+static void run_edit(cef_frame_t* frame, tb_edit cmd) {
+	switch (cmd) {
+	case TB_EDIT_UNDO:
+		frame->undo(frame);
+		return;
+	case TB_EDIT_REDO:
+		frame->redo(frame);
+		return;
+	case TB_EDIT_CUT:
+		frame->cut(frame);
+		return;
+	case TB_EDIT_COPY:
+		frame->copy(frame);
+		return;
+	case TB_EDIT_PASTE:
+		frame->paste(frame);
+		return;
+	case TB_EDIT_SELECT_ALL:
+		frame->select_all(frame);
+		return;
+	}
+}
+
+void tb_browser_edit(tb_browser* b, tb_edit cmd) {
+	if (b->browser == NULL) {
+		return;
+	}
+	cef_frame_t* frame = b->browser->get_focused_frame(b->browser);
+	if (frame == NULL) {
+		return;
+	}
+	run_edit(frame, cmd);
 	frame->base.release(&frame->base);
 }

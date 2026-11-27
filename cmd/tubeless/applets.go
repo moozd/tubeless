@@ -80,15 +80,6 @@ type appletHost struct {
 	theme      applet.Theme
 }
 
-// cefRuntimeDir is where `make cef-runtime` puts libcef, its resources
-// and tubeless-cef-helper.
-func cefRuntimeDir() string {
-	if dir := os.Getenv("TUBELESS_CEF_DIR"); dir != "" {
-		return dir
-	}
-	return filepath.Join(xdgDir("XDG_DATA_HOME", ".local", "share"), "tubeless", "cef")
-}
-
 // appletsDir is where applets are installed, one folder per applet.
 func appletsDir() string {
 	return filepath.Join(xdgDir("XDG_CONFIG_HOME", ".config"), "tubeless", "applets")
@@ -120,26 +111,23 @@ func startAppletHost(background [3]float32, requests <-chan []byte) *appletHost 
 }
 
 func newAppletHost(background uint32, requests <-chan []byte) (*appletHost, error) {
-	dir := cefRuntimeDir()
+	opts, err := cefOptions()
+	if err != nil {
+		return nil, err
+	}
 	cache, err := os.MkdirTemp("", "tubeless-cef-")
 	if err != nil {
 		return nil, fmt.Errorf("cef cache dir: %w", err)
 	}
-	opts := cef.Options{
-		LibPath:        filepath.Join(dir, "libcef.so"),
-		SubprocessPath: filepath.Join(dir, "tubeless-cef-helper"),
-		ResourcesDir:   dir,
-		LocalesDir:     filepath.Join(dir, "locales"),
-		CacheDir:       cache,
-		LogFile:        filepath.Join(cache, "cef.log"),
-		Background:     background,
-	}
+	opts.CacheDir = cache
+	opts.LogFile = filepath.Join(cache, "cef.log")
+	opts.Background = background
 	cef.SetWake(glfw.PostEmptyEvent)
 	if err := cef.Init(opts); err != nil {
 		os.RemoveAll(cache)
 		return nil, err
 	}
-	log.Printf("applets: cef started from %s", dir)
+	log.Printf("applets: cef started from %s", filepath.Dir(opts.LibPath))
 	h := &appletHost{cacheDir: cache, background: background, requests: requests}
 	h.applets = make(map[int]*openApplet)
 	h.server = applet.NewServer()

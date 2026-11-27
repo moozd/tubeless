@@ -1,6 +1,8 @@
 package main
 
 import (
+	"runtime"
+
 	"github.com/go-gl/glfw/v3.4/glfw"
 
 	"github.com/moozd/tubeless/pkg/applet/cef"
@@ -138,4 +140,25 @@ func charEvents(r rune, mods glfw.ModifierKey) []cef.KeyEvent {
 		})
 	}
 	return events
+}
+
+// editShortcuts are the macOS edit keys. An offscreen page has no menu
+// bar to turn them into edit commands, so tubeless sends the commands.
+var editShortcuts = map[keyChord]cef.EditCommand{
+	{glfw.KeyZ, glfw.ModSuper}:                 cef.EditUndo,
+	{glfw.KeyZ, glfw.ModSuper | glfw.ModShift}: cef.EditRedo,
+	{glfw.KeyX, glfw.ModSuper}:                 cef.EditCut,
+	{glfw.KeyC, glfw.ModSuper}:                 cef.EditCopy,
+	{glfw.KeyV, glfw.ModSuper}:                 cef.EditPaste,
+	{glfw.KeyA, glfw.ModSuper}:                 cef.EditSelectAll,
+}
+
+// editCommand returns the edit command a key is the shortcut for. On
+// Linux these keys reach the page as plain key events and work.
+func editCommand(key glfw.Key, mods glfw.ModifierKey) (cef.EditCommand, bool) {
+	if runtime.GOOS != "darwin" {
+		return 0, false
+	}
+	cmd, ok := editShortcuts[keyChord{key, mods & chordMods}]
+	return cmd, ok
 }

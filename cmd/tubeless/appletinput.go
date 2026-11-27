@@ -251,10 +251,23 @@ func (h *appletHost) Key(key glfw.Key, scancode int, action glfw.Action, mods gl
 	if action == glfw.Press && h.takePrefix(key, mods) {
 		return false
 	}
+	if cmd, isEdit := editCommand(key, mods); isEdit {
+		runEdit(a, cmd, action)
+		return true
+	}
 	for _, ev := range keyEvents(key, scancode+h.input.scanOffset, action, mods) {
 		a.browser.Key(ev)
 	}
 	return true
+}
+
+// runEdit runs an edit shortcut on press and repeat. Its release goes
+// nowhere: the page never saw the key go down.
+func runEdit(a *openApplet, cmd cef.EditCommand, action glfw.Action) {
+	if action == glfw.Release {
+		return
+	}
+	a.browser.Edit(cmd)
 }
 
 // takePrefix reports whether this key press goes to tmux: the prefix

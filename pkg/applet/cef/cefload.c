@@ -28,6 +28,7 @@ const char* tb_cef_load(const char* path) {
 	}
 	LOAD(api_hash, "cef_api_hash");
 	LOAD(initialize, "cef_initialize");
+	LOAD(execute_process, "cef_execute_process");
 	LOAD(do_message_loop_work, "cef_do_message_loop_work");
 	LOAD(shutdown, "cef_shutdown");
 	LOAD(create_browser, "cef_browser_host_create_browser");

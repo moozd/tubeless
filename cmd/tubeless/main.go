@@ -27,6 +27,7 @@ import (
 
 	"github.com/go-gl/glfw/v3.4/glfw"
 
+	"github.com/moozd/tubeless/pkg/applet/cef"
 	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/font"
 	"github.com/moozd/tubeless/pkg/platform"
@@ -113,6 +114,10 @@ func main() {
 	}
 
 	startSessionLog()
+
+	// CEF on macOS wants its own NSApp, and GLFW keeps the one it finds,
+	// so this runs before anything starts GLFW.
+	cef.PrepareApplication()
 
 	// Registered before anything else — critically, before any cgo call
 	// (font.Build's FreeType binding is the first one below). Something

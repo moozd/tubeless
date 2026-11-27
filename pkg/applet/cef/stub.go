@@ -5,6 +5,7 @@ package cef
 import "time"
 
 func Available() bool                                            { return false }
+func PrepareApplication()                                        {}
 func Init(Options) error                                         { return ErrUnavailable }
 func Shutdown()                                                  {}
 func SetWake(func())                                             {}
@@ -32,3 +33,4 @@ func (*Browser) MouseWheel(int, int, uint32, int, int)               {}
 func (*Browser) ID() int                                             { return 0 }
 func (*Browser) ExecJS(string)                                       {}
 func (*Browser) Key(KeyEvent)                                        {}
+func (*Browser) Edit(EditCommand)                                    {}

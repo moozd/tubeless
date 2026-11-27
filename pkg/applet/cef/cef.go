@@ -33,10 +33,14 @@ func Available() bool { return true }
 
 // Init starts CEF. It must run once, before any NewBrowser.
 func Init(o Options) error {
+	if err := checkApplication(); err != nil {
+		return err
+	}
 	strs := []*C.char{
 		C.CString(o.LibPath), C.CString(o.SubprocessPath),
 		C.CString(o.ResourcesDir), C.CString(o.LocalesDir),
 		C.CString(o.CacheDir), C.CString(o.LogFile),
+		C.CString(o.FrameworkDir), C.CString(o.MainBundle),
 	}
 	defer freeStrings(strs)
 	opts := C.tb_options{
@@ -46,6 +50,8 @@ func Init(o Options) error {
 		locales_dir:     strs[3],
 		cache_dir:       strs[4],
 		log_file:        strs[5],
+		framework_dir:   strs[6],
+		main_bundle:     strs[7],
 		background:      C.uint32_t(o.Background),
 	}
 	if msg := C.tb_cef_init(&opts); msg != nil {
@@ -262,6 +268,11 @@ func (b *Browser) MouseClick(x, y int, mods uint32, button MouseButton, up bool,
 // MouseWheel scrolls by (dx, dy) pixels at (x, y) in view DIPs.
 func (b *Browser) MouseWheel(x, y int, mods uint32, dx, dy int) {
 	C.tb_browser_mouse_wheel(b.c, C.int(x), C.int(y), C.uint32_t(mods), C.int(dx), C.int(dy))
+}
+
+// Edit runs an edit command, such as copy, on the focused frame.
+func (b *Browser) Edit(cmd EditCommand) {
+	C.tb_browser_edit(b.c, C.tb_edit(cmd))
 }
 
 // Key sends one keyboard event.

@@ -17,6 +17,10 @@ type Options struct {
 	LocalesDir     string
 	CacheDir       string
 	LogFile        string
+	// FrameworkDir is the Chromium Embedded Framework.framework folder
+	// and MainBundle the app bundle around tubeless. macOS only.
+	FrameworkDir string
+	MainBundle   string
 	// Background is the ARGB color a page shows before it paints.
 	Background uint32
 }
@@ -117,3 +121,16 @@ type KeyEvent struct {
 	Character           uint16
 	UnmodifiedCharacter uint16
 }
+
+// EditCommand is an edit action on the page's focused frame.
+type EditCommand int
+
+// Edit commands, matching tb_edit in shim.h.
+const (
+	EditUndo EditCommand = iota
+	EditRedo
+	EditCut
+	EditCopy
+	EditPaste
+	EditSelectAll
+)
