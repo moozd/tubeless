@@ -94,8 +94,14 @@ func buildApplet(dir string) (*bundle, error) {
 		Platform:      api.PlatformBrowser,
 		Target:        api.ES2022,
 		JSX:           api.JSXAutomatic,
-		Metafile:      true,
-		LogLevel:      api.LogLevelSilent,
+		// Packages such as Excalidraw export their CSS only under the
+		// production or development condition.
+		Conditions:   []string{"production"},
+		Metafile:     true,
+		LogLevel:     api.LogLevelSilent,
+		MinifySyntax: true,
+		// React and most npm UI code read NODE_ENV to drop dev checks.
+		Define: map[string]string{"process.env.NODE_ENV": `"production"`},
 		Loader: map[string]api.Loader{
 			".woff": api.LoaderFile, ".woff2": api.LoaderFile,
 			".ttf": api.LoaderFile, ".png": api.LoaderFile,

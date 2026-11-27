@@ -1,4 +1,4 @@
-.PHONY: build build-x11 tubeless tubeless-cef cef-runtime tubeless-config tektest tubeless-icons test clean \
+.PHONY: build build-x11 tubeless tubeless-cef cef-runtime install-applets tubeless-config tektest tubeless-icons test clean \
         install uninstall install-linux uninstall-linux install-darwin uninstall-darwin help \
         run-green run-amber run-config run-icons package-linux package-darwin
 
@@ -42,6 +42,9 @@ CEF_ROOT ?= $(HOME)/.cache/tubeless/cef
 CEF_RUNTIME ?= $(HOME)/.local/share/tubeless/cef
 CEF_API_VERSION = 15800
 CEF_HELPER_SRC = pkg/applet/cef/helper/helper.c
+
+# APPLETS_DIR is where `tubeless exec <name>` finds applets.
+APPLETS_DIR ?= $(HOME)/.config/tubeless/applets
 
 help:
 	@echo "Available targets:"
@@ -116,6 +119,20 @@ cef-runtime:
 	    -Ipkg/applet/cef $(CEF_HELPER_SRC) -L$(CEF_RUNTIME) -lcef \
 	    -Wl,-rpath,$(CEF_RUNTIME) -o $(CEF_RUNTIME)/tubeless-cef-helper
 	@echo "CEF runtime ready in $(CEF_RUNTIME)"
+
+# install-applets copies every applet in applets/ to $(APPLETS_DIR) and
+# installs its npm packages there from its lockfile.
+install-applets:
+	@mkdir -p $(APPLETS_DIR)
+	cp applets/tubeless.d.ts applets/tsconfig.json $(APPLETS_DIR)/
+	@for dir in applets/*/; do \
+	    name=$$(basename $$dir); \
+	    rsync -a --delete --exclude node_modules $$dir $(APPLETS_DIR)/$$name/ || exit 1; \
+	    if [ -f $$dir/package.json ]; then \
+	        (cd $(APPLETS_DIR)/$$name && npm ci --omit=dev --no-audit --no-fund) || exit 1; \
+	    fi; \
+	    echo "Installed applet $$name"; \
+	done
 
 # tubeless-config is the in-terminal settings UI; `tubeless config` runs it
 # directly in the current terminal (see cmd/tubeless/main.go), no window.

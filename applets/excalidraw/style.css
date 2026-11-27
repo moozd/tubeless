@@ -1,0 +1,32 @@
+#root {
+	position: fixed;
+	inset: 0;
+}
+
+.flash {
+	position: fixed;
+	right: 1ch;
+	bottom: 1ch;
+	padding: 0 1ch;
+	background: var(--tb-ansi-8);
+	color: var(--tb-fg);
+	z-index: 10;
+}
+
+/* Excalidraw's own theme variables, set to the terminal's. The doubled
+   class outranks Excalidraw's .excalidraw.theme--dark rules. */
+.excalidraw.excalidraw {
+	--ui-font: var(--tb-font);
+	--island-bg-color: var(--tb-bg);
+	--popup-bg-color: var(--tb-bg);
+	--default-bg-color: var(--tb-bg);
+	--input-bg-color: var(--tb-bg);
+	--color-surface-lowest: var(--tb-bg);
+	--color-surface-low: var(--tb-bg);
+	--color-surface-mid: var(--tb-ansi-0);
+	--color-surface-high: var(--tb-ansi-8);
+	--color-on-surface: var(--tb-fg);
+	--color-primary: var(--tb-ansi-4);
+	--border-radius-lg: 0;
+	--border-radius-md: 0;
+}

@@ -1,0 +1,7 @@
+{
+	"name": "tubeless-applet-pdf",
+	"private": true,
+	"dependencies": {
+		"pdfjs-dist": "6.5.438"
+	}
+}
