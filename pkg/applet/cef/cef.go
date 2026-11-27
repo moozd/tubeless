@@ -13,6 +13,7 @@ package cef
 
 /*
 #cgo CFLAGS: -DCEF_API_VERSION=15800
+#cgo linux CFLAGS: -I${SRCDIR}/../../../third_party/cef
 #cgo LDFLAGS: -ldl
 #include <stdlib.h>
 #include "shim.h"
@@ -21,6 +22,7 @@ import "C"
 
 import (
 	"fmt"
+	"os"
 	"runtime/cgo"
 	"strings"
 	"sync"
@@ -36,6 +38,10 @@ func Available() bool { return true }
 func Init(o Options) error {
 	if err := checkApplication(); err != nil {
 		return err
+	}
+	// The helper processes load the same libcef (see helper.c).
+	if err := os.Setenv("TUBELESS_CEF_LIB", o.LibPath); err != nil {
+		return fmt.Errorf("cef: set TUBELESS_CEF_LIB: %w", err)
 	}
 	strs := []*C.char{
 		C.CString(o.LibPath), C.CString(o.SubprocessPath),

@@ -37,11 +37,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # Node builds the prebuilt applets (make applets-dist).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Install GLFW build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgl1-mesa-dev xorg-dev \
+            libgl1-mesa-dev libegl-dev xorg-dev \
             libwayland-dev libxkbcommon-dev wayland-protocols extra-cmake-modules \
             libharfbuzz-dev
       - name: Build and package

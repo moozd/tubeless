@@ -1,4 +1,4 @@
-.PHONY: build build-x11 tubeless tubeless-cef cef-runtime cef-helper-darwin install-applets tubeless-config tektest tubeless-icons test clean \
+.PHONY: build build-x11 tubeless tubeless-cef cef-helper cef-runtime cef-helper-darwin applets-dist install-applets tubeless-config tektest tubeless-icons test clean \
         install uninstall install-linux uninstall-linux install-darwin uninstall-darwin help \
         run-green run-amber run-config run-icons package-linux package-darwin
 
@@ -37,11 +37,28 @@ APP_BUNDLE = $(APP_DIR)/Tubeless.app
 # Applets run in an embedded Chromium (CEF). CEF_ROOT is an unpacked
 # CEF "minimal" distribution (cef-builds.spotifycdn.com); CEF_RUNTIME is
 # where `make cef-runtime` lays out the files tubeless loads at run
-# time: libcef, its resources and locales, and tubeless-cef-helper.
+# time: libcef with its resources and locales (the same files the first
+# `tubeless exec` downloads), from CEF_ROOT with no download.
 CEF_ROOT ?= $(HOME)/.cache/tubeless/cef
 CEF_RUNTIME ?= $(HOME)/.local/share/tubeless/cef
 CEF_API_VERSION = 15800
 CEF_HELPER_SRC = pkg/applet/cef/helper/helper.c
+
+# CEF_HEADERS are the vendored CEF C API headers (Linux). With them,
+# every Linux build has applet support and needs no CEF download to
+# compile; the CEF runtime downloads on the first `tubeless exec`.
+CEF_HEADERS = third_party/cef
+ifeq ($(UNAME_S),Linux)
+TUBELESS_TAGS = wayland cef
+TUBELESS_X11_TAGS = cef
+TUBELESS_EXTRA = cef-helper
+else
+TUBELESS_TAGS = wayland
+endif
+
+# APPLETS_DIST is where applets-dist writes the prebuilt applets that
+# installs and release packages ship.
+APPLETS_DIST = $(BIN_DIR)/applets
 
 # APPLETS=1 makes install-darwin and package-darwin build tubeless with
 # applet support and put the CEF framework and its helper apps in the
@@ -107,27 +124,34 @@ help:
 
 build: tubeless tubeless-config tektest tubeless-icons
 
-build-x11:
+build-x11: $(TUBELESS_EXTRA)
 	@mkdir -p $(BIN_DIR)
-	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	go build -tags "$(TUBELESS_X11_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME) (X11)"
 
-tubeless:
+tubeless: $(TUBELESS_EXTRA)
 	@mkdir -p $(BIN_DIR)
-	go build -tags wayland -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	go build -tags "$(TUBELESS_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME)"
 
-# tubeless-cef is tubeless with applet support. It loads libcef from
-# $(CEF_RUNTIME) at run time (run `make cef-runtime` first) and still
-# starts, with applets off, when that runtime is missing.
-tubeless-cef:
+# tubeless-cef is tubeless with applet support, compiled against the
+# CEF headers in CEF_ROOT: the macOS APPLETS=1 build uses it. On Linux,
+# `make tubeless` already has applet support.
+tubeless-cef: $(TUBELESS_EXTRA)
 	@mkdir -p $(BIN_DIR)
 	CGO_CFLAGS="-I$(CEF_ROOT)" \
 	go build -tags "wayland cef" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
-	cc -O2 -fno-stack-protector -I$(CEF_ROOT) -DCEF_API_VERSION=$(CEF_API_VERSION) \
-	    -Ipkg/applet/cef $(CEF_HELPER_SRC) -L$(CEF_ROOT)/Release -lcef \
-	    -Wl,-rpath,$(CEF_RUNTIME) -o $(BIN_DIR)/tubeless-cef-helper
-	@echo "Built $(BIN_DIR)/$(BINARY_NAME) and tubeless-cef-helper (with applets)"
+	@echo "Built $(BIN_DIR)/$(BINARY_NAME) (with applets)"
+
+# cef-helper builds the Linux helper CEF starts its sub-processes with.
+# It loads libcef at run time (TUBELESS_CEF_LIB), so it needs only the
+# vendored headers.
+cef-helper:
+	@mkdir -p $(BIN_DIR)
+	cc -O2 -fno-stack-protector -I$(CEF_HEADERS) -DCEF_API_VERSION=$(CEF_API_VERSION) \
+	    -Ipkg/applet/cef $(CEF_HELPER_SRC) pkg/applet/cef/cefload.c -ldl \
+	    -o $(BIN_DIR)/tubeless-cef-helper
+	@echo "Built $(BIN_DIR)/tubeless-cef-helper"
 
 cef-runtime:
 	@test -f $(CEF_ROOT)/Release/libcef.so || \
@@ -135,10 +159,20 @@ cef-runtime:
 	@mkdir -p $(CEF_RUNTIME)
 	ln -sfn $(CEF_ROOT)/Release/* $(CEF_ROOT)/Resources/* $(CEF_RUNTIME)/
 	sed -n 's/^#define CEF_VERSION "\(.*\)"/\1/p' $(CEF_ROOT)/include/cef_version.h > $(CEF_RUNTIME)/VERSION
-	cc -O2 -fno-stack-protector -I$(CEF_ROOT) -DCEF_API_VERSION=$(CEF_API_VERSION) \
-	    -Ipkg/applet/cef $(CEF_HELPER_SRC) -L$(CEF_RUNTIME) -lcef \
-	    -Wl,-rpath,$(CEF_RUNTIME) -o $(CEF_RUNTIME)/tubeless-cef-helper
 	@echo "CEF runtime ready in $(CEF_RUNTIME)"
+
+# applets-dist prebuilds every applet in applets/ into $(APPLETS_DIST)
+# for installs and release packages: npm packages install from the
+# lockfiles, and only each bundle and its static files ship (see
+# applet.Prebuild). Needs node and npm.
+applets-dist:
+	@rm -rf $(APPLETS_DIST)
+	@for dir in applets/*/; do \
+	    if [ -f $$dir/package.json ]; then \
+	        (cd $$dir && npm ci --omit=dev --no-audit --no-fund) || exit 1; \
+	    fi; \
+	done
+	go run ./cmd/tubeless-applet-bundle $(APPLETS_DIST) applets/*/
 
 # cef-helper-darwin builds the helper binary for the macOS bundle. It
 # loads the framework at run time, so it does not link it.
@@ -226,6 +260,13 @@ install-linux: tubeless tubeless-config
 	@mkdir -p $(BIN_INSTALL_DIR) $(DESKTOP_DIR) $(ICON_DIR)
 	cp $(BIN_DIR)/$(BINARY_NAME) $(BIN_INSTALL_DIR)/
 	cp $(BIN_DIR)/tubeless-config $(BIN_INSTALL_DIR)/
+	cp $(BIN_DIR)/tubeless-cef-helper $(BIN_INSTALL_DIR)/
+	@if command -v npm >/dev/null 2>&1; then \
+	    $(MAKE) applets-dist && rm -rf $(PREFIX)/share/tubeless/applets && \
+	    mkdir -p $(PREFIX)/share/tubeless && cp -r $(APPLETS_DIST) $(PREFIX)/share/tubeless/applets; \
+	else \
+	    echo "npm not found: applets not installed (applets-dist needs node)"; \
+	fi
 	cp packaging/icon.svg $(ICON_DIR)/tubeless.svg
 	sed -e 's|__EXEC__|$(BIN_INSTALL_DIR)/$(BINARY_NAME)|' \
 	    -e 's|__ICON__|tubeless|' \
@@ -241,7 +282,8 @@ install-linux: tubeless tubeless-config
 	@echo "Your config at ~/.config/tubeless/config.toml is untouched."
 
 uninstall-linux:
-	rm -f $(BIN_INSTALL_DIR)/$(BINARY_NAME) $(BIN_INSTALL_DIR)/tubeless-config
+	rm -f $(BIN_INSTALL_DIR)/$(BINARY_NAME) $(BIN_INSTALL_DIR)/tubeless-config $(BIN_INSTALL_DIR)/tubeless-cef-helper
+	rm -rf $(PREFIX)/share/tubeless/applets
 	rm -f $(DESKTOP_DIR)/tubeless.desktop
 	rm -f $(ICON_DIR)/tubeless.svg
 	@command -v update-desktop-database >/dev/null 2>&1 && \
@@ -326,15 +368,19 @@ NFPM ?= go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 # GLFW's cgo dependency needs a matching cross-toolchain to cross-compile
 # reliably, so each arch is packaged on its own native runner in CI
 # instead (override GOARCH_TARGET locally if you do have that toolchain).
-package-linux:
-	@mkdir -p $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin
-	GOARCH=$(GOARCH_TARGET) go build -tags wayland -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/$(BINARY_NAME) $(CMD_PATH)
+package-linux: cef-helper applets-dist
+	@mkdir -p $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin $(DIST_DIR)/linux-$(GOARCH_TARGET)/share/tubeless
+	GOARCH=$(GOARCH_TARGET) go build -tags "wayland cef" -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/$(BINARY_NAME) $(CMD_PATH)
 	GOARCH=$(GOARCH_TARGET) go build -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/tubeless-config ./cmd/tubeless-config
-	tar -C $(DIST_DIR)/linux-$(GOARCH_TARGET) -czf $(DIST_DIR)/tubeless-$(VERSION)-linux-$(GOARCH_TARGET).tar.gz bin
+	cp $(BIN_DIR)/tubeless-cef-helper $(DIST_DIR)/linux-$(GOARCH_TARGET)/bin/
+	rm -rf $(DIST_DIR)/linux-$(GOARCH_TARGET)/share/tubeless/applets
+	cp -r $(APPLETS_DIST) $(DIST_DIR)/linux-$(GOARCH_TARGET)/share/tubeless/applets
+	tar -C $(DIST_DIR)/linux-$(GOARCH_TARGET) -czf $(DIST_DIR)/tubeless-$(VERSION)-linux-$(GOARCH_TARGET).tar.gz bin share
 	sed -e 's|__EXEC__|/usr/bin/$(BINARY_NAME)|' -e 's|__ICON__|tubeless|' \
 	    packaging/tubeless.desktop > $(DIST_DIR)/tubeless-$(GOARCH_TARGET).desktop
 	sed -e 's|__ARCH__|$(GOARCH_TARGET)|' -e 's|__VERSION__|$(VERSION)|' \
 	    -e 's|__BIN_DIR__|$(DIST_DIR)/linux-$(GOARCH_TARGET)/bin|' \
+	    -e 's|__APPLETS__|$(DIST_DIR)/linux-$(GOARCH_TARGET)/share/tubeless/applets|' \
 	    -e 's|__DESKTOP__|$(DIST_DIR)/tubeless-$(GOARCH_TARGET).desktop|' \
 	    packaging/nfpm.yaml > $(DIST_DIR)/nfpm-$(GOARCH_TARGET).yaml
 	@for fmt in deb rpm archlinux; do \

@@ -8,18 +8,27 @@
 #include "include/capi/cef_app_capi.h"
 #include "include/cef_api_hash.h"
 
-// On macOS the helper must not link the framework: it loads it at run
-// time from the app bundle, the same way the browser process does.
-#ifdef __APPLE__
+// The helper does not link libcef: it loads it at run time, the same
+// way the browser process does, so it builds from the CEF headers alone.
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "cefload.h"
 
-// frameworkPath is relative to Contents/Frameworks/<helper>.app/
+#ifdef __APPLE__
+// libPath is relative to Contents/Frameworks/<helper>.app/
 // Contents/MacOS, where the helper binary is.
-static const char* frameworkPath =
-	"@executable_path/../../../Chromium Embedded Framework.framework/"
-	"Chromium Embedded Framework";
+static const char* libPath(void) {
+	return "@executable_path/../../../Chromium Embedded Framework.framework/"
+		"Chromium Embedded Framework";
+}
+#else
+// libPath is the libcef the window loaded: the window sets
+// TUBELESS_CEF_LIB before CEF starts, and the helper processes inherit
+// its environment.
+static const char* libPath(void) {
+	return getenv("TUBELESS_CEF_LIB");
+}
 #endif
 
 #include "scheme.h"
@@ -47,13 +56,16 @@ static void CEF_CALLBACK on_register_custom_schemes(cef_app_t* self,
 }
 
 int main(int argc, char* argv[]) {
-#ifdef __APPLE__
-	const char* err = tb_cef_load(frameworkPath);
+	const char* path = libPath();
+	if (path == NULL) {
+		fprintf(stderr, "tubeless helper: TUBELESS_CEF_LIB is not set\n");
+		return 1;
+	}
+	const char* err = tb_cef_load(path);
 	if (err != NULL) {
 		fprintf(stderr, "tubeless helper: %s\n", err);
 		return 1;
 	}
-#endif
 	cef_api_hash(CEF_API_VERSION, 0);
 	cef_app_t app;
 	memset(&app, 0, sizeof(app));

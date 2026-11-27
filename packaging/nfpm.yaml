@@ -19,6 +19,11 @@ contents:
     dst: /usr/bin/tubeless
   - src: __BIN_DIR__/tubeless-config
     dst: /usr/bin/tubeless-config
+  - src: __BIN_DIR__/tubeless-cef-helper
+    dst: /usr/bin/tubeless-cef-helper
+  - src: __APPLETS__
+    dst: /usr/share/tubeless/applets
+    type: tree
   - src: packaging/icon.svg
     dst: /usr/share/icons/hicolor/scalable/apps/tubeless.svg
   - src: __DESKTOP__
