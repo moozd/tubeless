@@ -88,15 +88,18 @@ func keyboardModeOf(scr *screen.Screen) keyboardMode {
 	return keyboardMode{modifyOtherKeys: scr.ModifyOtherKeys, kittyFlags: scr.KittyFlags()}
 }
 
-func wireInput(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], sel *render.Selection, fontZoom chan<- int, fs *fullscreenState) {
+func wireInput(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], sel *render.Selection, fontZoom chan<- int, fs *fullscreenState, applets *appletHost) {
 	win.SetCharModsCallback(func(_ *glfw.Window, r rune, mods glfw.ModifierKey) {
 		win.SetInputMode(glfw.CursorMode, glfw.CursorHidden)
+		if applets.Char(r, mods) {
+			return
+		}
 		handleChar(sess, r, mods, keyboardModeOf(shared.Load()))
 	})
 	win.SetDropCallback(func(_ *glfw.Window, paths []string) {
 		pasteDroppedFiles(sess, shared, paths)
 	})
-	win.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, _ int, action glfw.Action, mods glfw.ModifierKey) {
+	win.SetKeyCallback(func(_ *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
 		if action == glfw.Press || action == glfw.Repeat {
 			win.SetInputMode(glfw.CursorMode, glfw.CursorHidden)
 		}
@@ -107,19 +110,26 @@ func wireInput(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 				toggleFullscreen(win, fs)
 				return
 			}
+			if d, ok := fontZoomDelta(key, mods); ok {
+				select {
+				case fontZoom <- d:
+				default:
+				}
+				return
+			}
+		}
+		// A focused applet takes every other key, except the tmux
+		// prefix and the key after it (see appletHost.Key).
+		if applets.Key(key, scancode, action, mods) {
+			return
+		}
+		if action == glfw.Press {
 			if isPasteShortcut(key, mods) {
 				pasteFromClipboard(win, sess, shared)
 				return
 			}
 			if isCopyShortcut(key, mods) {
 				copySelectionToClipboard(win, shared, *sel)
-				return
-			}
-			if d, ok := fontZoomDelta(key, mods); ok {
-				select {
-				case fontZoom <- d:
-				default:
-				}
 				return
 			}
 		}

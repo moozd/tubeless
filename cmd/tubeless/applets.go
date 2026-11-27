@@ -58,6 +58,10 @@ type openApplet struct {
 	w, h       int
 	scale      float32
 	isClosing  bool
+	// isPaneFocused is tmux's view (focus reports from exec); hasFocus
+	// is whether the page has the keyboard (see syncFocus).
+	isPaneFocused bool
+	hasFocus      bool
 }
 
 // appletHost owns CEF for this window. It opens pages for `tubeless
@@ -69,6 +73,7 @@ type appletHost struct {
 	requests   <-chan []byte
 	applets    map[int]*openApplet
 	lastR      *render.Renderer
+	input      appletInput
 }
 
 // cefRuntimeDir is where `make cef-runtime` puts libcef, its resources
@@ -132,6 +137,8 @@ func newAppletHost(background uint32, requests <-chan []byte) (*appletHost, erro
 	log.Printf("applets: cef started from %s", dir)
 	h := &appletHost{cacheDir: cache, background: background, requests: requests}
 	h.applets = make(map[int]*openApplet)
+	h.input.prefix = readTmuxPrefix()
+	h.input.scanOffset = scancodeOffset()
 	return h, nil
 }
 
@@ -162,6 +169,7 @@ func (h *appletHost) Frame(r *render.Renderer, scr *screen.Screen, cs *cellSize)
 		a.resize(cs)
 		dirty = a.upload(r, isNewRenderer) || dirty
 	}
+	h.syncFocus()
 	dirty = h.dropClosed(r) || dirty
 	r.SetAppletSpans(appletSpans(scr, h.sizes()))
 	return dirty
@@ -280,6 +288,8 @@ func (a *openApplet) handleEvent(m applet.Message) {
 	switch m.Type {
 	case applet.MsgResize:
 		a.cols, a.rows = m.Cols, m.Rows
+	case applet.MsgFocus:
+		a.isPaneFocused = m.Focused
 	case applet.MsgClose:
 		a.close()
 	}
@@ -327,6 +337,7 @@ func (h *appletHost) dropClosed(r *render.Renderer) bool {
 		a.conn.Close()
 		r.DropApplet(id)
 		delete(h.applets, id)
+		h.input.forget(a)
 		dropped = true
 	}
 	return dropped

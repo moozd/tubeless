@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-gl/glfw/v3.4/glfw"
 
+	"github.com/moozd/tubeless/pkg/applet/cef"
 	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
@@ -52,10 +53,21 @@ type mouseState struct {
 // of local selection/scroll vs. VT reporting applies is decided per-event
 // from the latest published Screen's MouseMode: an app that wants mouse
 // events gets them instead of the terminal handling clicks/wheel itself.
-func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection) {
+func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection, applets *appletHost) {
 	ms := &mouseState{sel: sel}
+	pointer := func(xpos, ypos float64) (appletPoint, bool) {
+		if applets == nil {
+			return appletPoint{}, false
+		}
+		w, h := win.FramebufferPixelSize()
+		return applets.pointAt(float32(xpos)*cs.dpiX, float32(ypos)*cs.dpiY, w, h, cs, cfgRef.Load().CRT.AspectRatio, shared.Load())
+	}
 
-	win.SetScrollCallback(func(_ *glfw.Window, _, yoff float64) {
+	win.SetScrollCallback(func(_ *glfw.Window, xoff, yoff float64) {
+		pt, isOver := pointer(win.GetCursorPos())
+		if applets.PointerWheel(pt, isOver, xoff, yoff, appletMods(win)) {
+			return
+		}
 		scr := shared.Load()
 		if scr.MouseMode != screen.MouseOff {
 			btn := screen.MouseWheelDown
@@ -83,6 +95,11 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 			return
 		}
 		scr := shared.Load()
+		pt, isOver := pointer(win.GetCursorPos())
+		if applets.PointerButton(pt, isOver, appletButton(button), action == glfw.Release, appletMods(win)) {
+			forwardAppletClick(win, sess, scr, cs, cfgRef.Load().CRT.AspectRatio, button, action)
+			return
+		}
 		x, y := cellAt(win, cs, cfgRef.Load().CRT.AspectRatio, scr.Cols, scr.Rows)
 		x, y = clampCell(scr, x, y)
 
@@ -132,6 +149,10 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 		// dedup below, since a still mouse re-entering the same cell
 		// shouldn't need to move first to reappear.
 		win.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
+		pt, isOver := pointer(xpos, ypos)
+		if applets.PointerMove(pt, isOver, appletMods(win)) {
+			return
+		}
 		scr := shared.Load()
 		x, y := cellFromPixels(win, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio, scr.Cols, scr.Rows)
 		x, y = clampCell(scr, x, y)
@@ -305,4 +326,58 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// appletButton maps a GLFW mouse button to CEF's.
+func appletButton(b glfw.MouseButton) cef.MouseButton {
+	switch b {
+	case glfw.MouseButtonMiddle:
+		return cef.MouseMiddle
+	case glfw.MouseButtonRight:
+		return cef.MouseRight
+	}
+	return cef.MouseLeft
+}
+
+// appletMods is the CEF modifier and held-button state for a pointer
+// event.
+func appletMods(win *render.Window) uint32 {
+	shift, alt, ctrl := currentMods(win)
+	var flags uint32
+	if shift {
+		flags |= cef.FlagShift
+	}
+	if alt {
+		flags |= cef.FlagAlt
+	}
+	if ctrl {
+		flags |= cef.FlagControl
+	}
+	if win.GetMouseButton(glfw.MouseButtonLeft) == glfw.Press {
+		flags |= cef.FlagLeftButton
+	}
+	if win.GetMouseButton(glfw.MouseButtonMiddle) == glfw.Press {
+		flags |= cef.FlagMidButton
+	}
+	if win.GetMouseButton(glfw.MouseButtonRight) == glfw.Press {
+		flags |= cef.FlagRightButton
+	}
+	return flags
+}
+
+// forwardAppletClick also reports a click on an applet to the terminal
+// when tmux asked for mouse reports, so tmux selects the applet's pane
+// and keyboard focus follows the click.
+func forwardAppletClick(win *render.Window, sess *sessionRef, scr *screen.Screen, cs *cellSize, ar config.AspectRatio, button glfw.MouseButton, action glfw.Action) {
+	if scr.MouseMode == screen.MouseOff {
+		return
+	}
+	x, y := cellAt(win, cs, ar, scr.Cols, scr.Rows)
+	x, y = clampCell(scr, x, y)
+	shift, alt, ctrl := currentMods(win)
+	kind := screen.MousePress
+	if action == glfw.Release {
+		kind = screen.MouseRelease
+	}
+	sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, sgrButton(button), kind, x, y, shift, alt, ctrl))
 }

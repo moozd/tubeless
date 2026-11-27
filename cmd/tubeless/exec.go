@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -195,6 +196,8 @@ type execResult struct {
 
 func (s *execSession) handleMessage(m applet.Message) (execResult, bool) {
 	switch m.Type {
+	case applet.MsgReady:
+		s.send(applet.Message{Type: applet.MsgFocus, Focused: isPaneActive()})
 	case applet.MsgExit:
 		return execResult{code: m.Code, output: m.Output}, true
 	case applet.MsgError:
@@ -264,4 +267,20 @@ func pumpExecStdin() <-chan []byte {
 		}
 	}()
 	return out
+}
+
+// isPaneActive asks tmux whether this pane is the one with focus, for
+// the focus state before tmux sends its first focus report. Outside
+// tmux the pane is the full window, so it has focus.
+func isPaneActive() bool {
+	pane := os.Getenv("TMUX_PANE")
+	if os.Getenv("TMUX") == "" || pane == "" {
+		return true
+	}
+	out, err := exec.Command("tmux", "display", "-p", "-t", pane, "#{&&:#{pane_active},#{window_active}}").Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tubeless exec: ask tmux for focus:", err)
+		return true
+	}
+	return strings.TrimSpace(string(out)) == "1"
 }

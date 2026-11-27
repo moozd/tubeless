@@ -307,23 +307,25 @@ func main() {
 	// already-corrected cs, does that reconciliation immediately instead.
 	pushResize(win, resizeCh, cs, &cfgRef)
 
+	applets := startAppletHost(cfg.Colors.DefaultBg, appletReqs)
+	defer applets.Shutdown()
+
 	sel := &render.Selection{}
 	fontZoom := make(chan int, 16)
 	fsState := &fullscreenState{}
-	wireInput(win, ref, &shared, sel, fontZoom, fsState)
+	wireInput(win, ref, &shared, sel, fontZoom, fsState, applets)
 	scroll := &scrollState{}
-	wireMouse(win, ref, &shared, scroll, cs, &cfgRef, sel)
+	wireMouse(win, ref, &shared, scroll, cs, &cfgRef, sel, applets)
 
 	// focused tracks real window focus, read/written only from this
 	// locked OS thread (see runLoop's visibility gate) — no
 	// synchronization needed, same as cs above.
 	focused := win.GetAttrib(glfw.Focused) == glfw.True
+	applets.SetWindowFocused(focused)
 	win.SetFocusCallback(func(_ *glfw.Window, isFocused bool) {
 		focused = isFocused
+		applets.SetWindowFocused(isFocused)
 	})
-
-	applets := startAppletHost(cfg.Colors.DefaultBg, appletReqs)
-	defer applets.Shutdown()
 
 	load := &fontLoad{}
 	req, res := startRebuilder(maxTextureSize, load)
