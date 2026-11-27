@@ -1,0 +1,3 @@
+CEF 158.0.6+g23f1736+chromium-158.0.8127.89 C API headers, from the cef_binary_158.0.6+g23f1736+chromium-158.0.8127.89_linux64_minimal package
+(cef-builds.spotifycdn.com). Only include/ is kept. License: LICENSE.txt.
+Update together with applet.CEFVersion and CEF_API_VERSION.
