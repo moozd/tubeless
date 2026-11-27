@@ -1,0 +1,6 @@
+title = "Markdown"
+
+[permissions]
+# dirs: images and linked notes next to the file.
+read = "dirs"
+write = "none"

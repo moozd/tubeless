@@ -1,0 +1,10 @@
+{
+	"name": "tubeless-applet-markdown",
+	"private": true,
+	"dependencies": {
+		"dompurify": "3.5.0",
+		"highlight.js": "11.12.0",
+		"marked": "18.3.0",
+		"marked-highlight": "2.2.4"
+	}
+}
