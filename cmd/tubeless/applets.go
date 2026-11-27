@@ -123,6 +123,11 @@ func (h *appletHost) startCEF() error {
 	if h.isStarted || h.startErr != nil {
 		return h.startErr
 	}
+	if !isCEFRuntimeReady() {
+		// Not kept as startErr: `tubeless exec` installs the runtime,
+		// and the next request starts CEF.
+		return errors.New("the applet runtime is not installed")
+	}
 	h.startErr = h.initCEF()
 	if h.startErr != nil {
 		log.Printf("applets disabled: %v", h.startErr)

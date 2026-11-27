@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -71,4 +72,17 @@ func cefOptions() (cef.Options, error) {
 		FrameworkDir:   framework,
 		MainBundle:     filepath.Dir(filepath.Dir(dir)),
 	}, nil
+}
+
+// isCEFRuntimeReady is always true on macOS: the CEF framework comes
+// with the app bundle (make install-darwin APPLETS=1), and a missing
+// framework shows as a load error.
+func isCEFRuntimeReady() bool {
+	return true
+}
+
+// ensureCEFRuntime does nothing on macOS: there is no download, the
+// bundle holds the framework.
+func ensureCEFRuntime(io.Writer) error {
+	return nil
 }

@@ -220,10 +220,15 @@ tubeless exec demo                        # WebGL test page
 The default build has no applets. To use them on Linux:
 
 ```sh
-make cef-runtime       # links a CEF build (CEF_ROOT) into ~/.local/share/tubeless/cef
-make tubeless-cef      # tubeless with applet support
+make tubeless-cef      # tubeless and tubeless-cef-helper, with applet support
 make install-applets   # copies applets/ to ~/.config/tubeless/applets
 ```
+
+Install `tubeless-cef-helper` next to `tubeless`. The first `tubeless
+exec` on a Linux machine downloads the CEF runtime (about 340 MB, 1.5 GB
+unpacked) into `~/.local/share/tubeless/cef`, and checks its SHA-1.
+Subsequent runs start immediately. `make cef-runtime` makes the same
+runtime from `CEF_ROOT`, with no download.
 
 On macOS, CEF loads only from the app bundle:
 
@@ -233,9 +238,10 @@ make install-applets
 ```
 
 `CEF_ROOT` is an unpacked CEF "minimal" package from
-cef-builds.spotifycdn.com (tested with 158; on macOS, the
-`macosarm64` or `macosx64` package). Without the runtime, tubeless
-starts with applets off. [docs/applets-macos.md](docs/applets-macos.md)
+cef-builds.spotifycdn.com (version 158; on macOS, the `macosarm64` or
+`macosx64` package). The builds use its headers. Without the runtime,
+tubeless starts with applets off. A window starts CEF only when its
+first applet opens. [docs/applets-macos.md](docs/applets-macos.md)
 tells how applets work on macOS and gives the test list.
 
 In tmux, set `allow-passthrough on`, `focus-events on` and

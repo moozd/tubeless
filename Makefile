@@ -124,13 +124,17 @@ tubeless-cef:
 	@mkdir -p $(BIN_DIR)
 	CGO_CFLAGS="-I$(CEF_ROOT)" \
 	go build -tags "wayland cef" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
-	@echo "Built $(BIN_DIR)/$(BINARY_NAME) (with applets)"
+	cc -O2 -fno-stack-protector -I$(CEF_ROOT) -DCEF_API_VERSION=$(CEF_API_VERSION) \
+	    -Ipkg/applet/cef $(CEF_HELPER_SRC) -L$(CEF_ROOT)/Release -lcef \
+	    -Wl,-rpath,$(CEF_RUNTIME) -o $(BIN_DIR)/tubeless-cef-helper
+	@echo "Built $(BIN_DIR)/$(BINARY_NAME) and tubeless-cef-helper (with applets)"
 
 cef-runtime:
 	@test -f $(CEF_ROOT)/Release/libcef.so || \
 	    { echo "CEF_ROOT=$(CEF_ROOT) has no Release/libcef.so"; exit 1; }
 	@mkdir -p $(CEF_RUNTIME)
 	ln -sfn $(CEF_ROOT)/Release/* $(CEF_ROOT)/Resources/* $(CEF_RUNTIME)/
+	sed -n 's/^#define CEF_VERSION "\(.*\)"/\1/p' $(CEF_ROOT)/include/cef_version.h > $(CEF_RUNTIME)/VERSION
 	cc -O2 -fno-stack-protector -I$(CEF_ROOT) -DCEF_API_VERSION=$(CEF_API_VERSION) \
 	    -Ipkg/applet/cef $(CEF_HELPER_SRC) -L$(CEF_RUNTIME) -lcef \
 	    -Wl,-rpath,$(CEF_RUNTIME) -o $(CEF_RUNTIME)/tubeless-cef-helper

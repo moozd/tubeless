@@ -64,6 +64,9 @@ type execSession struct {
 }
 
 func execApplet(name string, args []string) (int, string, error) {
+	if err := ensureCEFRuntime(os.Stderr); err != nil {
+		return 1, "", fmt.Errorf("install the applet runtime: %w", err)
+	}
 	fd := int(os.Stdin.Fd())
 	cols, rows, err := term.GetSize(fd)
 	if err != nil {
