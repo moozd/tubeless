@@ -42,7 +42,11 @@ const (
 func runExec(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: tubeless exec <applet> [args...]")
+		fmt.Fprintln(os.Stderr, "       tubeless exec --list")
 		os.Exit(2)
+	}
+	if args[0] == "--list" || args[0] == "-l" {
+		listAndExit()
 	}
 	code, output, err := execApplet(args[0], args[1:])
 	if err != nil {
@@ -52,6 +56,15 @@ func runExec(args []string) {
 		fmt.Print(output)
 	}
 	os.Exit(code)
+}
+
+// listAndExit prints the applets for `tubeless exec --list`.
+func listAndExit() {
+	if err := runExecList(os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, "tubeless exec:", err)
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
 
 // execSession is one running `tubeless exec`.

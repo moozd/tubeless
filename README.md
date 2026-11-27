@@ -254,6 +254,7 @@ while tmux gives it focus. Your tmux prefix continues to go to tmux.
 
 An applet is a folder in `~/.config/tubeless/applets/<name>/`. An
 applet there replaces the installed applet with the same name.
+`tubeless exec --list` shows every applet, with its title and source.
 
 ```
 main.ts          # or main.tsx, main.js, main.jsx
