@@ -217,7 +217,8 @@ tubeless exec excalidraw sketch.excalidraw # drawing editor
 tubeless exec demo                        # WebGL test page
 ```
 
-Linux only at this time. The default build has no applets. To use
+Linux only at this time; [docs/applets-macos.md](docs/applets-macos.md)
+lists the work for macOS. The default build has no applets. To use
 them:
 
 ```sh
