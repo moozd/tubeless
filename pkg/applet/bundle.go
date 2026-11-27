@@ -42,6 +42,9 @@ func newBundler() *bundler {
 // file returns output file urlPath (such as "/main.js") of the applet
 // in dir, building it first if needed.
 func (b *bundler) file(dir, urlPath string) ([]byte, bool, error) {
+	if isPrebuilt(dir) {
+		return prebuiltFile(dir, urlPath)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	cached := b.cache[dir]
@@ -77,6 +80,10 @@ func findEntry(dir string) (string, error) {
 }
 
 func buildApplet(dir string) (*bundle, error) {
+	dir, err := filepath.Abs(dir) // esbuild wants an absolute working dir
+	if err != nil {
+		return nil, fmt.Errorf("applet folder: %w", err)
+	}
 	entry, err := findEntry(dir)
 	if err != nil {
 		return nil, err

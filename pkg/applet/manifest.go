@@ -28,6 +28,11 @@ const (
 type Manifest struct {
 	Title       string      `toml:"title"`
 	Permissions Permissions `toml:"permissions"`
+	// Static lists files and folders, relative to the applet folder,
+	// that the page loads at run time outside its bundle (a worker, a
+	// font folder). Prebuild copies them; nothing else of node_modules
+	// ships.
+	Static []string `toml:"static"`
 }
 
 // Permissions limit what the bridge does for an applet.

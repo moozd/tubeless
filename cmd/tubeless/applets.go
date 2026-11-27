@@ -361,18 +361,52 @@ func appletInstance(req applet.Request) (applet.Instance, error) {
 	if req.Name == "" || req.Name != filepath.Base(req.Name) {
 		return applet.Instance{}, fmt.Errorf("invalid applet name %q", req.Name)
 	}
-	dir := filepath.Join(appletsDir(), req.Name)
-	if _, err := os.Stat(dir); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return applet.Instance{}, fmt.Errorf("no applet %q (looked for %s)", req.Name, dir)
-		}
-		return applet.Instance{}, fmt.Errorf("applet %q: %w", req.Name, err)
+	dir, err := findApplet(req.Name)
+	if err != nil {
+		return applet.Instance{}, err
 	}
 	m, err := applet.LoadManifest(dir)
 	if err != nil {
 		return applet.Instance{}, err
 	}
 	return applet.Instance{ID: req.ID, Name: req.Name, Dir: dir, Args: req.Args, Cwd: req.Cwd, Manifest: m}, nil
+}
+
+// findApplet looks for an applet in the user's folder first, then in
+// the ones installed with tubeless.
+func findApplet(name string) (string, error) {
+	dirs := appletSearchDirs()
+	for _, root := range dirs {
+		dir := filepath.Join(root, name)
+		_, err := os.Stat(dir)
+		if err == nil {
+			return dir, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("applet %q: %w", name, err)
+		}
+	}
+	return "", fmt.Errorf("no applet %q (looked in %s)", name, strings.Join(dirs, ", "))
+}
+
+// appletSearchDirs are the applet folders, in lookup order: the user's
+// own, then the prebuilt applets a package installs next to tubeless
+// (../share/tubeless/applets on Linux, ../Resources/applets in the
+// macOS app bundle).
+func appletSearchDirs() []string {
+	dirs := []string{appletsDir()}
+	exe, err := os.Executable()
+	if err != nil {
+		log.Printf("applets: find tubeless binary: %v", err)
+		return dirs
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	bin := filepath.Dir(exe)
+	return append(dirs,
+		filepath.Join(bin, "..", "share", "tubeless", "applets"),
+		filepath.Join(bin, "..", "Resources", "applets"))
 }
 
 // bind lets a page call its applet's API once CEF has created it.
