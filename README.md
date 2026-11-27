@@ -212,6 +212,7 @@ on the pane's cells, before the CRT and bloom effects.
 ```sh
 tubeless exec pdf report.pdf --page 3     # PDF reader, in the terminal colors
 tubeless exec image *.png                 # image viewer
+tubeless exec markdown notes.md           # markdown viewer, reloads on save
 tubeless exec excalidraw sketch.excalidraw # drawing editor
 tubeless exec demo                        # WebGL test page
 ```
@@ -259,9 +260,13 @@ the files in its args and writes nothing:
 
 ```toml
 [permissions]
-read = "args"   # none, args or all
-write = "args"  # none, args or all
+read = "args"   # none, args, dirs or all
+write = "args"  # none, args, dirs or all
 ```
+
+`dirs` allows the files in the folders of the args and below them.
+The markdown applet uses it to show the images and open the notes next
+to a file.
 
 Page console output goes into the session log file.
 
