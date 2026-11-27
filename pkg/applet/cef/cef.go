@@ -22,6 +22,7 @@ import "C"
 import (
 	"fmt"
 	"runtime/cgo"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,7 @@ func Init(o Options) error {
 		C.CString(o.ResourcesDir), C.CString(o.LocalesDir),
 		C.CString(o.CacheDir), C.CString(o.LogFile),
 		C.CString(o.FrameworkDir), C.CString(o.MainBundle),
+		C.CString(strings.Join(o.Flags, " ")),
 	}
 	defer freeStrings(strs)
 	opts := C.tb_options{
@@ -52,6 +54,7 @@ func Init(o Options) error {
 		log_file:        strs[5],
 		framework_dir:   strs[6],
 		main_bundle:     strs[7],
+		flags:           strs[8],
 		background:      C.uint32_t(o.Background),
 	}
 	if msg := C.tb_cef_init(&opts); msg != nil {
@@ -116,6 +119,8 @@ type Browser struct {
 	frame  Frame
 	fresh  bool
 	closed bool
+
+	onGPU func(*GPUFrame)
 }
 
 var schemeHandler atomic.Pointer[func(SchemeRequest) SchemeResponse]
@@ -156,12 +161,15 @@ func (b *Browser) ExecJS(code string) {
 
 // NewBrowser opens url in a w x h pixel view at the given device scale.
 // fps caps how often the page paints.
-func NewBrowser(url string, w, h int, scale float32, background uint32, fps int) (*Browser, error) {
-	b := &Browser{}
+// With onGPU set, the page paints into GPU buffers instead of a pixel
+// buffer, and onGPU receives each frame during Pump (Linux only; see
+// GPUFrame). TakeFrame then has nothing to give.
+func NewBrowser(url string, w, h int, scale float32, background uint32, fps int, onGPU func(*GPUFrame)) (*Browser, error) {
+	b := &Browser{onGPU: onGPU}
 	b.handle = cgo.NewHandle(b)
 	curl := C.CString(url)
 	defer C.free(unsafe.Pointer(curl))
-	b.c = C.tb_browser_create(C.uintptr_t(b.handle), curl, C.int(w), C.int(h), C.float(scale), C.uint32_t(background), C.int(fps))
+	b.c = C.tb_browser_create(C.uintptr_t(b.handle), curl, C.int(w), C.int(h), C.float(scale), C.uint32_t(background), C.int(fps), cbool(onGPU != nil))
 	if b.c == nil {
 		b.handle.Delete()
 		return nil, fmt.Errorf("cef: create browser for %s", url)
@@ -200,6 +208,28 @@ func goOnClosed(h C.uintptr_t) {
 	b.closed = true
 	b.mu.Unlock()
 }
+
+//export goOnGPUPaint
+func goOnGPUPaint(h C.uintptr_t, f *C.tb_gpu_frame) {
+	b := cgo.Handle(h).Value().(*Browser)
+	if b.onGPU == nil {
+		return
+	}
+	frame := GPUFrame{
+		W: int(f.width), H: int(f.height),
+		Format:   ColorType(f.format),
+		Modifier: uint64(f.modifier),
+	}
+	for i := 0; i < int(f.plane_count); i++ {
+		frame.Planes = append(frame.Planes, GPUPlane{
+			FD: int(f.fds[i]), Stride: uint32(f.strides[i]), Offset: uint64(f.offsets[i]),
+		})
+	}
+	b.onGPU(&frame)
+}
+
+// Invalidate makes the page paint its full view again.
+func (b *Browser) Invalidate() { C.tb_browser_invalidate(b.c) }
 
 //export goOnPaint
 func goOnPaint(h C.uintptr_t, rects *C.int, n C.int, buf unsafe.Pointer, w, ht C.int) {

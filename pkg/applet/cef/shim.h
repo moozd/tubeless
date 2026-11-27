@@ -10,6 +10,8 @@
 
 typedef struct tb_options {
 	const char* lib_path;
+	// flags are extra Chromium switches, space-separated.
+	const char* flags;
 	const char* subprocess_path;
 	const char* resources_dir;
 	const char* locales_dir;
@@ -43,6 +45,19 @@ typedef enum tb_edit {
 	TB_EDIT_SELECT_ALL,
 } tb_edit;
 
+// tb_gpu_frame is one page frame as a GPU buffer (Linux dmabuf). The
+// file descriptors stay valid only during goOnGPUPaint.
+typedef struct tb_gpu_frame {
+	int width;
+	int height;
+	int format;
+	uint64_t modifier;
+	int plane_count;
+	int fds[4];
+	uint32_t strides[4];
+	uint64_t offsets[4];
+} tb_gpu_frame;
+
 typedef struct tb_key {
 	int type;
 	uint32_t modifiers;
@@ -57,7 +72,8 @@ void tb_cef_do_work(void);
 void tb_cef_shutdown(void);
 
 tb_browser* tb_browser_create(uintptr_t handle, const char* url,
-	int width, int height, float scale, uint32_t background, int fps);
+	int width, int height, float scale, uint32_t background, int fps,
+	int gpu);
 void tb_browser_resize(tb_browser* b, int width, int height, float scale);
 void tb_browser_close(tb_browser* b);
 void tb_browser_free(tb_browser* b);
@@ -70,6 +86,7 @@ void tb_browser_mouse_wheel(tb_browser* b, int x, int y, uint32_t mods,
 	int dx, int dy);
 void tb_browser_key(tb_browser* b, const tb_key* key);
 void tb_browser_exec_js(tb_browser* b, const char* code);
+void tb_browser_invalidate(tb_browser* b);
 void tb_browser_edit(tb_browser* b, tb_edit cmd);
 
 #endif

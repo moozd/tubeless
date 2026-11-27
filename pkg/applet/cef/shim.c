@@ -15,6 +15,7 @@
 #include "include/capi/cef_browser_capi.h"
 #include "include/capi/cef_browser_process_handler_capi.h"
 #include "include/capi/cef_client_capi.h"
+#include "include/capi/cef_command_line_capi.h"
 #include "include/capi/cef_display_handler_capi.h"
 #include "include/capi/cef_life_span_handler_capi.h"
 #include "include/capi/cef_render_handler_capi.h"
@@ -86,11 +87,67 @@ static void CEF_CALLBACK on_register_custom_schemes(cef_app_t* self,
 	tb_register_scheme(registrar);
 }
 
+static void release_command_line(cef_command_line_t* line) {
+	line->base.release(&line->base);
+}
+
+// append_flag adds one "--name" or "--name=value" switch.
+static void append_flag(cef_command_line_t* line, const char* flag) {
+	while (*flag == '-') {
+		flag++;
+	}
+	if (*flag == '\0') {
+		return;
+	}
+	const char* eq = strchr(flag, '=');
+	size_t len = eq ? (size_t)(eq - flag) : strlen(flag);
+	cef_string_t name = {0}, value = {0};
+	cef_string_utf8_to_utf16(flag, len, &name);
+	if (eq) {
+		set_str(&value, eq + 1);
+		line->append_switch_with_value(line, &name, &value);
+	} else {
+		line->append_switch(line, &name);
+	}
+	cef_string_clear(&name);
+	cef_string_clear(&value);
+}
+
+// extra_flags are the switches tb_cef_init was given, for
+// on_before_command_line_processing.
+static char* extra_flags;
+
+static void append_flags(cef_command_line_t* line, const char* list) {
+	if (list == NULL) {
+		return;
+	}
+	char* flags = strdup(list);
+	for (char* tok = strtok(flags, " "); tok != NULL; tok = strtok(NULL, " ")) {
+		append_flag(line, tok);
+	}
+	free(flags);
+}
+
+// on_before_command_line_processing adds switches to the browser
+// process: the ones tubeless chose (tb_options.flags), then the ones in
+// TUBELESS_CEF_FLAGS (space-separated, "--name" or "--name=value"), a
+// knob to debug GPU and platform problems.
+static void CEF_CALLBACK on_before_command_line_processing(cef_app_t* self,
+		const cef_string_t* process_type, cef_command_line_t* line) {
+	(void)self;
+	if (process_type == NULL || process_type->length == 0) {
+		append_flags(line, extra_flags);
+		append_flags(line, getenv("TUBELESS_CEF_FLAGS"));
+	}
+	release_command_line(line);
+}
+
 static void init_app(void) {
 	memset(&app, 0, sizeof(app));
 	init_static_base(&app.base, sizeof(app));
 	app.get_browser_process_handler = get_browser_process_handler;
 	app.on_register_custom_schemes = on_register_custom_schemes;
+	app.on_before_command_line_processing = on_before_command_line_processing;
 
 	memset(&process_handler, 0, sizeof(process_handler));
 	init_static_base(&process_handler.base, sizeof(process_handler));
@@ -282,6 +339,8 @@ static void register_scheme_factory(void) {
 
 // tb_cef_init returns NULL when CEF started, or why it did not.
 const char* tb_cef_init(const tb_options* opts) {
+	free(extra_flags);
+	extra_flags = opts->flags ? strdup(opts->flags) : NULL;
 	const char* err = tb_cef_load(opts->lib_path);
 	if (err != NULL) {
 		return err;
@@ -509,8 +568,37 @@ static void CEF_CALLBACK on_before_close(cef_life_span_handler_t* self,
 	goOnClosed(b->handle);
 }
 
+#if defined(__linux__)
+// on_accelerated_paint hands a frame over as dmabuf planes: the GPU
+// buffer itself, with no copy through the CPU.
+static void CEF_CALLBACK on_accelerated_paint(cef_render_handler_t* self,
+		cef_browser_t* browser, cef_paint_element_type_t type,
+		size_t rect_count, cef_rect_t const* rects,
+		const cef_accelerated_paint_info_t* info) {
+	(void)rect_count;
+	(void)rects;
+	tb_browser* b = container_of(self, tb_browser, render);
+	if (type == PET_VIEW && info->plane_count > 0) {
+		tb_gpu_frame f;
+		memset(&f, 0, sizeof(f));
+		f.width = info->extra.coded_size.width;
+		f.height = info->extra.coded_size.height;
+		f.format = (int)info->format;
+		f.modifier = info->modifier;
+		f.plane_count = info->plane_count < 4 ? info->plane_count : 4;
+		for (int i = 0; i < f.plane_count; i++) {
+			f.fds[i] = info->planes[i].fd;
+			f.strides[i] = info->planes[i].stride;
+			f.offsets[i] = info->planes[i].offset;
+		}
+		goOnGPUPaint(b->handle, &f);
+	}
+	release_browser_arg(browser);
+}
+#endif
+
 tb_browser* tb_browser_create(uintptr_t handle, const char* url,
-		int width, int height, float scale, uint32_t background, int fps) {
+		int width, int height, float scale, uint32_t background, int fps, int gpu) {
 	tb_browser* b = calloc(1, sizeof(tb_browser));
 	if (b == NULL) {
 		return NULL;
@@ -542,6 +630,14 @@ tb_browser* tb_browser_create(uintptr_t handle, const char* url,
 	memset(&wi, 0, sizeof(wi));
 	wi.size = sizeof(wi);
 	wi.windowless_rendering_enabled = 1;
+#if defined(__linux__)
+	if (gpu) {
+		wi.shared_texture_enabled = 1;
+		b->render.on_accelerated_paint = on_accelerated_paint;
+	}
+#else
+	(void)gpu;
+#endif
 
 	cef_browser_settings_t bs;
 	memset(&bs, 0, sizeof(bs));
@@ -719,4 +815,15 @@ void tb_browser_edit(tb_browser* b, tb_edit cmd) {
 	}
 	run_edit(frame, cmd);
 	frame->base.release(&frame->base);
+}
+
+// tb_browser_invalidate makes the page paint its full view again, for
+// a new texture that has none of the old frames.
+void tb_browser_invalidate(tb_browser* b) {
+	cef_browser_host_t* host = get_host(b);
+	if (host == NULL) {
+		return;
+	}
+	host->invalidate(host, PET_VIEW);
+	release_host(host);
 }

@@ -23,6 +23,8 @@ type Options struct {
 	MainBundle   string
 	// Background is the ARGB color a page shows before it paints.
 	Background uint32
+	// Flags are extra Chromium switches, such as "--ozone-platform=x11".
+	Flags []string
 }
 
 // SchemeRequest is one tubeless:// request from a page.
@@ -76,6 +78,31 @@ func (f *Frame) copyRect(r Rect, pix []byte) {
 		row := y*stride + r.X*4
 		copy(f.Pix[row:row+r.W*4], pix[row:row+r.W*4])
 	}
+}
+
+// ColorType matches cef_color_type_t.
+type ColorType int
+
+const (
+	ColorRGBA ColorType = iota
+	ColorBGRA
+)
+
+// GPUPlane is one plane of a GPU buffer.
+type GPUPlane struct {
+	FD     int
+	Stride uint32
+	Offset uint64
+}
+
+// GPUFrame is a page frame as a GPU buffer (a Linux dmabuf). The file
+// descriptors are valid only while the handler runs: import or copy
+// the buffer before it returns.
+type GPUFrame struct {
+	W, H     int
+	Format   ColorType
+	Modifier uint64
+	Planes   []GPUPlane
 }
 
 // MouseButton matches cef_mouse_button_type_t.

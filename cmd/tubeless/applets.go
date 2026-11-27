@@ -64,6 +64,10 @@ type openApplet struct {
 	isPaneFocused bool
 	hasFocus      bool
 	isBound       bool
+	// isGPU: frames come as GPU buffers, copied on the GPU into the
+	// texture; hasGPUFrame: one arrived since the last frame.
+	isGPU       bool
+	hasGPUFrame bool
 }
 
 // appletHost owns CEF for this window. It opens pages for `tubeless
@@ -80,6 +84,9 @@ type appletHost struct {
 	theme      applet.Theme
 	isStarted  bool
 	startErr   error
+	// isGPU: pages paint into GPU buffers (see gpuHandler).
+	isGPU     bool
+	gpuFailed bool
 }
 
 // appletsDir is where applets are installed, one folder per applet.
@@ -128,6 +135,7 @@ func (h *appletHost) startCEF() error {
 		// and the next request starts CEF.
 		return errors.New("the applet runtime is not installed")
 	}
+	h.isGPU = useGPUFrames()
 	h.startErr = h.initCEF()
 	if h.startErr != nil {
 		log.Printf("applets disabled: %v", h.startErr)
@@ -135,7 +143,50 @@ func (h *appletHost) startCEF() error {
 	}
 	h.isStarted = true
 	h.input.prefix = readTmuxPrefix()
+	log.Printf("applets: page frames via %s", map[bool]string{true: "GPU (dmabuf)", false: "CPU copy"}[h.isGPU])
 	return nil
+}
+
+// useGPUFrames decides once, before CEF starts, whether pages paint
+// into GPU buffers: tubeless must draw through EGL (Wayland) with dmabuf
+// import, and XWayland must run for CEF (see initCEF).
+// TUBELESS_APPLET_GPU=0 forces the CPU copy.
+func useGPUFrames() bool {
+	return os.Getenv("TUBELESS_APPLET_GPU") != "0" && os.Getenv("DISPLAY") != "" && render.GPUImportAvailable()
+}
+
+// gpuHandler is the GPU frame handler for a new page, or nil for the
+// CPU path. A frame is copied into the texture on the GPU while CEF
+// still holds the buffer.
+func (h *appletHost) gpuHandler(a *openApplet) func(*cef.GPUFrame) {
+	if !h.isGPU {
+		return nil
+	}
+	a.isGPU = true
+	return func(f *cef.GPUFrame) {
+		if h.lastR == nil {
+			return
+		}
+		err := h.lastR.AppletTexture(a.id).CopyDMABuf(dmabufOf(f))
+		if err != nil && !h.gpuFailed {
+			h.gpuFailed = true
+			log.Printf("applets: GPU frame: %v", err)
+		}
+		a.hasGPUFrame = err == nil
+	}
+}
+
+func dmabufOf(f *cef.GPUFrame) render.DMABuf {
+	d := render.DMABuf{W: f.W, H: f.H, Modifier: f.Modifier, FourCC: render.DRMFormatARGB8888}
+	if f.Format == cef.ColorRGBA {
+		d.FourCC = render.DRMFormatABGR8888
+	}
+	for _, p := range f.Planes {
+		d.FDs = append(d.FDs, p.FD)
+		d.Strides = append(d.Strides, p.Stride)
+		d.Offsets = append(d.Offsets, p.Offset)
+	}
+	return d
 }
 
 func (h *appletHost) initCEF() error {
@@ -150,6 +201,11 @@ func (h *appletHost) initCEF() error {
 	opts.CacheDir = cache
 	opts.LogFile = filepath.Join(cache, "cef.log")
 	opts.Background = h.background
+	if h.isGPU {
+		// CEF's GPU process cannot allocate shared frame buffers on
+		// Chromium's Wayland backend; through XWayland it can.
+		opts.Flags = append(opts.Flags, "--ozone-platform=x11")
+	}
 	cef.SetWake(glfw.PostEmptyEvent)
 	cef.SetSchemeHandler(h.serveScheme)
 	cef.SetConsoleHandler(h.logConsole)
@@ -197,12 +253,12 @@ func (h *appletHost) Frame(r *render.Renderer, scr *screen.Screen, cs *cellSize,
 	if h == nil {
 		return false
 	}
+	isNewRenderer := r != h.lastR
+	h.lastR = r // before pump: GPU frames arrive during it
 	h.updateTheme(appletTheme(cfg, cs))
 	h.takeRequests(cs)
 	h.pump()
 	h.takeExits()
-	isNewRenderer := r != h.lastR
-	h.lastR = r
 	dirty := false
 	for _, a := range h.applets {
 		h.bind(a)
@@ -273,7 +329,7 @@ func (h *appletHost) start(req applet.Request, conn net.Conn, cs *cellSize) (*op
 	a := &openApplet{id: req.ID, conn: conn, cols: req.Cols, rows: req.Rows, scale: cs.dpiX}
 	a.w, a.h = a.pixelSize(cs)
 	h.server.Add(inst)
-	a.browser, err = cef.NewBrowser(applet.PageURL(req.ID), a.w, a.h, a.scale, h.background, appletFPS)
+	a.browser, err = cef.NewBrowser(applet.PageURL(req.ID), a.w, a.h, a.scale, h.background, appletFPS, h.gpuHandler(a))
 	if err != nil {
 		h.server.Remove(req.ID)
 		return nil, err
@@ -439,7 +495,18 @@ func (a *openApplet) resize(cs *cellSize) {
 	a.browser.Resize(w, h, a.scale)
 }
 
+// upload moves new pixels into the applet's texture. GPU frames are
+// already there (see gpuHandler); a new renderer has an empty texture,
+// so the page paints again.
 func (a *openApplet) upload(r *render.Renderer, all bool) bool {
+	if a.isGPU {
+		if all {
+			a.browser.Invalidate()
+		}
+		isNew := a.hasGPUFrame
+		a.hasGPUFrame = false
+		return isNew
+	}
 	return a.browser.TakeFrame(all, func(f *cef.Frame) {
 		tex := r.AppletTexture(a.id)
 		tex.Resize(f.W, f.H)

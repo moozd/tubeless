@@ -11,6 +11,10 @@ import "github.com/go-gl/gl/v3.3-core/gl"
 type AppletTexture struct {
 	tex  uint32
 	w, h int
+
+	// The GPU path (CopyDMABuf): a texture over the page's GPU buffer,
+	// and the framebuffers that copy it into tex.
+	srcTex, readFBO, drawFBO uint32
 }
 
 // NewAppletTexture allocates the texture object itself, with no backing
@@ -59,6 +63,11 @@ func (t *AppletTexture) Height() int { return t.h }
 
 func (t *AppletTexture) delete() {
 	gl.DeleteTextures(1, &t.tex)
+	if t.srcTex != 0 {
+		gl.DeleteTextures(1, &t.srcTex)
+		gl.DeleteFramebuffers(1, &t.readFBO)
+		gl.DeleteFramebuffers(1, &t.drawFBO)
+	}
 }
 
 // AppletSpan is a horizontal run of still-visible cells of one applet,

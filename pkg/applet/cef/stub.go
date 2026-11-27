@@ -17,7 +17,7 @@ func SetConsoleHandler(func(*Browser, int, string, string, int)) {}
 // Browser is never created in a build without the `cef` tag.
 type Browser struct{}
 
-func NewBrowser(string, int, int, float32, uint32, int) (*Browser, error) {
+func NewBrowser(string, int, int, float32, uint32, int, func(*GPUFrame)) (*Browser, error) {
 	return nil, ErrUnavailable
 }
 
@@ -32,5 +32,6 @@ func (*Browser) MouseClick(int, int, uint32, MouseButton, bool, int) {}
 func (*Browser) MouseWheel(int, int, uint32, int, int)               {}
 func (*Browser) ID() int                                             { return 0 }
 func (*Browser) ExecJS(string)                                       {}
+func (*Browser) Invalidate()                                         {}
 func (*Browser) Key(KeyEvent)                                        {}
 func (*Browser) Edit(EditCommand)                                    {}
