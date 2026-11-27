@@ -162,10 +162,9 @@ func (s *execSession) accept(ln net.Listener, sock string) error {
 			"The window must also be tubeless built with applet support (make tubeless-cef)")
 	}
 	// One window per exec: no later request can reuse this socket.
+	// Close already removes the socket file.
 	ln.Close()
-	if err := os.Remove(sock); err != nil {
-		fmt.Fprintln(os.Stderr, "tubeless exec: remove socket:", err)
-	}
+	removeIfPresent(sock)
 	s.conn = conn
 	s.messages = make(chan applet.Message, 16)
 	go readExecMessages(conn, s.messages)
