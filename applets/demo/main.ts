@@ -35,6 +35,7 @@ const u = (n: string) => gl.getUniformLocation(prog, n);
 
 let frames = 0, fps = 0, last = performance.now();
 let fileText = '(no file arg)';
+let lastKey = '(none)';
 if (t.args[0]) {
 	t.readText(t.args[0]).then(s => fileText = s.trim()).catch(e => fileText = String(e));
 }
@@ -53,6 +54,7 @@ function draw(now: number) {
 		`args: ${JSON.stringify(t.args)}  cwd: ${t.cwd}`,
 		`font: ${t.theme.font.family} ${t.theme.font.size}px  fg ${t.theme.fg} bg ${t.theme.bg}`,
 		`file: ${fileText}`,
+		`last key: ${lastKey}`,
 		`press q to quit with output`,
 	].join('\n');
 	requestAnimationFrame(draw);
@@ -60,5 +62,6 @@ function draw(now: number) {
 requestAnimationFrame(draw);
 
 addEventListener('keydown', e => {
+	lastKey = `${e.key} (${e.code})`;
 	if (e.key === 'q') t.exit(0, `demo closed after ${Math.round(performance.now() / 1000)}s\n`);
 });
