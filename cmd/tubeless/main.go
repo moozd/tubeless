@@ -105,6 +105,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
 		runUpgrade()
 	}
+	if len(os.Args) > 1 && os.Args[1] == "exec" {
+		runExec(os.Args[2:])
+	}
 	if len(os.Args) > 1 && os.Args[1] == "ssh-integration" {
 		runSSHIntegration(os.Args[2:])
 	}
@@ -234,7 +237,10 @@ func main() {
 	var shared atomic.Pointer[screen.Screen]
 	resizeCh := make(chan resizeReq, 1)
 	shared.Store(screen.New(cols, rows))
-	go ptyCoordinator(ref, &shared, resizeCh, cfg.Scrollback.Lines, closeRequested, respawn)
+	// appletReqs carries `tubeless exec` open requests (OSC 7777) from
+	// the pty reader to the applet host in the render loop.
+	appletReqs := make(chan []byte, appletRequestQueue)
+	go ptyCoordinator(ref, &shared, resizeCh, cfg.Scrollback.Lines, closeRequested, respawn, appletReqs)
 
 	winW := cols * (faces.Regular.CellWidth / effectiveScale) * windowScale
 	winH := rows * (faces.Regular.CellHeight / effectiveScale) * windowScale
@@ -316,9 +322,8 @@ func main() {
 		focused = isFocused
 	})
 
-	applets := startAppletHost(cfg.Colors.DefaultBg)
+	applets := startAppletHost(cfg.Colors.DefaultBg, appletReqs)
 	defer applets.Shutdown()
-	openSpikeApplet(applets, &shared, cs, cfg.Colors.DefaultBg)
 
 	load := &fontLoad{}
 	req, res := startRebuilder(maxTextureSize, load)
@@ -635,7 +640,7 @@ func loadFontFaces(family string) font.FaceBytes {
 // through to the same close-the-window path a plain shell exiting always
 // took. ref is swapped to the new session so wireInput/wireMouse's
 // already-registered callbacks keep writing to whatever's now running.
-func ptyCoordinator(ref *sessionRef, shared *atomic.Pointer[screen.Screen], resizeCh <-chan resizeReq, scrollbackLines int, closeRequested *atomic.Bool, respawn func(cols, rows int) (*ptyio.Session, bool)) {
+func ptyCoordinator(ref *sessionRef, shared *atomic.Pointer[screen.Screen], resizeCh <-chan resizeReq, scrollbackLines int, closeRequested *atomic.Bool, respawn func(cols, rows int) (*ptyio.Session, bool), appletReqs chan<- []byte) {
 	work := screen.New(cols, rows)
 	work.SetScrollbackCap(scrollbackLines)
 	handler := screen.NewHandler(work)
@@ -686,6 +691,7 @@ func ptyCoordinator(ref *sessionRef, shared *atomic.Pointer[screen.Screen], resi
 			}
 			shared.Store(work.Clone())
 			work.ClearPendingClipboard()
+			forwardAppletRequests(work, appletReqs)
 		case req := <-resizeCh:
 			if req.cols != work.Cols || req.rows != work.Rows {
 				work.Resize(req.cols, req.rows)

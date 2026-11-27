@@ -93,6 +93,10 @@ type Screen struct {
 	// consumes this (via PendingClipboard, on a published clone) and
 	// forwards the text to the real system clipboard.
 	pendingClipboard []string
+
+	// pendingApplets holds OSC 7777 payloads: `tubeless exec` asking the
+	// window to open an applet. See applet.go's DrainAppletRequests.
+	pendingApplets [][]byte
 }
 
 // kittyKeyboard is the kitty keyboard protocol state for one screen: the

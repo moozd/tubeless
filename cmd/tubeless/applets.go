@@ -1,15 +1,18 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-gl/glfw/v3.4/glfw"
 
+	"github.com/moozd/tubeless/pkg/applet"
 	"github.com/moozd/tubeless/pkg/applet/cef"
 	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/render"
@@ -22,21 +25,50 @@ const appletFPS = 60
 // appletCloseWait bounds how long shutdown waits for pages to close.
 const appletCloseWait = 2 * time.Second
 
-// applet is one open page and where it shows.
-type applet struct {
-	id      int
-	browser *cef.Browser
-	w, h    int
-	scale   float32
+// appletDialWait bounds the dial back to a `tubeless exec` socket.
+const appletDialWait = time.Second
+
+// appletRequestQueue is how many open requests may wait for the render
+// loop. More than that in one frame is a runaway, not a user.
+const appletRequestQueue = 16
+
+// forwardAppletRequests hands every open request the parser queued to
+// the applet host. A full queue drops the request with a log line; the
+// `tubeless exec` that sent it times out and says so.
+func forwardAppletRequests(work *screen.Screen, out chan<- []byte) {
+	if out == nil {
+		return
+	}
+	for _, req := range work.DrainAppletRequests() {
+		select {
+		case out <- req:
+		default:
+			log.Printf("applets: request queue full, dropped a request")
+		}
+	}
 }
 
-// appletHost owns CEF for this window: it pumps CEF's message loop
-// from the render loop and moves page pixels into the renderer.
+// openApplet is one page and the `tubeless exec` that owns its pane.
+type openApplet struct {
+	id         int
+	browser    *cef.Browser
+	conn       net.Conn
+	events     chan applet.Message
+	cols, rows int
+	w, h       int
+	scale      float32
+	isClosing  bool
+}
+
+// appletHost owns CEF for this window. It opens pages for `tubeless
+// exec` requests, pumps CEF's message loop from the render loop, and
+// moves page pixels into the renderer.
 type appletHost struct {
-	cacheDir string
-	applets  []*applet
-	nextID   int
-	lastR    *render.Renderer
+	cacheDir   string
+	background uint32
+	requests   <-chan []byte
+	applets    map[int]*openApplet
+	lastR      *render.Renderer
 }
 
 // cefRuntimeDir is where `make cef-runtime` puts libcef, its resources
@@ -45,21 +77,32 @@ func cefRuntimeDir() string {
 	if dir := os.Getenv("TUBELESS_CEF_DIR"); dir != "" {
 		return dir
 	}
-	data := os.Getenv("XDG_DATA_HOME")
-	if data == "" {
-		home, _ := os.UserHomeDir()
-		data = filepath.Join(home, ".local", "share")
+	return filepath.Join(xdgDir("XDG_DATA_HOME", ".local", "share"), "tubeless", "cef")
+}
+
+// appletsDir is where applets are installed, one folder per applet.
+func appletsDir() string {
+	return filepath.Join(xdgDir("XDG_CONFIG_HOME", ".config"), "tubeless", "applets")
+}
+
+func xdgDir(env string, fallback ...string) string {
+	if dir := os.Getenv(env); dir != "" {
+		return dir
 	}
-	return filepath.Join(data, "tubeless", "cef")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("applets: home dir: %v", err)
+	}
+	return filepath.Join(append([]string{home}, fallback...)...)
 }
 
 // startAppletHost starts CEF. It returns nil when this build has no
 // applet support or CEF failed to start; the terminal works either way.
-func startAppletHost(background [3]float32) *appletHost {
+func startAppletHost(background [3]float32, requests <-chan []byte) *appletHost {
 	if !cef.Available() {
 		return nil
 	}
-	h, err := newAppletHost(background)
+	h, err := newAppletHost(argb(background), requests)
 	if err != nil {
 		log.Printf("applets disabled: %v", err)
 		return nil
@@ -67,7 +110,7 @@ func startAppletHost(background [3]float32) *appletHost {
 	return h
 }
 
-func newAppletHost(background [3]float32) (*appletHost, error) {
+func newAppletHost(background uint32, requests <-chan []byte) (*appletHost, error) {
 	dir := cefRuntimeDir()
 	cache, err := os.MkdirTemp("", "tubeless-cef-")
 	if err != nil {
@@ -79,7 +122,7 @@ func newAppletHost(background [3]float32) (*appletHost, error) {
 		LocalesDir:     filepath.Join(dir, "locales"),
 		CacheDir:       cache,
 		LogFile:        filepath.Join(cache, "cef.log"),
-		Background:     argb(background),
+		Background:     background,
 	}
 	cef.SetWake(glfw.PostEmptyEvent)
 	if err := cef.Init(opts); err != nil {
@@ -87,7 +130,9 @@ func newAppletHost(background [3]float32) (*appletHost, error) {
 		return nil, err
 	}
 	log.Printf("applets: cef started from %s", dir)
-	return &appletHost{cacheDir: cache}, nil
+	h := &appletHost{cacheDir: cache, background: background, requests: requests}
+	h.applets = make(map[int]*openApplet)
+	return h, nil
 }
 
 // argb packs a linear-RGB theme color as the opaque sRGB ARGB value CEF
@@ -100,36 +145,109 @@ func argb(linear [3]float32) uint32 {
 	return c
 }
 
-// open starts a page that fills the full grid.
-func (h *appletHost) open(url string, w, ht int, scale float32, background uint32) error {
-	b, err := cef.NewBrowser(url, w, ht, scale, background, appletFPS)
-	if err != nil {
-		return err
-	}
-	h.nextID++
-	h.applets = append(h.applets, &applet{id: h.nextID, browser: b, w: w, h: ht, scale: scale})
-	return nil
-}
-
-// Frame pumps CEF, keeps every page sized to the grid, and uploads new
-// pixels. It reports whether the scene must be redrawn. Safe on nil.
+// Frame takes new requests, pumps CEF, follows pane changes, uploads
+// new pixels and places every page on its visible cells. It reports
+// whether the scene must be redrawn. Safe on nil.
 func (h *appletHost) Frame(r *render.Renderer, scr *screen.Screen, cs *cellSize) bool {
 	if h == nil {
 		return false
 	}
+	h.takeRequests(cs)
 	h.pump()
 	isNewRenderer := r != h.lastR
 	h.lastR = r
-	w, ht := gridPixels(scr, cs)
 	dirty := false
-	var spans []render.AppletSpan
 	for _, a := range h.applets {
-		h.resize(a, w, ht, cs.dpiX)
-		dirty = uploadApplet(r, a, isNewRenderer) || dirty
-		spans = append(spans, fullGridSpans(a.id, scr.Cols, scr.Rows)...)
+		a.handleEvents()
+		a.resize(cs)
+		dirty = a.upload(r, isNewRenderer) || dirty
 	}
-	r.SetAppletSpans(spans)
+	dirty = h.dropClosed(r) || dirty
+	r.SetAppletSpans(appletSpans(scr, h.sizes()))
 	return dirty
+}
+
+// takeRequests opens a page for every queued `tubeless exec` request.
+func (h *appletHost) takeRequests(cs *cellSize) {
+	for {
+		select {
+		case payload := <-h.requests:
+			h.open(payload, cs)
+		default:
+			return
+		}
+	}
+}
+
+func (h *appletHost) open(payload []byte, cs *cellSize) {
+	req, err := applet.DecodeRequest(payload)
+	if err != nil {
+		log.Printf("applets: %v", err)
+		return
+	}
+	conn, err := net.DialTimeout("unix", req.Socket, appletDialWait)
+	if err != nil {
+		log.Printf("applets: dial %s: %v", req.Socket, err)
+		return
+	}
+	a, err := h.start(req, conn, cs)
+	if err != nil {
+		log.Printf("applets: open %q: %v", req.Name, err)
+		sendApplet(conn, applet.Message{Type: applet.MsgError, Error: err.Error()})
+		conn.Close()
+		return
+	}
+	h.applets[a.id] = a
+	sendApplet(conn, applet.Message{Type: applet.MsgReady})
+}
+
+func (h *appletHost) start(req applet.Request, conn net.Conn, cs *cellSize) (*openApplet, error) {
+	if req.ID < 0 || req.ID >= screen.AppletMaxID {
+		return nil, fmt.Errorf("applet id %d out of range", req.ID)
+	}
+	if _, isUsed := h.applets[req.ID]; isUsed {
+		return nil, fmt.Errorf("applet id %d is in use, run it again", req.ID)
+	}
+	page, err := appletURL(req.Name)
+	if err != nil {
+		return nil, err
+	}
+	a := &openApplet{id: req.ID, conn: conn, cols: req.Cols, rows: req.Rows, scale: cs.dpiX}
+	a.w, a.h = a.pixelSize(cs)
+	a.browser, err = cef.NewBrowser(page, a.w, a.h, a.scale, h.background, appletFPS)
+	if err != nil {
+		return nil, err
+	}
+	a.events = make(chan applet.Message, 16)
+	go readAppletMessages(conn, a.events)
+	return a, nil
+}
+
+// appletURL finds the page of an installed applet.
+func appletURL(name string) (string, error) {
+	if name == "" || name != filepath.Base(name) {
+		return "", fmt.Errorf("invalid applet name %q", name)
+	}
+	page := filepath.Join(appletsDir(), name, "index.html")
+	if _, err := os.Stat(page); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("no applet %q (looked for %s)", name, page)
+		}
+		return "", fmt.Errorf("applet %q: %w", name, err)
+	}
+	return (&url.URL{Scheme: "file", Path: page}).String(), nil
+}
+
+func readAppletMessages(conn net.Conn, out chan<- applet.Message) {
+	if err := applet.ReadMessages(conn, out); err != nil {
+		log.Printf("applets: %v", err)
+	}
+}
+
+func sendApplet(conn net.Conn, m applet.Message) {
+	if err := applet.WriteMessage(conn, m); err != nil {
+		log.Printf("applets: %v", err)
+	}
 }
 
 // pump runs CEF's message loop once per frame while pages are open,
@@ -142,15 +260,53 @@ func (h *appletHost) pump() {
 	cef.Pump()
 }
 
-func (h *appletHost) resize(a *applet, w, ht int, scale float32) {
-	if a.w == w && a.h == ht && a.scale == scale {
-		return
+// handleEvents applies what `tubeless exec` reported since last frame.
+func (a *openApplet) handleEvents() {
+	for {
+		select {
+		case m, ok := <-a.events:
+			if !ok {
+				a.close()
+				return
+			}
+			a.handleEvent(m)
+		default:
+			return
+		}
 	}
-	a.w, a.h, a.scale = w, ht, scale
-	a.browser.Resize(w, ht, scale)
 }
 
-func uploadApplet(r *render.Renderer, a *applet, all bool) bool {
+func (a *openApplet) handleEvent(m applet.Message) {
+	switch m.Type {
+	case applet.MsgResize:
+		a.cols, a.rows = m.Cols, m.Rows
+	case applet.MsgClose:
+		a.close()
+	}
+}
+
+func (a *openApplet) close() {
+	if a.isClosing {
+		return
+	}
+	a.isClosing = true
+	a.browser.Close()
+}
+
+func (a *openApplet) pixelSize(cs *cellSize) (int, int) {
+	return int(float32(a.cols) * cs.w), int(float32(a.rows) * cs.h)
+}
+
+func (a *openApplet) resize(cs *cellSize) {
+	w, h := a.pixelSize(cs)
+	if a.w == w && a.h == h && a.scale == cs.dpiX {
+		return
+	}
+	a.w, a.h, a.scale = w, h, cs.dpiX
+	a.browser.Resize(w, h, a.scale)
+}
+
+func (a *openApplet) upload(r *render.Renderer, all bool) bool {
 	return a.browser.TakeFrame(all, func(f *cef.Frame) {
 		tex := r.AppletTexture(a.id)
 		tex.Resize(f.W, f.H)
@@ -160,22 +316,28 @@ func uploadApplet(r *render.Renderer, a *applet, all bool) bool {
 	})
 }
 
-// gridPixels is the grid's size in framebuffer pixels.
-func gridPixels(scr *screen.Screen, cs *cellSize) (int, int) {
-	return int(float32(scr.Cols) * cs.w), int(float32(scr.Rows) * cs.h)
+// dropClosed frees every page CEF finished closing.
+func (h *appletHost) dropClosed(r *render.Renderer) bool {
+	dropped := false
+	for id, a := range h.applets {
+		if !a.browser.Closed() {
+			continue
+		}
+		a.browser.Release()
+		a.conn.Close()
+		r.DropApplet(id)
+		delete(h.applets, id)
+		dropped = true
+	}
+	return dropped
 }
 
-// fullGridSpans covers every row of the grid with one applet.
-func fullGridSpans(id, cols, rows int) []render.AppletSpan {
-	spans := make([]render.AppletSpan, 0, rows)
-	for y := 0; y < rows; y++ {
-		spans = append(spans, render.AppletSpan{
-			ID: id, Col: 0, Row: y, Cells: cols,
-			U0: 0, V0: float32(y) / float32(rows),
-			U1: 1, V1: float32(y+1) / float32(rows),
-		})
+func (h *appletHost) sizes() map[int]appletGrid {
+	sizes := make(map[int]appletGrid, len(h.applets))
+	for id, a := range h.applets {
+		sizes[id] = appletGrid{cols: a.cols, rows: a.rows}
 	}
-	return spans
+	return sizes
 }
 
 // Shutdown closes every page, waits for CEF to confirm, and stops CEF.
@@ -185,7 +347,7 @@ func (h *appletHost) Shutdown() {
 		return
 	}
 	for _, a := range h.applets {
-		a.browser.Close()
+		a.close()
 	}
 	deadline := time.Now().Add(appletCloseWait)
 	for !h.allClosed() && time.Now().Before(deadline) {
@@ -194,6 +356,7 @@ func (h *appletHost) Shutdown() {
 	}
 	for _, a := range h.applets {
 		a.browser.Release()
+		a.conn.Close()
 	}
 	cef.Shutdown()
 	if err := os.RemoveAll(h.cacheDir); err != nil {
@@ -208,17 +371,4 @@ func (h *appletHost) allClosed() bool {
 		}
 	}
 	return true
-}
-
-// openSpikeApplet opens $TUBELESS_APPLET_SPIKE over the full grid: a
-// development hook to see a page render before `tubeless exec` exists.
-func openSpikeApplet(h *appletHost, shared *atomic.Pointer[screen.Screen], cs *cellSize, background [3]float32) {
-	url := os.Getenv("TUBELESS_APPLET_SPIKE")
-	if h == nil || url == "" {
-		return
-	}
-	w, ht := gridPixels(shared.Load(), cs)
-	if err := h.open(url, w, ht, cs.dpiX, argb(background)); err != nil {
-		log.Printf("applets: spike: %v", err)
-	}
 }

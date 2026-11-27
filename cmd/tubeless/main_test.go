@@ -30,7 +30,7 @@ func TestPtyCoordinatorSetsCloseRequestedOnShellExit(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ptyCoordinator(ref, &shared, resizeCh, 0, closeRequested, nil)
+		ptyCoordinator(ref, &shared, resizeCh, 0, closeRequested, nil, nil)
 		close(done)
 	}()
 
@@ -85,7 +85,7 @@ func TestPtyCoordinatorRespawnsInsteadOfClosing(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ptyCoordinator(ref, &shared, resizeCh, 0, closeRequested, respawn)
+		ptyCoordinator(ref, &shared, resizeCh, 0, closeRequested, respawn, nil)
 		close(done)
 	}()
 

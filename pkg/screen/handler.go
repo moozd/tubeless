@@ -108,6 +108,22 @@ func (h *Handler) reset() {
 func (h *Handler) OSCDispatch(data []byte) {
 	h.dispatchOSC52(data)
 	h.dispatchOSCTitle(data)
+	h.dispatchOSCApplet(data)
+}
+
+// dispatchOSCApplet handles "7777;<base64>": `tubeless exec` asking the
+// window to open an applet in its pane. The decoded payload is queued
+// as is; cmd/tubeless's applet host reads it (see pkg/applet).
+func (h *Handler) dispatchOSCApplet(data []byte) {
+	payload, ok := bytes.CutPrefix(data, []byte("7777;"))
+	if !ok {
+		return
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(payload))
+	if err != nil {
+		return
+	}
+	h.pendingApplets = append(h.pendingApplets, decoded)
 }
 
 // dispatchOSCTitle handles "0;<title>" (icon name + window title) and
