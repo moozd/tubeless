@@ -316,9 +316,13 @@ func main() {
 		focused = isFocused
 	})
 
+	applets := startAppletHost(cfg.Colors.DefaultBg)
+	defer applets.Shutdown()
+	openSpikeApplet(applets, &shared, cs, cfg.Colors.DefaultBg)
+
 	load := &fontLoad{}
 	req, res := startRebuilder(maxTextureSize, load)
-	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef, req, res, load)
+	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef, req, res, load, applets)
 	log.Printf("exit: run loop ended (window closed=%v)", win.ShouldClose())
 }
 
@@ -1181,7 +1185,7 @@ func pumpFrame(win *render.Window, rate *refreshRate, isFocused bool, lastPresen
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config], req chan fontBuildReq, res chan fontBuildResult, load *fontLoad) {
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config], req chan fontBuildReq, res chan fontBuildResult, load *fontLoad, applets *appletHost) {
 	r := renderer
 	var lastScr *screen.Screen
 	lastTitle := windowTitle("")
@@ -1257,7 +1261,8 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 				lastTitle = title
 			}
 		}
-		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
+		appletDirty := applets.Frame(r, scr, cs)
+		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload || appletDirty
 		reload = false
 
 		// Computed every frame, not just when dirty — RenderEffects below

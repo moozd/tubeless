@@ -382,6 +382,18 @@ func srgbToLinear(c float32) float32 {
 	return float32(math.Pow(float64((c+0.055)/1.055), 2.4))
 }
 
+// LinearToSRGB8 is srgbToLinear's inverse, as a 0-255 byte: for handing
+// a theme color to something that wants plain sRGB, such as CSS or an
+// applet page's background.
+func LinearToSRGB8(c float32) uint8 {
+	c = min(max(c, 0), 1)
+	s := 12.92 * c
+	if c > 0.0031308 {
+		s = float32(1.055*math.Pow(float64(c), 1/2.4) - 0.055)
+	}
+	return uint8(s*255 + 0.5)
+}
+
 // srgb3 builds a linear-light [3]float32 from raw 0-255 sRGB byte values —
 // the form every published theme palette's hex colors come in. Every
 // preset's color fields are built through this rather than a bare /255, so

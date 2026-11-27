@@ -103,6 +103,13 @@ type Renderer struct {
 	// loading is the current in-progress overlay state (see SetLoading);
 	// when Active, RenderEffects draws the modal over the frame.
 	loading Loading
+
+	// appletTex holds one live texture per open applet (see
+	// AppletTexture), keyed by applet id; appletSpans is the per-frame
+	// list of visible cell runs RenderScene paints them into, over the
+	// text and under every post effect.
+	appletTex   map[int]*AppletTexture
+	appletSpans []AppletSpan
 }
 
 // Cursor glide tuning: UpdateCursor's exponential-approach rate (per
@@ -274,6 +281,7 @@ func (r *Renderer) RenderScene(outW, outH int, cellW, cellH float32, cfg config.
 	r.cellPass.DrawText(r.sceneFBO, cellW, cellH)
 	gridX, gridY := GridOffset(float32(outW), float32(outH), r.cols, r.rows, cellW, cellH)
 	r.imagePass.DrawEmoji(r.sceneFBO, r.cellPass.emojiScratch, cellW, cellH, gridX, gridY)
+	r.imagePass.DrawApplets(r.sceneFBO, r.appletSpans, r.appletTex, cellW, cellH)
 }
 
 // drawTextShadow casts TextShadow into the scene just before the sharp
@@ -519,6 +527,35 @@ func (r *Renderer) RenderEffects(boxW, boxH, outW, outH int, cfg config.Config, 
 // indeterminate/empty bar).
 func (r *Renderer) SetLoading(l Loading) {
 	r.loading = l
+}
+
+// AppletTexture returns the live texture for applet id, creating it
+// (with no backing storage yet, see AppletTexture.Resize) on first use.
+// Render thread only, like every other Renderer method.
+func (r *Renderer) AppletTexture(id int) *AppletTexture {
+	if r.appletTex == nil {
+		r.appletTex = make(map[int]*AppletTexture)
+	}
+	if t, ok := r.appletTex[id]; ok {
+		return t
+	}
+	t := NewAppletTexture()
+	r.appletTex[id] = t
+	return t
+}
+
+// DropApplet frees applet id's texture once its page is gone.
+func (r *Renderer) DropApplet(id int) {
+	if t, ok := r.appletTex[id]; ok {
+		t.delete()
+		delete(r.appletTex, id)
+	}
+}
+
+// SetAppletSpans replaces the cell runs the next RenderScene paints
+// applet pages into.
+func (r *Renderer) SetAppletSpans(spans []AppletSpan) {
+	r.appletSpans = spans
 }
 
 // drawOverlay renders the loading modal over the just-composited frame: a dim

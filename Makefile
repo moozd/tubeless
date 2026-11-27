@@ -1,4 +1,4 @@
-.PHONY: build build-x11 tubeless tubeless-config tektest tubeless-icons test clean \
+.PHONY: build build-x11 tubeless tubeless-cef cef-runtime tubeless-config tektest tubeless-icons test clean \
         install uninstall install-linux uninstall-linux install-darwin uninstall-darwin help \
         run-green run-amber run-config run-icons package-linux package-darwin
 
@@ -33,6 +33,15 @@ ICON_DIR = $(PREFIX)/share/icons/hicolor/scalable/apps
 # /Applications if you want it system-wide: `make install-darwin APP_DIR=/Applications`.
 APP_DIR ?= $(HOME)/Applications
 APP_BUNDLE = $(APP_DIR)/Tubeless.app
+
+# Applets run in an embedded Chromium (CEF). CEF_ROOT is an unpacked
+# CEF "minimal" distribution (cef-builds.spotifycdn.com); CEF_RUNTIME is
+# where `make cef-runtime` lays out the files tubeless loads at run
+# time: libcef, its resources and locales, and tubeless-cef-helper.
+CEF_ROOT ?= $(HOME)/.cache/tubeless/cef
+CEF_RUNTIME ?= $(HOME)/.local/share/tubeless/cef
+CEF_API_VERSION = 15800
+CEF_HELPER_SRC = pkg/applet/cef/helper/helper.c
 
 help:
 	@echo "Available targets:"
@@ -88,6 +97,25 @@ tubeless:
 	@mkdir -p $(BIN_DIR)
 	go build -tags wayland -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Built $(BIN_DIR)/$(BINARY_NAME)"
+
+# tubeless-cef is tubeless with applet support, linked against
+# $(CEF_RUNTIME)/libcef.so (run `make cef-runtime` first).
+tubeless-cef:
+	@mkdir -p $(BIN_DIR)
+	CGO_CFLAGS="-I$(CEF_ROOT)" \
+	CGO_LDFLAGS="-L$(CEF_RUNTIME) -Wl,-rpath,$(CEF_RUNTIME)" \
+	go build -tags "wayland cef" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	@echo "Built $(BIN_DIR)/$(BINARY_NAME) (with applets)"
+
+cef-runtime:
+	@test -f $(CEF_ROOT)/Release/libcef.so || \
+	    { echo "CEF_ROOT=$(CEF_ROOT) has no Release/libcef.so"; exit 1; }
+	@mkdir -p $(CEF_RUNTIME)
+	ln -sfn $(CEF_ROOT)/Release/* $(CEF_ROOT)/Resources/* $(CEF_RUNTIME)/
+	cc -O2 -fno-stack-protector -I$(CEF_ROOT) -DCEF_API_VERSION=$(CEF_API_VERSION) \
+	    $(CEF_HELPER_SRC) -L$(CEF_RUNTIME) -lcef \
+	    -Wl,-rpath,$(CEF_RUNTIME) -o $(CEF_RUNTIME)/tubeless-cef-helper
+	@echo "CEF runtime ready in $(CEF_RUNTIME)"
 
 # tubeless-config is the in-terminal settings UI; `tubeless config` runs it
 # directly in the current terminal (see cmd/tubeless/main.go), no window.
