@@ -60,6 +60,7 @@ type execSession struct {
 	fd       int
 	conn     net.Conn
 	messages chan applet.Message
+	winch    chan os.Signal
 }
 
 func execApplet(name string, args []string) (int, string, error) {
@@ -82,7 +83,13 @@ func execApplet(name string, args []string) (int, string, error) {
 	}
 	defer restoreExecPane(fd, saved)
 
+	// Listen for pane resizes before the open request: tmux often
+	// resizes a new pane (a split right after start) during the
+	// handshake, and a missed resize leaves the page the wrong size.
 	s := &execSession{id: rand.IntN(screen.AppletMaxID), fd: fd}
+	s.winch = make(chan os.Signal, 1)
+	signal.Notify(s.winch, syscall.SIGWINCH)
+	defer signal.Stop(s.winch)
 	if err := s.sendOpen(name, args, sock, cols, rows); err != nil {
 		return 1, "", err
 	}
@@ -162,9 +169,6 @@ func readExecMessages(conn net.Conn, out chan<- applet.Message) {
 
 // run serves the pane until the applet ends.
 func (s *execSession) run() (int, string, error) {
-	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-	defer signal.Stop(winch)
 	stdin := pumpExecStdin()
 	for {
 		select {
@@ -181,7 +185,7 @@ func (s *execSession) run() (int, string, error) {
 				return 130, "", nil
 			}
 			s.forwardFocus(b)
-		case <-winch:
+		case <-s.winch:
 			s.resize()
 		}
 	}
@@ -198,6 +202,7 @@ func (s *execSession) handleMessage(m applet.Message) (execResult, bool) {
 	switch m.Type {
 	case applet.MsgReady:
 		s.send(applet.Message{Type: applet.MsgFocus, Focused: isPaneActive()})
+		s.resize()
 	case applet.MsgExit:
 		return execResult{code: m.Code, output: m.Output}, true
 	case applet.MsgError:
