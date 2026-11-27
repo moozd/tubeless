@@ -235,7 +235,7 @@ func (cp *CellPass) BuildInstances(scr *screen.Screen, cfg config.Config, cw, ch
 				cp.blockScratch = appendFillRects(cp.blockScratch, block, cw, ch, e, fg)
 				continue
 			}
-			if cell.Rune == ' ' || cell.Rune == screen.SlotRune || cell.Rune == screen.WideSpacer {
+			if cell.Rune == ' ' || cell.Rune == screen.WideSpacer {
 				continue
 			}
 			if isEmojiCandidate(grid, scr.Cols, x, y) && cp.appendEmoji(grid, scr.Cols, x, y) {

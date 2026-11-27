@@ -9,7 +9,6 @@ import (
 	"github.com/moozd/tubeless/pkg/config"
 	"github.com/moozd/tubeless/pkg/render"
 	"github.com/moozd/tubeless/pkg/screen"
-	"github.com/moozd/tubeless/pkg/wmproto"
 )
 
 // linesPerNotch is how many scrollback lines one wheel "notch" (yoff of
@@ -53,14 +52,10 @@ type mouseState struct {
 // of local selection/scroll vs. VT reporting applies is decided per-event
 // from the latest published Screen's MouseMode: an app that wants mouse
 // events gets them instead of the terminal handling clicks/wheel itself.
-func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection, hub *slotHub) {
+func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[screen.Screen], scroll *scrollState, cs *cellSize, cfgRef *atomic.Pointer[config.Config], sel *render.Selection) {
 	ms := &mouseState{sel: sel}
 
 	win.SetScrollCallback(func(_ *glfw.Window, _, yoff float64) {
-		if s, _, _, ok := slotUnderCursor(win, hub, cs, cfgRef.Load().CRT.AspectRatio, shared.Load()); ok {
-			s.sendWM(wmproto.PointerAxis{DY: int(yoff * linesPerNotch)})
-			return
-		}
 		scr := shared.Load()
 		if scr.MouseMode != screen.MouseOff {
 			btn := screen.MouseWheelDown
@@ -88,12 +83,6 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 			return
 		}
 		scr := shared.Load()
-		if s, px, py, ok := slotUnderCursor(win, hub, cs, cfgRef.Load().CRT.AspectRatio, shared.Load()); ok {
-			s.sendWM(wmproto.PointerMove{X: px, Y: py})
-			s.sendWM(wmproto.PointerButton{Button: slotButton(button), Pressed: action == glfw.Press})
-			forwardSlotClick(win, sess, scr, cs, cfgRef.Load().CRT.AspectRatio, button, action)
-			return
-		}
 		x, y := cellAt(win, cs, cfgRef.Load().CRT.AspectRatio, scr.Cols, scr.Rows)
 		x, y = clampCell(scr, x, y)
 
@@ -143,10 +132,6 @@ func wireMouse(win *render.Window, sess *sessionRef, shared *atomic.Pointer[scre
 		// dedup below, since a still mouse re-entering the same cell
 		// shouldn't need to move first to reappear.
 		win.SetInputMode(glfw.CursorMode, glfw.CursorNormal)
-		if s, px, py, ok := slotAtCursorPos(win, hub, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio, shared.Load()); ok {
-			s.sendWM(wmproto.PointerMove{X: px, Y: py})
-			return
-		}
 		scr := shared.Load()
 		x, y := cellFromPixels(win, xpos, ypos, cs, cfgRef.Load().CRT.AspectRatio, scr.Cols, scr.Rows)
 		x, y = clampCell(scr, x, y)
@@ -258,61 +243,6 @@ func cellFromFramebufferPixels(px, py float32, w, h int, cs *cellSize, ar config
 	x = int(px / cs.w)
 	y = int(py / cs.h)
 	return max(0, x), max(0, y)
-}
-
-// slotButton maps a GLFW mouse button to wmproto's 1/2/3 numbering.
-func slotButton(b glfw.MouseButton) uint8 {
-	switch b {
-	case glfw.MouseButtonMiddle:
-		return 2
-	case glfw.MouseButtonRight:
-		return 3
-	default:
-		return 1
-	}
-}
-
-// slotUnderCursor is slotAtCursorPos for the cursor's current position,
-// for callbacks (scroll, button) that don't receive one.
-func slotUnderCursor(win *render.Window, hub *slotHub, cs *cellSize, ar config.AspectRatio, scr *screen.Screen) (*slot, int, int, bool) {
-	xpos, ypos := win.GetCursorPos()
-	return slotAtCursorPos(win, hub, xpos, ypos, cs, ar, scr)
-}
-
-// slotAtCursorPos finds the embedded app (if any) under a GLFW cursor
-// position and the pixel offset inside its frame.
-func slotAtCursorPos(win *render.Window, hub *slotHub, xpos, ypos float64, cs *cellSize, ar config.AspectRatio, scr *screen.Screen) (*slot, int, int, bool) {
-	if hub == nil {
-		return nil, 0, 0, false
-	}
-	w, h := win.FramebufferPixelSize()
-	gx, gy := gridPixelFromFramebufferPixels(float32(xpos)*cs.dpiX, float32(ypos)*cs.dpiY, w, h, cs, ar, scr.Cols, scr.Rows)
-	return hub.HitTest(gx, gy, cs)
-}
-
-// gridPixelFromFramebufferPixels is cellFromFramebufferPixels without the
-// final division: the pixel position relative to the grid's top-left.
-func gridPixelFromFramebufferPixels(px, py float32, w, h int, cs *cellSize, ar config.AspectRatio, cols, rows int) (float32, float32) {
-	bx, by, bw, bh := render.LetterboxBox(ar, w, h)
-	offX, offY := render.GridOffset(float32(bw), float32(bh), cols, rows, cs.w, cs.h)
-	return clampFloat32(px-float32(bx)-offX, 0, float32(max(bw-1, 0))), clampFloat32(py-float32(by)-offY, 0, float32(max(bh-1, 0)))
-}
-
-// forwardSlotClick also reports a click over an embedded app to the
-// terminal, when tmux asked for mouse reporting, so tmux selects the pane
-// and keyboard focus follows the click.
-func forwardSlotClick(win *render.Window, sess *sessionRef, scr *screen.Screen, cs *cellSize, ar config.AspectRatio, button glfw.MouseButton, action glfw.Action) {
-	if scr.MouseMode == screen.MouseOff {
-		return
-	}
-	x, y := cellAt(win, cs, ar, scr.Cols, scr.Rows)
-	x, y = clampCell(scr, x, y)
-	shift, alt, ctrl := currentMods(win)
-	kind := screen.MousePress
-	if action == glfw.Release {
-		kind = screen.MouseRelease
-	}
-	sess.Write(screen.EncodeMouseEvent(scr.MouseSGR, sgrButton(button), kind, x, y, shift, alt, ctrl))
 }
 
 func clampCell(scr *screen.Screen, x, y int) (int, int) {

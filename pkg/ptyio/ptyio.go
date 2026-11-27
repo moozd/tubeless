@@ -21,11 +21,7 @@ type Session struct {
 }
 
 // Start launches name(args...) attached to a new PTY sized cols x rows.
-// extraSessionEnv is appended after TERM/terminfo's own env (e.g.
-// TUBELESS_CTL — see cmd/tubeless's openServer) so a child can detect
-// which control socket belongs to this specific window, the same way it
-// already detects TERM=tubeless itself.
-func Start(name string, args []string, cols, rows int, extraSessionEnv ...string) (*Session, error) {
+func Start(name string, args []string, cols, rows int) (*Session, error) {
 	cmd := exec.Command(name, args...)
 	// xterm-256color as a base, not something VT340-accurate: the
 	// terminfo for a real VT340 declares only what a genuine 1980s
@@ -50,7 +46,6 @@ func Start(name string, args []string, cols, rows int, extraSessionEnv ...string
 	term, extraEnv := setupTerminfo()
 	cmd.Env = append(os.Environ(), "TERM="+term)
 	cmd.Env = append(cmd.Env, extraEnv...)
-	cmd.Env = append(cmd.Env, extraSessionEnv...)
 	// Every terminal emulator starts a fresh shell in $HOME by default,
 	// not wherever the emulator's own process happened to be cwd'd —
 	// which matters here because a macOS GUI app launched from

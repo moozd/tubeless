@@ -105,12 +105,6 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
 		runUpgrade()
 	}
-	if len(os.Args) > 1 && os.Args[1] == "open" {
-		runOpen(os.Args[2:])
-	}
-	if len(os.Args) > 1 && os.Args[1] == "popup" {
-		runPopup(os.Args[2:])
-	}
 	if len(os.Args) > 1 && os.Args[1] == "ssh-integration" {
 		runSSHIntegration(os.Args[2:])
 	}
@@ -192,22 +186,7 @@ func main() {
 		log.Fatalf("%v", err)
 	}
 
-	// hub is the control socket `tubeless open` (run in a tmux pane
-	// inside this window) connects to; its path is exported to the shell
-	// as TUBELESS_CTL, the same way TERM=tubeless itself is exported (see
-	// ptyio.Start). A setup failure only disables that one feature, never
-	// the terminal itself: every hub use below tolerates nil.
-	var openExtraEnv []string
-	hub, err := listenSlotHub(slotControlSocketPath())
-	if err != nil {
-		log.Printf("tubeless open support disabled: %v", err)
-	} else {
-		defer hub.Close()
-		openExtraEnv = []string{"TUBELESS_CTL=" + hub.path}
-	}
-
-	sess := startShell(*shell, cfg.Shell.Program, openExtraEnv...)
-	hub.registerTTY(sess.TTY())
+	sess := startShell(*shell, cfg.Shell.Program)
 	ref := newSessionRef(sess)
 	defer ref.Close()
 	// log.Fatalf calls os.Exit internally, which would skip the deferred
@@ -240,7 +219,7 @@ func main() {
 			if !ok {
 				return nil, false
 			}
-			s, err := ptyio.Start(name, args, cols, rows, openExtraEnv...)
+			s, err := ptyio.Start(name, args, cols, rows)
 			if err != nil {
 				log.Printf("restart tmux: %v", err)
 				return nil, false
@@ -248,7 +227,6 @@ func main() {
 			if err := s.Resize(cols, rows, int(float32(cols)*cs.w), int(float32(rows)*cs.h)); err != nil {
 				log.Printf("size restarted tmux: %v", err)
 			}
-			hub.registerTTY(s.TTY())
 			return s, true
 		}
 	}
@@ -328,7 +306,7 @@ func main() {
 	fsState := &fullscreenState{}
 	wireInput(win, ref, &shared, sel, fontZoom, fsState)
 	scroll := &scrollState{}
-	wireMouse(win, ref, &shared, scroll, cs, &cfgRef, sel, hub)
+	wireMouse(win, ref, &shared, scroll, cs, &cfgRef, sel)
 
 	// focused tracks real window focus, read/written only from this
 	// locked OS thread (see runLoop's visibility gate) — no
@@ -340,7 +318,7 @@ func main() {
 
 	load := &fontLoad{}
 	req, res := startRebuilder(maxTextureSize, load)
-	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef, req, res, load, hub)
+	runLoop(win, renderer, &shared, cfg, cs, cfgPath, resolve, closeRequested, scroll, sel, resizeCh, &focused, fontZoom, &cfgRef, req, res, load)
 	log.Printf("exit: run loop ended (window closed=%v)", win.ShouldClose())
 }
 
@@ -850,12 +828,12 @@ func windowTitle(appTitle string) string {
 	return "tubeless"
 }
 
-func startShell(shell, shellProgram string, extraEnv ...string) *ptyio.Session {
+func startShell(shell, shellProgram string) *ptyio.Session {
 	name, args := shellCommand(shell, shellProgram)
 	if name == "" {
 		name = "/bin/sh"
 	}
-	sess, err := ptyio.Start(name, args, cols, rows, extraEnv...)
+	sess, err := ptyio.Start(name, args, cols, rows)
 	if err != nil {
 		log.Fatalf("start shell: %v", err)
 	}
@@ -1203,7 +1181,7 @@ func pumpFrame(win *render.Window, rate *refreshRate, isFocused bool, lastPresen
 // cfgPath + resolve let the config TUI's edits apply live: when the file
 // changes, non-font settings are re-applied on the next scene rebuild, and
 // font/atlas changes rebuild the renderer (which reflows the grid via cs).
-func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config], req chan fontBuildReq, res chan fontBuildResult, load *fontLoad, hub *slotHub) {
+func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Pointer[screen.Screen], cfg config.Config, cs *cellSize, cfgPath string, resolve func() config.Config, closeRequested *atomic.Bool, scroll *scrollState, sel *render.Selection, resizeCh chan resizeReq, focused *bool, fontZoom <-chan int, cfgRef *atomic.Pointer[config.Config], req chan fontBuildReq, res chan fontBuildResult, load *fontLoad) {
 	r := renderer
 	var lastScr *screen.Screen
 	lastTitle := windowTitle("")
@@ -1279,9 +1257,7 @@ func runLoop(win *render.Window, renderer *render.Renderer, shared *atomic.Point
 				lastTitle = title
 			}
 		}
-		openDirty := hub.Frame(r, scr, scrollLine, cs, scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine)
-
-		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload || openDirty
+		dirty := scr != lastScr || w != lastW || h != lastH || scrollLine != lastScrollLine || *sel != lastSel || reload
 		reload = false
 
 		// Computed every frame, not just when dirty — RenderEffects below
