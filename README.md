@@ -284,6 +284,12 @@ to a file.
 
 Page console output goes into the session log file.
 
+On Wayland with XWayland, pages paint into GPU buffers (dmabuf) that
+tubeless copies on the GPU: no copy of each frame through the CPU.
+Without XWayland, or on X11, the frames go through the CPU. Set
+`TUBELESS_APPLET_GPU=0` to force the CPU path, and `TUBELESS_CEF_FLAGS`
+to add Chromium switches (space-separated) when you debug CEF.
+
 ### SSH to remote hosts
 
 A tubeless session runs with `TERM=tubeless`, a terminfo entry that only
